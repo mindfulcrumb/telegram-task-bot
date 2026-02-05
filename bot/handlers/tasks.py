@@ -44,6 +44,10 @@ def detect_intent(text: str) -> dict:
     if re.match(r"^(add|create|new|make|set|schedule)\s+", text_lower):
         return {"action": "add_task"}
 
+    # "remind me" patterns with task content - these ARE tasks
+    if re.search(r"remind\s*(me)?\s*(to|about)?\s+\w+", text_lower):
+        return {"action": "add_task"}
+
     # Question patterns - these should NOT be saved as tasks
     question_patterns = [
         r"^(what|which|how|do i|should i|can you|could you|would you|will you)",
@@ -262,7 +266,8 @@ async def add_new_task(update: Update, text: str):
             title=parsed["title"],
             category=parsed["category"],
             due_date=parsed["due_date"],
-            priority=parsed["priority"]
+            priority=parsed["priority"],
+            reminder_time=parsed.get("reminder_time")
         )
 
         # Clean response
@@ -271,6 +276,9 @@ async def add_new_task(update: Update, text: str):
 
         if parsed["due_date"]:
             response += f" 📅 {parsed['due_date'].strftime('%b %d')}"
+
+        if parsed.get("reminder_time"):
+            response += f" ⏰ {parsed['reminder_time'].strftime('%I:%M %p')}"
 
         if parsed["priority"] == "High":
             response = "🔴 " + response
@@ -311,7 +319,8 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title=parsed["title"],
             category=parsed["category"],
             due_date=parsed["due_date"],
-            priority=parsed["priority"]
+            priority=parsed["priority"],
+            reminder_time=parsed.get("reminder_time")
         )
 
         response = f"Task added to {parsed['category']}\n"
@@ -319,6 +328,9 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if parsed["due_date"]:
             response += f"\n   Due: {parsed['due_date'].strftime('%b %d, %Y')}"
+
+        if parsed.get("reminder_time"):
+            response += f"\n   Reminder: {parsed['reminder_time'].strftime('%I:%M %p')}"
 
         if parsed["priority"] != "Medium":
             response += f"\n   Priority: {parsed['priority']}"
