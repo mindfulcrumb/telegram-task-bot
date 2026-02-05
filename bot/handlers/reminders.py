@@ -1,0 +1,139 @@
+"""Reminder handlers for Telegram bot."""
+import re
+from datetime import datetime, timedelta
+from telegram import Update, Bot
+from telegram.ext import ContextTypes
+from bot.services.notion import notion_service
+from bot.handlers.tasks import is_authorized
+import config
+
+
+def parse_reminder_time(time_str: str) -> timedelta:
+    """
+    Parse a reminder time string into a timedelta.
+
+    Supports:
+    - "30m", "30min", "30 minutes"
+    - "2h", "2hr", "2 hours"
+    - "1d", "1 day"
+    """
+    time_str = time_str.lower().strip()
+
+    # Minutes
+    match = re.match(r"(\d+)\s*(m|min|mins|minutes?)$", time_str)
+    if match:
+        return timedelta(minutes=int(match.group(1)))
+
+    # Hours
+    match = re.match(r"(\d+)\s*(h|hr|hrs|hours?)$", time_str)
+    if match:
+        return timedelta(hours=int(match.group(1)))
+
+    # Days
+    match = re.match(r"(\d+)\s*(d|days?)$", time_str)
+    if match:
+        return timedelta(days=int(match.group(1)))
+
+    raise ValueError(f"Could not parse time: {time_str}")
+
+
+async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /remind command - set a reminder for a task."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /remind <task number> <time>\n\n"
+            "Examples:\n"
+            "  /remind 1 30m - Remind in 30 minutes\n"
+            "  /remind 2 2h - Remind in 2 hours\n"
+            "  /remind 3 1d - Remind in 1 day\n\n"
+            "Use /list to see task numbers."
+        )
+        return
+
+    try:
+        task_num = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Please provide a valid task number.")
+        return
+
+    try:
+        time_delta = parse_reminder_time(context.args[1])
+    except ValueError as e:
+        await update.message.reply_text(
+            f"Invalid time format. Use formats like:\n"
+            "  30m (30 minutes)\n"
+            "  2h (2 hours)\n"
+            "  1d (1 day)"
+        )
+        return
+
+    try:
+        # Get current tasks to find the one to set reminder for
+        tasks = notion_service.get_tasks()
+
+        if task_num < 1 or task_num > len(tasks):
+            await update.message.reply_text(f"Invalid task number. Use /list to see available tasks (1-{len(tasks)}).")
+            return
+
+        task = tasks[task_num - 1]
+        reminder_time = datetime.now() + time_delta
+
+        notion_service.set_reminder(task["id"], reminder_time)
+
+        # Format the reminder time for display
+        if time_delta.days > 0:
+            time_str = f"{time_delta.days} day(s)"
+        elif time_delta.seconds >= 3600:
+            time_str = f"{time_delta.seconds // 3600} hour(s)"
+        else:
+            time_str = f"{time_delta.seconds // 60} minute(s)"
+
+        await update.message.reply_text(
+            f'Reminder set for "{task["title"]}" in {time_str}\n'
+            f'   ({reminder_time.strftime("%I:%M %p")})'
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"Error setting reminder: {str(e)}")
+
+
+async def check_reminders(bot: Bot, chat_id: int):
+    """Check for due reminders and send notifications."""
+    try:
+        tasks = notion_service.get_tasks_with_reminders()
+
+        for task in tasks:
+            # Send reminder notification
+            message = (
+                f"Reminder: {task['title']}\n"
+            )
+
+            if task["due_date"]:
+                message += f"   Due: {task['due_date']}"
+
+            if task["priority"] == "High":
+                message = "! " + message
+
+            await bot.send_message(chat_id=chat_id, text=message)
+
+            # Clear the reminder so it doesn't fire again
+            notion_service.clear_reminder(task["id"])
+
+    except Exception as e:
+        print(f"Error checking reminders: {e}")
+
+
+def setup_reminder_job(application, chat_id: int):
+    """Set up the recurring reminder check job."""
+    job_queue = application.job_queue
+
+    async def reminder_callback(context: ContextTypes.DEFAULT_TYPE):
+        await check_reminders(context.bot, chat_id)
+
+    # Run every X minutes (configured in config.py)
+    interval = config.REMINDER_CHECK_INTERVAL * 60  # Convert to seconds
+    job_queue.run_repeating(reminder_callback, interval=interval, first=10)
