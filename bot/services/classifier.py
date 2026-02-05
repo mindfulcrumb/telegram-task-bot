@@ -246,11 +246,21 @@ def parse_task_input(text: str) -> dict:
     # Remove hashtags from the final title
     cleaned = re.sub(r"[#@](personal|business)\b", "", text, flags=re.IGNORECASE)
 
+    # Remove command words from the beginning
+    cleaned = re.sub(r"^(add|create|new|make|set|schedule)\s+", "", cleaned, flags=re.IGNORECASE)
+
+    # Remove "remind me to/about" patterns (keep the actual task)
+    cleaned = re.sub(r"^remind\s*(?:me)?\s*(?:to|about)?\s+", "", cleaned, flags=re.IGNORECASE)
+
     # Extract components
     priority, cleaned = extract_priority(cleaned)
     reminder_time, cleaned = extract_reminder(cleaned)
     due_date, cleaned = extract_date(cleaned)
     category = classify_task(text)  # Use original text for classification
+
+    # Final cleanup - remove leftover "and" at start/end
+    cleaned = re.sub(r"^\s*and\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+and\s*$", "", cleaned, flags=re.IGNORECASE)
 
     return {
         "title": cleaned.strip(),
