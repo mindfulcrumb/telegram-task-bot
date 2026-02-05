@@ -7,6 +7,14 @@ from bot.services.notion import notion_service
 from bot.handlers.tasks import is_authorized
 import config
 
+# Store active chat IDs for sending reminders
+_active_chat_ids = set()
+
+
+def register_chat_id(chat_id: int):
+    """Register a chat ID to receive reminder notifications."""
+    _active_chat_ids.add(chat_id)
+
 
 def parse_reminder_time(time_str: str) -> timedelta:
     """
@@ -101,24 +109,37 @@ async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error setting reminder: {str(e)}")
 
 
-async def check_reminders(bot: Bot, chat_id: int):
+async def check_reminders(bot: Bot, chat_ids: set = None):
     """Check for due reminders and send notifications."""
     try:
         tasks = notion_service.get_tasks_with_reminders()
 
+        if not tasks:
+            return
+
+        # Use provided chat_ids or fall back to registered ones
+        target_chats = chat_ids or _active_chat_ids
+
+        if not target_chats:
+            print("No chat IDs registered for reminders")
+            return
+
         for task in tasks:
-            # Send reminder notification
-            message = (
-                f"Reminder: {task['title']}\n"
-            )
+            # Build reminder notification message
+            priority_icon = "🔴 " if task["priority"] == "High" else ""
+            message = f"⏰ **REMINDER**\n\n{priority_icon}📋 {task['title']}"
 
             if task["due_date"]:
-                message += f"   Due: {task['due_date']}"
+                message += f"\n📅 Due: {task['due_date']}"
 
-            if task["priority"] == "High":
-                message = "! " + message
+            message += "\n\n_Reply 'done' to mark complete_"
 
-            await bot.send_message(chat_id=chat_id, text=message)
+            # Send to all registered chats
+            for chat_id in target_chats:
+                try:
+                    await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
+                except Exception as e:
+                    print(f"Error sending reminder to {chat_id}: {e}")
 
             # Clear the reminder so it doesn't fire again
             notion_service.clear_reminder(task["id"])
@@ -127,13 +148,17 @@ async def check_reminders(bot: Bot, chat_id: int):
         print(f"Error checking reminders: {e}")
 
 
-def setup_reminder_job(application, chat_id: int):
+def setup_reminder_job(application, chat_id: int = None):
     """Set up the recurring reminder check job."""
     job_queue = application.job_queue
 
-    async def reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-        await check_reminders(context.bot, chat_id)
+    # Register the provided chat_id if given
+    if chat_id:
+        register_chat_id(chat_id)
 
-    # Run every X minutes (configured in config.py)
-    interval = config.REMINDER_CHECK_INTERVAL * 60  # Convert to seconds
-    job_queue.run_repeating(reminder_callback, interval=interval, first=10)
+    async def reminder_callback(context: ContextTypes.DEFAULT_TYPE):
+        await check_reminders(context.bot)
+
+    # Run every 1 minute for responsive reminders (minimum interval)
+    interval = max(60, config.REMINDER_CHECK_INTERVAL * 60)  # At least every minute
+    job_queue.run_repeating(reminder_callback, interval=60, first=10)  # Check every minute

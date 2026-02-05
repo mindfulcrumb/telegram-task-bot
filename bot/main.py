@@ -73,12 +73,14 @@ def main():
         handle_message
     ))
 
-    # Set up reminder job (uses first allowed user ID for notifications)
+    # Set up reminder job - checks every minute and sends to all active chats
     if config.ALLOWED_USER_IDS:
         setup_reminder_job(application, config.ALLOWED_USER_IDS[0])
         logger.info(f"Reminder job set up for user {config.ALLOWED_USER_IDS[0]}")
     else:
-        logger.warning("No ALLOWED_USER_IDS set - reminders will not be sent")
+        # Still set up the job - it will use dynamically registered chat IDs
+        setup_reminder_job(application)
+        logger.info("Reminder job set up (will use dynamic chat registration)")
 
     logger.info("Bot is ready! Starting polling...")
 
