@@ -4,7 +4,6 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from bot.services.notion import notion_service
 from bot.services.classifier import parse_task_input
-from bot.handlers.reminders import register_chat_id
 import config
 
 
@@ -130,7 +129,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return
 
-    # Register this chat for reminder notifications
+    # Register this chat for reminder notifications (lazy import to avoid circular)
+    from bot.handlers.reminders import register_chat_id
     register_chat_id(update.effective_chat.id)
 
     text = update.message.text.strip()

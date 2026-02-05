@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from telegram import Update, Bot
 from telegram.ext import ContextTypes
 from bot.services.notion import notion_service
-from bot.handlers.tasks import is_authorized
 import config
 
 # Store active chat IDs for sending reminders
@@ -14,6 +13,13 @@ _active_chat_ids = set()
 def register_chat_id(chat_id: int):
     """Register a chat ID to receive reminder notifications."""
     _active_chat_ids.add(chat_id)
+
+
+def is_authorized(user_id: int) -> bool:
+    """Check if user is authorized to use the bot."""
+    if not config.ALLOWED_USER_IDS:
+        return True
+    return user_id in config.ALLOWED_USER_IDS
 
 
 def parse_reminder_time(time_str: str) -> timedelta:
