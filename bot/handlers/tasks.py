@@ -96,24 +96,26 @@ def detect_intent(text: str) -> dict:
     if len(text_lower) < 4 and not any(c.isdigit() for c in text_lower):
         return {"action": "greeting"}
 
-    # Check if it looks like a real task (has actionable words or time references)
-    task_indicators = [
-        r"\b(buy|call|email|send|finish|complete|review|prepare|meet|meeting)\b",
-        r"\b(pick up|drop off|submit|pay|book|schedule|remind|write|read|clean)\b",
-        r"\b(fix|update|check|contact|visit|order|cancel|renew|return)\b",
-        r"\b(tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
-        r"\b(morning|afternoon|evening|night|pm|am|noon)\b",
-        r"\b(at \d|by \d|in \d|next week|this week|end of)\b",
-        r"#(business|personal|work|home)",
-        r"!(high|low|urgent|medium)",
-    ]
+    # Only auto-add as task if it has STRONG task signals
+    # Must have: (actionable verb) AND (time reference OR hashtag/priority)
 
-    is_likely_task = any(re.search(p, text_lower) for p in task_indicators)
+    action_verbs = r"\b(buy|email|submit|pay|book|schedule|pick up|drop off|prepare|clean|fix|order|renew|return)\b"
+    time_refs = r"\b(tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this week|end of|at \d|by \d|in \d\s*(day|hour|minute|week)|morning|afternoon|evening|tonight)\b"
+    task_tags = r"(#(business|personal|work|home)|!(high|low|urgent|medium))"
 
-    if is_likely_task:
+    has_action = re.search(action_verbs, text_lower)
+    has_time = re.search(time_refs, text_lower)
+    has_tag = re.search(task_tags, text_lower)
+
+    # Only auto-add if we have strong signals
+    if has_action and (has_time or has_tag):
         return {"action": "add_task"}
 
-    # Ambiguous input - ask for clarification
+    # If just has tags, it's likely meant to be a task
+    if has_tag:
+        return {"action": "add_task"}
+
+    # Everything else - ask for clarification (don't auto-add)
     return {"action": "unclear", "text": text}
 
 
