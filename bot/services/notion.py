@@ -121,9 +121,13 @@ class NotionTaskService:
         self,
         category: Optional[str] = None,
         status: str = None,
-        due_today: bool = False
+        due_today: bool = False,
+        due_this_week: bool = False,
+        overdue: bool = False
     ) -> list:
         """Get tasks from Notion using database query."""
+        from datetime import timedelta
+
         # Query the database directly via raw API
         try:
             headers = {
@@ -147,7 +151,9 @@ class NotionTaskService:
 
         tasks = []
         idx = 1
-        today_str = date.today().strftime("%Y-%m-%d")
+        today = date.today()
+        today_str = today.strftime("%Y-%m-%d")
+        week_end = (today + timedelta(days=7)).strftime("%Y-%m-%d")
 
         for page in response.get("results", []):
             # Skip if archived
@@ -216,15 +222,31 @@ class NotionTaskService:
 
             # Format due date for display
             due_display = None
+            task_due_date = None
             if task_due:
                 try:
                     due_dt = datetime.fromisoformat(task_due.replace("Z", "+00:00"))
                     due_display = due_dt.strftime("%b %d")
+                    task_due_date = task_due[:10]
+
                     # Check if due today
-                    if due_today and task_due[:10] != today_str:
+                    if due_today and task_due_date != today_str:
                         continue
+
+                    # Check if due this week (today to 7 days from now)
+                    if due_this_week and not (today_str <= task_due_date <= week_end):
+                        continue
+
+                    # Check if overdue (before today)
+                    if overdue and task_due_date >= today_str:
+                        continue
+
                 except (ValueError, AttributeError):
                     due_display = task_due
+
+            # For overdue filter, skip tasks without due date
+            if overdue and not task_due_date:
+                continue
 
             # Filter by category if specified
             if category and task_category != category:
@@ -318,6 +340,20 @@ class NotionTaskService:
 
         # Fallback: archive
         return self.client.pages.update(page_id=page_id, archived=True)
+
+    def delete_task(self, page_id: str) -> dict:
+        """Delete a task by archiving it in Notion."""
+        return self.client.pages.update(page_id=page_id, archived=True)
+
+    def update_task_title(self, page_id: str, new_title: str) -> dict:
+        """Update a task's title."""
+        title_prop = self._get_property_name("Task") or self._get_property_name("Name") or "Name"
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={
+                title_prop: {"title": [{"text": {"content": new_title}}]}
+            }
+        )
 
     def clear_reminder(self, page_id: str) -> dict:
         """Clear the reminder from a task."""

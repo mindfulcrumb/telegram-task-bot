@@ -452,6 +452,146 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error completing task: {str(e)}")
 
 
+async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /delete command - remove a task."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /delete <task number>\n\n"
+            "Use /list to see task numbers."
+        )
+        return
+
+    try:
+        task_num = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Please provide a valid task number.")
+        return
+
+    try:
+        tasks = notion_service.get_tasks()
+
+        if task_num < 1 or task_num > len(tasks):
+            await update.message.reply_text(f"Invalid task number. Use /list to see available tasks (1-{len(tasks)}).")
+            return
+
+        task = tasks[task_num - 1]
+        notion_service.delete_task(task["id"])
+
+        await update.message.reply_text(f'🗑️ Deleted: "{task["title"]}"')
+
+    except Exception as e:
+        await update.message.reply_text(f"Error deleting task: {str(e)}")
+
+
+async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /edit command - edit a task's title."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /edit <task number> <new title>\n\n"
+            "Example: /edit 1 Buy groceries and milk\n\n"
+            "Use /list to see task numbers."
+        )
+        return
+
+    try:
+        task_num = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Please provide a valid task number.")
+        return
+
+    new_title = " ".join(context.args[1:])
+
+    try:
+        tasks = notion_service.get_tasks()
+
+        if task_num < 1 or task_num > len(tasks):
+            await update.message.reply_text(f"Invalid task number. Use /list to see available tasks (1-{len(tasks)}).")
+            return
+
+        task = tasks[task_num - 1]
+        notion_service.update_task_title(task["id"], new_title)
+
+        await update.message.reply_text(f'✏️ Updated: "{task["title"]}" → "{new_title}"')
+
+    except Exception as e:
+        await update.message.reply_text(f"Error editing task: {str(e)}")
+
+
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /week command - show this week's tasks."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    try:
+        tasks = notion_service.get_tasks(due_this_week=True)
+
+        if not tasks:
+            await update.message.reply_text("No tasks due this week! 🎉")
+            return
+
+        response = "📅 This Week's Tasks:\n\n"
+
+        for task in tasks:
+            priority_icon = ""
+            if task["priority"] == "High":
+                priority_icon = "🔴 "
+            elif task["priority"] == "Low":
+                priority_icon = "⚪ "
+
+            cat_icon = "💼" if task["category"] == "Business" else "🏠"
+            due = f" ({task['due_date']})" if task["due_date"] else ""
+
+            response += f"{task['index']}. {priority_icon}{cat_icon} {task['title']}{due}\n"
+
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+
+
+async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /overdue command - show overdue tasks."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    try:
+        tasks = notion_service.get_tasks(overdue=True)
+
+        if not tasks:
+            await update.message.reply_text("No overdue tasks! You're all caught up! ✨")
+            return
+
+        response = "⚠️ Overdue Tasks:\n\n"
+
+        for task in tasks:
+            priority_icon = ""
+            if task["priority"] == "High":
+                priority_icon = "🔴 "
+            elif task["priority"] == "Low":
+                priority_icon = "⚪ "
+
+            cat_icon = "💼" if task["category"] == "Business" else "🏠"
+            due = f" (was due: {task['due_date']})" if task["due_date"] else ""
+
+            response += f"{task['index']}. {priority_icon}{cat_icon} {task['title']}{due}\n"
+
+        response += "\n💡 Use /done <number> to complete or /delete <number> to remove"
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     help_text = """*Task Bot Commands*
@@ -477,7 +617,11 @@ Or use /add <task description>
 /list personal - Show personal tasks
 /list business - Show business tasks
 /today - Show today's tasks
+/week - Show this week's tasks
+/overdue - Show overdue tasks
 /done <number> - Mark task as complete
+/delete <number> - Delete a task
+/edit <number> <new title> - Edit task
 /remind <number> <time> - Set reminder
 /help - Show this help
 
