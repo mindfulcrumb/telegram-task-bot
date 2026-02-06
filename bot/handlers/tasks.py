@@ -203,6 +203,35 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             safe_summary = to_ascii(summary) if summary else "Analysis unavailable"
             await update.message.reply_text("TASK ANALYSIS\n\n" + safe_summary)
 
+        elif action == "send_email":
+            from bot.services.email_service import send_email
+            to_email = data.get("to", "")
+            subject = data.get("subject", "")
+            body = data.get("body", "")
+
+            if not to_email or not subject or not body:
+                await update.message.reply_text(response or "Need email address, subject, and message to send.")
+            else:
+                success, msg = send_email(to_email, subject, body)
+                if success:
+                    await update.message.reply_text(response or f"✉️ Email sent to {to_email}!")
+                else:
+                    await update.message.reply_text(f"Couldn't send email: {msg}")
+
+        elif action == "send_whatsapp":
+            from bot.services.whatsapp_service import send_whatsapp
+            to_number = data.get("to", "")
+            message = data.get("message", "")
+
+            if not to_number or not message:
+                await update.message.reply_text(response or "Need phone number and message to send.")
+            else:
+                success, msg = send_whatsapp(to_number, message)
+                if success:
+                    await update.message.reply_text(response or f"📱 WhatsApp sent to {to_number}!")
+                else:
+                    await update.message.reply_text(f"Couldn't send WhatsApp: {msg}")
+
         elif action == "answer":
             await update.message.reply_text(response or data.get("text", "I'm here to help!"))
 

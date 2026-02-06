@@ -157,11 +157,32 @@ class AIBrain:
 
         return "\n".join(lines)
 
+    def _get_contacts_context(self):
+        """Get contacts for context."""
+        contacts = getattr(config, 'CONTACTS', {})
+        if not contacts:
+            return "No saved contacts yet."
+        return ", ".join(f"{name}: {val}" for name, val in contacts.items())
+
+    def _get_capabilities(self):
+        """Check what capabilities are available."""
+        from bot.services.email_service import is_email_configured
+        from bot.services.whatsapp_service import is_whatsapp_configured
+
+        caps = []
+        if is_email_configured():
+            caps.append("email")
+        if is_whatsapp_configured():
+            caps.append("whatsapp")
+        return caps
+
     def _get_system_prompt(self, tasks):
         """Build system prompt with personality and context."""
         task_list = self._build_task_context(tasks)
         time_ctx = self._get_time_context()
         stats = self._analyze_tasks(tasks)
+        contacts = self._get_contacts_context()
+        capabilities = self._get_capabilities()
 
         # Build situation awareness
         situation = []
@@ -173,6 +194,17 @@ class AIBrain:
             situation.append(f"{stats['high_priority']} high priority")
 
         situation_str = ", ".join(situation) if situation else "all clear"
+
+        # Build capabilities section
+        caps_text = ""
+        if "email" in capabilities:
+            caps_text += '\n- "send_email": data: {"to": "email@example.com", "subject": "...", "body": "..."}'
+        if "whatsapp" in capabilities:
+            caps_text += '\n- "send_whatsapp": data: {"to": "+1234567890", "message": "..."}'
+
+        caps_note = ""
+        if capabilities:
+            caps_note = f"\n\nYOU CAN ALSO:\n- Send emails and WhatsApp messages when asked\n- Use saved contacts by name (e.g., 'message john' -> looks up john's number)\n\nSAVED CONTACTS:\n{contacts}"
 
         return f"""You're a chill, helpful assistant managing tasks via Telegram. Talk like a supportive friend, not a robot.
 
@@ -191,7 +223,7 @@ RIGHT NOW:
 - Status: {situation_str}
 
 THEIR TASKS:
-{task_list}
+{task_list}{caps_note}
 
 RESPOND WITH JSON:
 {{"action": "TYPE", "data": {{}}, "response": "your message"}}
@@ -200,7 +232,7 @@ ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
 - "done": data: {{"task_num": N}}
 - "delete": data: {{"task_num": N}}
-- "list": data: {{"filter": "all/today/business/personal"}}
+- "list": data: {{"filter": "all/today/business/personal"}}{caps_text}
 - "answer": Just chat - use this most of the time
 
 SMART BEHAVIORS:
@@ -210,6 +242,8 @@ SMART BEHAVIORS:
 - If they seem stressed, be extra supportive
 - If task is vague, maybe ask what specifically they need to do
 - Celebrate wins when they complete stuff!
+- For emails/messages: if no recipient specified, ASK who to send to
+- Always confirm before sending emails/messages (show what you'll send)
 
 Keep it real. No corporate speak. Just be helpful."""
 

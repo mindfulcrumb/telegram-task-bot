@@ -50,3 +50,26 @@ ANTHROPIC_API_KEY = clean_env_value(os.getenv("ANTHROPIC_API_KEY"))
 
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
+
+# Email Configuration (Gmail SMTP)
+# Create a Gmail, enable 2FA, then create an App Password at:
+# https://myaccount.google.com/apppasswords
+SMTP_EMAIL = clean_env_value(os.getenv("SMTP_EMAIL"))
+SMTP_PASSWORD = clean_env_value(os.getenv("SMTP_PASSWORD"))
+
+# WhatsApp via Twilio
+# Get credentials at: https://console.twilio.com
+# For sandbox, TWILIO_WHATSAPP_FROM is like: +14155238886
+TWILIO_ACCOUNT_SID = clean_env_value(os.getenv("TWILIO_ACCOUNT_SID"))
+TWILIO_AUTH_TOKEN = clean_env_value(os.getenv("TWILIO_AUTH_TOKEN"))
+TWILIO_WHATSAPP_FROM = clean_env_value(os.getenv("TWILIO_WHATSAPP_FROM"))
+
+# Contact book for quick references (name -> email/phone)
+# Format: "john:john@email.com,mom:+1234567890"
+CONTACTS_RAW = clean_env_value(os.getenv("CONTACTS", ""))
+CONTACTS = {}
+if CONTACTS_RAW:
+    for pair in CONTACTS_RAW.split(","):
+        if ":" in pair:
+            name, value = pair.split(":", 1)
+            CONTACTS[name.strip().lower()] = value.strip()
