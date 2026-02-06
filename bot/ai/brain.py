@@ -1,48 +1,42 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
 import os
+import sys
 import logging
 from datetime import datetime, date, timedelta
 
-# Suppress httpx/httpcore logging which can cause encoding issues
-logging.getLogger("httpx").setLevel(logging.ERROR)
-logging.getLogger("httpcore").setLevel(logging.ERROR)
-logging.getLogger("anthropic").setLevel(logging.ERROR)
+# Suppress ALL logging from httpx/httpcore/anthropic
+for logger_name in ["httpx", "httpcore", "anthropic", "httpcore.connection", "httpcore.http11"]:
+    logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+    logging.getLogger(logger_name).disabled = True
 
-# Set encoding environment variable
+# Set encoding environment variables
 os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['PYTHONLEGACYWINDOWSSTDIO'] = 'utf-8'
 
 from anthropic import Anthropic
 import config
 
 
-def to_ascii_safe(text) -> str:
-    """
-    Convert text to ASCII-safe string.
-    Replaces all non-ASCII characters to avoid encoding errors.
-    """
+def make_ascii(text) -> str:
+    """Convert ANY text to pure ASCII. No exceptions possible."""
     if text is None:
         return ""
-    try:
-        # Convert to string first
-        text = str(text)
-        # Build ASCII-only string character by character
-        result = []
-        for char in text:
-            if ord(char) < 128:
-                result.append(char)
-            else:
-                result.append('?')
-        return ''.join(result)
-    except Exception:
-        return "unknown"
+    result = ""
+    for char in str(text):
+        code = ord(char)
+        if code < 128:
+            result += char
+        else:
+            result += "?"
+    return result
 
 
 class AIBrain:
     """Claude-powered brain for intelligent task management."""
 
     def __init__(self):
-        self.client = None  # Lazy init
+        self.client = None
         self.conversation_history = []
 
     def _get_client(self):
@@ -54,59 +48,48 @@ class AIBrain:
         return self.client
 
     async def process(self, user_input: str, tasks: list = None) -> dict:
-        """
-        Process any user input with Claude and return structured action.
-
-        Returns dict with:
-        - action: 'add_task', 'list', 'done', 'delete', 'answer', etc.
-        - data: action-specific data
-        - response: what to tell the user
-        """
+        """Process user input with Claude."""
         client = self._get_client()
         if not client:
             return {"action": "fallback", "data": {}, "response": None}
 
-        # Make user input ASCII-safe
-        safe_input = to_ascii_safe(user_input)
+        safe_input = make_ascii(user_input)
 
-        # Build context about current tasks (ASCII-safe)
         tasks_context = ""
         if tasks:
             tasks_context = "\n\nCurrent tasks:\n"
             for t in tasks[:10]:
-                title = to_ascii_safe(t.get('title', 'Untitled'))
-                category = to_ascii_safe(t.get('category', 'Personal'))
-                priority = to_ascii_safe(t.get('priority', 'Medium'))
-                tasks_context += "- #" + str(t['index']) + ": " + title + " (" + category + ", " + priority + ")"
-                if t.get('due_date'):
-                    tasks_context += " due " + str(t['due_date'])
-                tasks_context += "\n"
+                title = make_ascii(t.get('title', 'Untitled'))
+                category = make_ascii(t.get('category', 'Personal'))
+                priority = make_ascii(t.get('priority', 'Medium'))
+                idx = str(t.get('index', 0))
+                tasks_context = tasks_context + "- #" + idx + ": " + title + " (" + category + ", " + priority + ")"
+                due = t.get('due_date')
+                if due:
+                    tasks_context = tasks_context + " due " + str(due)
+                tasks_context = tasks_context + "\n"
 
-        system_prompt = """You are an intelligent task manager. Today is """ + date.today().strftime('%A, %B %d, %Y') + """.
-
-Understand user intent and return JSON with an action.
-
-ACTIONS:
-- add_task: Create task. data: {title, category, priority, due_date, reminder_minutes}
-- list: Show tasks. data: {filter: "all"|"today"|"week"|"overdue"|"business"|"personal"}
-- done: Complete task. data: {task_num}
-- delete: Remove task. data: {task_num}
-- remind: Set reminder. data: {task_num, minutes}
-- answer: Conversational response. data: {text}
-- summary: Analyze tasks. data: {}
-
-Return ONLY valid JSON:
-{"action": "...", "data": {...}, "response": "what to say"}
-
-SMART RULES:
-- "meeting with client" -> Business, Medium priority
-- "URGENT" or "ASAP" -> High priority
-- "groceries", "gym" -> Personal
-- "next week" -> due_date = next Monday
-- "remind me in 2 hours" -> reminder_minutes: 120
-- Questions about tasks -> use 'answer' with analysis
-- Greetings -> friendly 'answer'
-""" + tasks_context
+        today_str = date.today().strftime('%A, %B %d, %Y')
+        system_prompt = "You are an intelligent task manager. Today is " + today_str + ".\n\n"
+        system_prompt = system_prompt + "Understand user intent and return JSON with an action.\n\n"
+        system_prompt = system_prompt + "ACTIONS:\n"
+        system_prompt = system_prompt + "- add_task: Create task. data: {title, category, priority, due_date, reminder_minutes}\n"
+        system_prompt = system_prompt + "- list: Show tasks. data: {filter: all|today|week|overdue|business|personal}\n"
+        system_prompt = system_prompt + "- done: Complete task. data: {task_num}\n"
+        system_prompt = system_prompt + "- delete: Remove task. data: {task_num}\n"
+        system_prompt = system_prompt + "- remind: Set reminder. data: {task_num, minutes}\n"
+        system_prompt = system_prompt + "- answer: Conversational response. data: {text}\n"
+        system_prompt = system_prompt + "- summary: Analyze tasks. data: {}\n\n"
+        system_prompt = system_prompt + "Return ONLY valid JSON: {action: ..., data: {...}, response: what to say}\n\n"
+        system_prompt = system_prompt + "SMART RULES:\n"
+        system_prompt = system_prompt + "- meeting with client -> Business, Medium priority\n"
+        system_prompt = system_prompt + "- URGENT or ASAP -> High priority\n"
+        system_prompt = system_prompt + "- groceries, gym -> Personal\n"
+        system_prompt = system_prompt + "- next week -> due_date = next Monday\n"
+        system_prompt = system_prompt + "- remind me in 2 hours -> reminder_minutes: 120\n"
+        system_prompt = system_prompt + "- Questions about tasks -> use answer with analysis\n"
+        system_prompt = system_prompt + "- Greetings -> friendly answer\n"
+        system_prompt = system_prompt + tasks_context
 
         try:
             response = client.messages.create(
@@ -121,7 +104,6 @@ SMART RULES:
 
             response_text = response.content[0].text
 
-            # Extract JSON
             try:
                 json_start = response_text.find('{')
                 json_end = response_text.rfind('}') + 1
@@ -136,71 +118,56 @@ SMART RULES:
                     "response": response_text
                 }
 
-            # Update history (with safe strings)
             self.conversation_history.append({"role": "user", "content": safe_input})
-            self.conversation_history.append({"role": "assistant", "content": to_ascii_safe(response_text)})
+            self.conversation_history.append({"role": "assistant", "content": make_ascii(response_text)})
             if len(self.conversation_history) > 20:
                 self.conversation_history = self.conversation_history[-10:]
 
             return result
 
-        except UnicodeEncodeError as ue:
-            return {"action": "fallback", "data": {}, "response": None}
-        except UnicodeDecodeError as ud:
-            return {"action": "fallback", "data": {}, "response": None}
-        except Exception as e:
-            error_msg = to_ascii_safe(str(e))
+        except BaseException:
             return {"action": "fallback", "data": {}, "response": None}
 
     async def weekly_summary(self, tasks: list) -> str:
         """Generate weekly task analysis."""
         client = self._get_client()
-        if not client or not tasks:
+        if not client:
+            return "AI client not available. Check ANTHROPIC_API_KEY."
+        if not tasks:
             return "No tasks to analyze."
 
-        # Build tasks text (ASCII-safe for API call)
+        # Build PURE ASCII task list
         task_lines = []
         for t in tasks:
-            title = to_ascii_safe(t.get('title', 'Untitled'))
-            category = to_ascii_safe(t.get('category', 'Personal'))
-            priority = to_ascii_safe(t.get('priority', 'Medium'))
+            title = make_ascii(t.get('title', 'Untitled'))
+            category = make_ascii(t.get('category', 'Personal'))
+            priority = make_ascii(t.get('priority', 'Medium'))
             line = "- " + title + " (" + category + ", " + priority + ")"
-            if t.get('due_date'):
-                line += " due " + str(t['due_date'])
+            due = t.get('due_date')
+            if due:
+                line = line + " due " + str(due)
             task_lines.append(line)
 
         tasks_text = "\n".join(task_lines)
 
-        prompt = """Analyze these tasks briefly:
-
-""" + tasks_text + """
-
-Give:
-1. One-line overview
-2. Top 3 priorities
-3. Any concerns
-4. One tip
-
-Be concise."""
+        prompt = "Analyze these tasks briefly:\n\n"
+        prompt = prompt + tasks_text + "\n\n"
+        prompt = prompt + "Give:\n1. One-line overview\n2. Top 3 priorities\n3. Any concerns\n4. One tip\n\nBe concise."
 
         try:
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=500,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
+                messages=[{"role": "user", "content": prompt}]
             )
             return response.content[0].text
-        except UnicodeEncodeError:
-            return "Analysis unavailable: encoding error with task data"
-        except UnicodeDecodeError:
-            return "Analysis unavailable: encoding error with task data"
-        except Exception as e:
-            error_msg = to_ascii_safe(str(e))
-            return "Analysis unavailable: " + error_msg
+        except BaseException as e:
+            # Catch absolutely everything
+            try:
+                err = make_ascii(str(e))
+                return "Analysis error: " + err
+            except BaseException:
+                return "Analysis unavailable due to system error"
 
 
-# Singleton
 ai_brain = AIBrain()

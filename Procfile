@@ -1,1 +1,1 @@
-worker: PYTHONIOENCODING=utf-8 LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 python -m bot.main
+worker: PYTHONIOENCODING=utf-8 PYTHONLEGACYWINDOWSSTDIO=utf-8 LANG=C.UTF-8 LC_ALL=C.UTF-8 python -m bot.main
