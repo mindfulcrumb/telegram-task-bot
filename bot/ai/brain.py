@@ -29,62 +29,47 @@ def to_ascii(text):
 
 
 def call_anthropic(prompt_text):
-    """
-    Call Anthropic API in isolated subprocess to completely bypass encoding issues.
-    The subprocess has its own controlled encoding environment.
-    """
-    import subprocess
-    import sys
+    """Call Anthropic API - works with proper UTF-8 locale from Dockerfile."""
+    import requests
 
-    # Clean inputs in main process
-    raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not raw_key:
-        return "Error: No API key"
-    api_key = "".join(c for c in raw_key if c.isalnum() or c in "-_")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return "Error: Invalid key"
+        return "Error: No API key"
 
+    # Clean API key
+    api_key = api_key.strip()
+
+    # Clean prompt to ASCII for safety
     safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
 
-    # Self-contained Python script that runs in subprocess
-    script = '''
-import sys, json, http.client, ssl
-key, prompt = sys.argv[1], sys.argv[2]
-try:
-    body = json.dumps({"model":"claude-3-5-sonnet-20241022","max_tokens":500,"messages":[{"role":"user","content":prompt}]}, ensure_ascii=True).encode("ascii")
-    ctx = ssl.create_default_context()
-    c = http.client.HTTPSConnection("api.anthropic.com", context=ctx, timeout=60)
-    c.request("POST", "/v1/messages", body=body, headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"})
-    r = c.getresponse()
-    d = json.loads(r.read().decode("utf-8", errors="replace"))
-    c.close()
-    if "error" in d:
-        print("ERR:" + str(d.get("error",{}).get("message",""))[:200])
-    else:
-        t = d.get("content",[{}])[0].get("text","") if d.get("content") else ""
-        print("OK:" + "".join(x if ord(x)<128 else "" for x in t))
-except Exception as e:
-    print("ERR:" + type(e).__name__)
-'''
-
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", script, api_key, safe_prompt],
-            capture_output=True,
-            timeout=90,
-            text=True,
-            env={**os.environ, "PYTHONIOENCODING": "ascii:replace", "PYTHONUTF8": "0"}
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": safe_prompt}]
+            },
+            timeout=60
         )
 
-        output = (result.stdout or "").strip()
-        if output.startswith("OK:"):
-            return output[3:] or "Analysis complete (no details)"
-        elif output.startswith("ERR:"):
-            return "API error: " + output[4:]
-        else:
-            return "Error: " + to_ascii(result.stderr or "Unknown")[:100]
+        data = response.json()
 
-    except subprocess.TimeoutExpired:
+        if "error" in data:
+            return "API error: " + to_ascii(str(data["error"].get("message", "")))
+
+        content = data.get("content", [])
+        if content:
+            return to_ascii(content[0].get("text", ""))
+
+        return "No response"
+
+    except requests.Timeout:
         return "Error: Timeout"
     except Exception as e:
         return "Error: " + to_ascii(type(e).__name__)
