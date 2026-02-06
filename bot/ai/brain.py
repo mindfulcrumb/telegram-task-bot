@@ -36,51 +36,66 @@ def call_anthropic(prompt_text):
     import http.client
     import ssl
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "Error: API key not configured"
-
-    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-
-    # Build request body as pure ASCII JSON
-    body_dict = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 500,
-        "messages": [{"role": "user", "content": safe_prompt}]
-    }
-    body_bytes = json.dumps(body_dict, ensure_ascii=True).encode("ascii")
-
+    step = "init"
     try:
-        # Create HTTPS connection
+        step = "get_key"
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return "Error: API key not configured"
+
+        step = "ascii_prompt"
+        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
+        step = "build_body"
+        body_dict = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 500,
+            "messages": [{"role": "user", "content": safe_prompt}]
+        }
+
+        step = "json_dumps"
+        body_str = json.dumps(body_dict, ensure_ascii=True)
+
+        step = "encode_body"
+        body_bytes = body_str.encode("ascii")
+
+        step = "ssl_context"
         ctx = ssl.create_default_context()
+
+        step = "connection"
         conn = http.client.HTTPSConnection("api.anthropic.com", 443, context=ctx, timeout=60)
 
-        # Headers as ASCII strings
+        step = "headers"
         headers = {
-            "x-api-key": api_key,
+            "x-api-key": to_ascii(api_key),
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
             "accept": "application/json"
         }
 
-        # Make request
+        step = "request"
         conn.request("POST", "/v1/messages", body=body_bytes, headers=headers)
+
+        step = "getresponse"
         response = conn.getresponse()
 
-        # Read response as bytes, decode with error handling
+        step = "read_response"
         response_bytes = response.read()
+
+        step = "decode_response"
         response_text = response_bytes.decode("utf-8", errors="replace")
 
+        step = "close"
         conn.close()
 
-        # Parse JSON
+        step = "parse_json"
         data = json.loads(response_text)
 
-        # Check for error
+        step = "check_error"
         if "error" in data:
             return "API error: " + to_ascii(str(data["error"].get("message", "Unknown")))
 
-        # Extract content
+        step = "extract"
         content = data.get("content", [])
         if content and len(content) > 0:
             raw_text = content[0].get("text", "")
@@ -89,7 +104,7 @@ def call_anthropic(prompt_text):
         return "No response from AI"
 
     except Exception as e:
-        return "Error: " + to_ascii(type(e).__name__)
+        return "Error at " + step + ": " + to_ascii(type(e).__name__)
 
 
 class AIBrain:
