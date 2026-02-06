@@ -30,42 +30,38 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using curl subprocess. 100% encoding-safe.
-    Bypasses Python's HTTP stack which has known UnicodeEncodeError issues.
+    Call Anthropic API using httpx with explicit encoding.
+    All strings are converted to ASCII before any network operation.
     """
-    import subprocess
+    import httpx
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "Error: API key not configured"
 
-    # Convert prompt to ASCII
+    # Convert prompt to ASCII FIRST
     safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
 
-    # Build JSON body - escape special characters for JSON
-    safe_prompt_escaped = safe_prompt.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-    json_body = '{"model":"claude-3-5-sonnet-20241022","max_tokens":500,"messages":[{"role":"user","content":"' + safe_prompt_escaped + '"}]}'
+    # Build request with pure ASCII data
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    body = {
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 500,
+        "messages": [{"role": "user", "content": safe_prompt}]
+    }
 
     try:
-        result = subprocess.run(
-            [
-                "curl", "-s", "-X", "POST",
-                "https://api.anthropic.com/v1/messages",
-                "-H", "x-api-key: " + api_key,
-                "-H", "anthropic-version: 2023-06-01",
-                "-H", "content-type: application/json",
-                "-d", json_body
-            ],
-            capture_output=True,
-            timeout=60,
-            text=True
-        )
-
-        if result.returncode != 0:
-            return "Error: curl failed with code " + str(result.returncode)
+        # Use httpx with explicit timeout
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(url, headers=headers, json=body)
 
         # Parse response
-        response_data = json.loads(result.stdout)
+        response_data = response.json()
 
         # Check for API error
         if "error" in response_data:
@@ -78,12 +74,8 @@ def call_anthropic(prompt_text):
             return to_ascii(raw_text)
         return "No response from AI"
 
-    except subprocess.TimeoutExpired:
+    except httpx.TimeoutException:
         return "Error: Request timed out"
-    except json.JSONDecodeError:
-        return "Error: Invalid API response"
-    except FileNotFoundError:
-        return "Error: curl not found"
     except Exception as e:
         return "Error: " + to_ascii(type(e).__name__)
 
