@@ -46,8 +46,12 @@ class AIBrain:
         if system:
             body["system"] = system
 
-        json_body = json.dumps(body, ensure_ascii=True)
-        data_bytes = json_body.encode('ascii')
+        try:
+            json_body = json.dumps(body, ensure_ascii=True)
+            data_bytes = json_body.encode('utf-8')  # Use UTF-8 for safety
+        except Exception as enc_err:
+            self.last_error = "ENCODE: " + make_ascii(str(enc_err))
+            return None
 
         req = urllib.request.Request(
             self.api_url,
@@ -87,7 +91,7 @@ class AIBrain:
             return None
 
         except Exception as e:
-            self.last_error = make_ascii(str(type(e).__name__))
+            self.last_error = make_ascii(str(type(e).__name__)) + ": " + make_ascii(str(e)[:100])
             return None
 
     async def process(self, user_input: str, tasks: list = None) -> dict:
