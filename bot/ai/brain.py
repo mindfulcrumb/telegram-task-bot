@@ -20,30 +20,23 @@ def make_ascii(text) -> str:
     return result
 
 
-def log(msg):
-    """Safe logging that won't crash on encoding issues."""
-    try:
-        print("[AI]", make_ascii(str(msg)))
-    except Exception:
-        pass
-
-
 class AIBrain:
     """Claude-powered brain for intelligent task management."""
 
     def __init__(self):
         self.conversation_history = []
         self.api_url = "https://api.anthropic.com/v1/messages"
+        self.last_error = None  # Store error for display to user
 
     def _make_request(self, messages: list, system: str = None, max_tokens: int = 500) -> str:
-        """Make direct HTTP request to Anthropic API using urllib (no third-party libs)."""
+        """Make direct HTTP request to Anthropic API."""
+        self.last_error = None
+
         # Check API key
         api_key = getattr(config, 'ANTHROPIC_API_KEY', None)
         if not api_key:
-            log("ERROR: No API key found")
+            self.last_error = "NO_API_KEY"
             return None
-
-        log("API key found, length=" + str(len(api_key)))
 
         body = {
             "model": "claude-3-5-sonnet-20241022",
@@ -53,11 +46,8 @@ class AIBrain:
         if system:
             body["system"] = system
 
-        # Serialize to JSON with ensure_ascii=True
         json_body = json.dumps(body, ensure_ascii=True)
         data_bytes = json_body.encode('ascii')
-
-        log("Request body size: " + str(len(data_bytes)) + " bytes")
 
         req = urllib.request.Request(
             self.api_url,
@@ -72,31 +62,32 @@ class AIBrain:
 
         try:
             ctx = ssl.create_default_context()
-            log("Making request to Anthropic API...")
-
             with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
-                log("Response status: " + str(response.status))
                 response_bytes = response.read()
                 response_text = response_bytes.decode('utf-8')
                 data = json.loads(response_text)
-                log("SUCCESS - got response")
                 return data["content"][0]["text"]
 
         except urllib.error.HTTPError as e:
-            log("HTTP ERROR: " + str(e.code))
             try:
                 err_body = e.read().decode('utf-8', errors='replace')
-                log("Error body: " + make_ascii(err_body[:500]))
+                # Parse error JSON if possible
+                try:
+                    err_json = json.loads(err_body)
+                    err_msg = err_json.get("error", {}).get("message", "")
+                    self.last_error = "HTTP " + str(e.code) + ": " + make_ascii(err_msg)
+                except Exception:
+                    self.last_error = "HTTP " + str(e.code)
             except Exception:
-                log("Could not read error body")
+                self.last_error = "HTTP " + str(e.code)
             return None
 
         except urllib.error.URLError as e:
-            log("URL ERROR: " + make_ascii(str(e.reason)))
+            self.last_error = "NETWORK: " + make_ascii(str(e.reason))
             return None
 
         except Exception as e:
-            log("EXCEPTION: " + make_ascii(str(type(e).__name__)) + " - " + make_ascii(str(e)))
+            self.last_error = make_ascii(str(type(e).__name__))
             return None
 
     async def process(self, user_input: str, tasks: list = None) -> dict:
@@ -160,8 +151,6 @@ class AIBrain:
 
     async def weekly_summary(self, tasks: list) -> str:
         """Generate weekly task analysis."""
-        log("weekly_summary called with " + str(len(tasks)) + " tasks")
-
         if not tasks:
             return "No tasks to analyze."
 
@@ -178,7 +167,6 @@ class AIBrain:
             task_lines.append(line)
 
         tasks_text = "\n".join(task_lines)
-        log("Tasks text built, calling API...")
 
         prompt = "Analyze these tasks briefly:\n\n"
         prompt += tasks_text + "\n\n"
@@ -188,11 +176,12 @@ class AIBrain:
         result = self._make_request(messages, max_tokens=500)
 
         if result:
-            log("Got result, returning analysis")
             return make_ascii(result)
 
-        log("No result from API")
-        return "Analysis unavailable - check Railway logs for details"
+        # Return the actual error to the user
+        if self.last_error:
+            return "Error: " + self.last_error
+        return "Error: Unknown failure"
 
 
 ai_brain = AIBrain()
