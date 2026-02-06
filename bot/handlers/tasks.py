@@ -198,8 +198,10 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 await handle_list(update, None)
 
         elif action == "summary":
+            from bot.ai.brain import to_ascii
             summary = await ai_brain.weekly_summary(tasks)
-            await update.message.reply_text(f"📊 *Task Analysis*\n\n{summary}", parse_mode="Markdown")
+            safe_summary = to_ascii(summary) if summary else "Analysis unavailable"
+            await update.message.reply_text("TASK ANALYSIS\n\n" + safe_summary)
 
         elif action == "answer":
             await update.message.reply_text(response or data.get("text", "I'm here to help!"))
@@ -209,13 +211,9 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
         return True
 
-    except Exception as e:
-        # Safe print - avoid encoding errors with non-ASCII in exception message
-        try:
-            print("[AI] Error:", str(e).encode('ascii', errors='replace').decode('ascii'))
-        except Exception:
-            print("[AI] Error occurred (details unavailable)")
-        return False  # Fallback on error
+    except Exception:
+        # Silently fallback on any error
+        return False
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,7 +288,7 @@ async def handle_delete(update: Update, task_num: int):
         await update.message.reply_text(f'Deleted: "{task["title"]}"')
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text("Error occurred")
 
 
 async def handle_done(update: Update, task_num: int):
@@ -308,7 +306,7 @@ async def handle_done(update: Update, task_num: int):
         await update.message.reply_text(f'Done: "{task["title"]}"')
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text("Error occurred")
 
 
 async def handle_list(update: Update, category: str = None):
@@ -335,7 +333,7 @@ async def handle_list(update: Update, category: str = None):
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text("Error occurred")
 
 
 async def handle_today(update: Update):
@@ -355,7 +353,7 @@ async def handle_today(update: Update):
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text("Error occurred")
 
 
 async def add_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -407,7 +405,7 @@ async def add_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text("Error occurred")
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -471,7 +469,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error adding task: {str(e)}")
+        await update.message.reply_text("Error adding task")
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -528,7 +526,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+        await update.message.reply_text("Error fetching tasks")
 
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -560,7 +558,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
     except Exception as e:
-        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+        await update.message.reply_text("Error fetching tasks")
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -596,7 +594,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'"{task["title"]}" marked complete!')
 
     except Exception as e:
-        await update.message.reply_text(f"Error completing task: {str(e)}")
+        await update.message.reply_text("Error completing task")
 
 
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -631,7 +629,7 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'🗑️ Deleted: "{task["title"]}"')
 
     except Exception as e:
-        await update.message.reply_text(f"Error deleting task: {str(e)}")
+        await update.message.reply_text("Error deleting task")
 
 
 async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -669,7 +667,7 @@ async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'✏️ Updated: "{task["title"]}" → "{new_title}"')
 
     except Exception as e:
-        await update.message.reply_text(f"Error editing task: {str(e)}")
+        await update.message.reply_text("Error editing task")
 
 
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -701,8 +699,8 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(response)
 
-    except Exception as e:
-        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+    except Exception:
+        await update.message.reply_text("Error fetching tasks")
 
 
 async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -735,8 +733,8 @@ async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response += "\n💡 Use /done <number> to complete or /delete <number> to remove"
         await update.message.reply_text(response)
 
-    except Exception as e:
-        await update.message.reply_text(f"Error fetching tasks: {str(e)}")
+    except Exception:
+        await update.message.reply_text("Error fetching tasks")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -810,10 +808,10 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("AI features require ANTHROPIC_API_KEY to be set.")
         return
 
-    await update.message.reply_text("🤔 Analyzing your tasks...")
+    await update.message.reply_text("Analyzing your tasks...")
 
     try:
-        from bot.ai.brain import ai_brain
+        from bot.ai.brain import ai_brain, to_ascii
         tasks = notion_service.get_tasks()
 
         if not tasks:
@@ -821,7 +819,14 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         summary = await ai_brain.weekly_summary(tasks)
-        await update.message.reply_text(f"📊 *Task Analysis*\n\n{summary}", parse_mode="Markdown")
+        # Force ASCII to prevent any encoding issues
+        safe_summary = to_ascii(summary) if summary else "Analysis unavailable"
+        await update.message.reply_text("TASK ANALYSIS\n\n" + safe_summary)
 
     except Exception as e:
-        await update.message.reply_text(f"Error analyzing tasks: {str(e)}")
+        # Safe error message
+        try:
+            error_type = to_ascii(type(e).__name__) or "Unknown"
+        except Exception:
+            error_type = "Unknown"
+        await update.message.reply_text("Analysis error: " + error_type)

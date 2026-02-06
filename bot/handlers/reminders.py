@@ -27,7 +27,7 @@ async def send_reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
     task_data = job.data
 
-    print(f"[REMINDER] Callback fired! Sending reminder for: {task_data.get('title')}")
+    # Reminder callback fired
 
     # Build the reminder message
     title = task_data.get("title", "Task")
@@ -47,9 +47,9 @@ async def send_reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
             text=message,
             parse_mode="Markdown"
         )
-        print(f"[REMINDER] Message sent successfully to chat_id={job.chat_id}")
-    except Exception as e:
-        print(f"[REMINDER] Error sending reminder: {e}")
+        pass  # Message sent
+    except Exception:
+        pass  # Error sending reminder
 
 
 def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime, task_data: dict) -> None:
@@ -72,7 +72,7 @@ def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime
     if delay_seconds < 1:
         delay_seconds = 1
 
-    print(f"[REMINDER] Scheduling reminder for '{task_data.get('title')}' in {delay_seconds:.0f} seconds (chat_id={chat_id})")
+    # Scheduling reminder
 
     job_queue.run_once(
         send_reminder_callback,
@@ -82,7 +82,7 @@ def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime
         name=f"reminder_{chat_id}_{reminder_time.timestamp()}"
     )
 
-    print(f"[REMINDER] Job scheduled successfully!")
+    # Job scheduled
 
 
 def parse_reminder_time(time_str: str) -> timedelta:
@@ -187,8 +187,8 @@ async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'   (at {reminder_time.strftime("%I:%M %p")})'
         )
 
-    except Exception as e:
-        await update.message.reply_text(f"Error setting reminder: {str(e)}")
+    except Exception:
+        await update.message.reply_text("Error setting reminder")
 
 
 async def check_reminders(bot: Bot, chat_ids: set = None):
@@ -203,7 +203,6 @@ async def check_reminders(bot: Bot, chat_ids: set = None):
         target_chats = chat_ids or _active_chat_ids
 
         if not target_chats:
-            print("No chat IDs registered for reminders")
             return
 
         for task in tasks:
@@ -220,14 +219,14 @@ async def check_reminders(bot: Bot, chat_ids: set = None):
             for chat_id in target_chats:
                 try:
                     await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-                except Exception as e:
-                    print(f"Error sending reminder to {chat_id}: {e}")
+                except Exception:
+                    pass  # Error sending to chat
 
             # Clear the reminder so it doesn't fire again
             notion_service.clear_reminder(task["id"])
 
-    except Exception as e:
-        print(f"Error checking reminders: {e}")
+    except Exception:
+        pass  # Error checking reminders
 
 
 def setup_reminder_job(application, chat_id: int = None):

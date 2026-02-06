@@ -143,10 +143,9 @@ class NotionTaskService:
             if resp.status_code == 200:
                 response = resp.json()
             else:
-                print(f"Notion API error: {resp.status_code} - {resp.text}")
+                # Safe print - avoid encoding errors
                 response = {"results": []}
-        except Exception as e:
-            print(f"Error querying Notion: {e}")
+        except Exception:
             response = {"results": []}
 
         tasks = []
@@ -310,8 +309,7 @@ class NotionTaskService:
                     "due_date": self._extract_property_value(props, "Due Date", "date")
                 })
             return tasks
-        except Exception as e:
-            print(f"Error getting reminders: {e}")
+        except Exception:
             return []
 
     def mark_complete(self, page_id: str) -> dict:
@@ -365,23 +363,20 @@ class NotionTaskService:
                 page_id=page_id,
                 properties={reminder_prop: {"date": None}}
             )
-        except Exception as e:
-            print(f"Error clearing reminder: {e}")
+        except Exception:
             return {}
 
     def set_reminder(self, page_id: str, reminder_time: datetime) -> dict:
         """Set a reminder time for a task."""
         reminder_prop = self._get_property_name("Reminder")
         if not reminder_prop:
-            print("Warning: No Reminder property in database")
             return {}
         try:
             return self.client.pages.update(
                 page_id=page_id,
                 properties={reminder_prop: {"date": {"start": reminder_time.isoformat()}}}
             )
-        except Exception as e:
-            print(f"Error setting reminder: {e}")
+        except Exception:
             return {}
 
 
