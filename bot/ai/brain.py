@@ -1,5 +1,6 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
+from datetime import datetime, date
 import config
 
 
@@ -56,60 +57,161 @@ class AIBrain:
 
     def __init__(self):
         self.conversation_history = []
-        self.max_history = 10  # Keep last 10 exchanges
+        self.max_history = 10
+
+    def _get_time_context(self):
+        """Get current time context."""
+        now = datetime.now()
+        hour = now.hour
+
+        if hour < 12:
+            time_of_day = "morning"
+        elif hour < 17:
+            time_of_day = "afternoon"
+        elif hour < 21:
+            time_of_day = "evening"
+        else:
+            time_of_day = "night"
+
+        return {
+            "time_of_day": time_of_day,
+            "today": now.strftime("%A, %B %d"),
+            "date_iso": now.strftime("%Y-%m-%d")
+        }
+
+    def _analyze_tasks(self, tasks):
+        """Analyze tasks for context."""
+        if not tasks:
+            return {"total": 0, "overdue": 0, "today": 0, "high_priority": 0}
+
+        today = date.today()
+        overdue = 0
+        due_today = 0
+        high_priority = 0
+
+        for t in tasks:
+            if t.get("priority") == "High":
+                high_priority += 1
+
+            due = t.get("due_date")
+            if due:
+                try:
+                    if isinstance(due, str):
+                        due_date = datetime.fromisoformat(due.replace("Z", "")).date()
+                    else:
+                        due_date = due
+
+                    if due_date < today:
+                        overdue += 1
+                    elif due_date == today:
+                        due_today += 1
+                except:
+                    pass
+
+        return {
+            "total": len(tasks),
+            "overdue": overdue,
+            "today": due_today,
+            "high_priority": high_priority
+        }
 
     def _build_task_context(self, tasks):
         """Build task list for context."""
         if not tasks:
-            return "No tasks currently."
+            return "You have no tasks right now - fresh slate!"
 
         lines = []
+        today = date.today()
+
         for i, t in enumerate(tasks, 1):
             title = to_ascii(t.get("title", "Task")) or "Task"
             cat = t.get("category", "Personal")
             pri = t.get("priority", "Medium")
             due = t.get("due_date", "")
-            due_str = f", due {due}" if due else ""
-            lines.append(f"{i}. {title} [{cat}, {pri}{due_str}]")
+
+            # Format due date naturally
+            due_str = ""
+            if due:
+                try:
+                    if isinstance(due, str):
+                        due_date = datetime.fromisoformat(due.replace("Z", "")).date()
+                    else:
+                        due_date = due
+
+                    if due_date < today:
+                        days_overdue = (today - due_date).days
+                        due_str = f" - OVERDUE by {days_overdue}d!"
+                    elif due_date == today:
+                        due_str = " - due TODAY"
+                    elif (due_date - today).days == 1:
+                        due_str = " - due tomorrow"
+                    elif (due_date - today).days <= 7:
+                        due_str = f" - due {due_date.strftime('%A')}"
+                    else:
+                        due_str = f" - due {due_date.strftime('%b %d')}"
+                except:
+                    due_str = f" - due {due}"
+
+            pri_marker = "!" if pri == "High" else ""
+            lines.append(f"{i}. {pri_marker}{title} [{cat}]{due_str}")
 
         return "\n".join(lines)
 
     def _get_system_prompt(self, tasks):
-        """Build system prompt with task context."""
+        """Build system prompt with personality and context."""
         task_list = self._build_task_context(tasks)
+        time_ctx = self._get_time_context()
+        stats = self._analyze_tasks(tasks)
 
-        return f"""You are a helpful task management assistant in a Telegram bot.
+        # Build situation awareness
+        situation = []
+        if stats["overdue"] > 0:
+            situation.append(f"{stats['overdue']} overdue task(s)")
+        if stats["today"] > 0:
+            situation.append(f"{stats['today']} due today")
+        if stats["high_priority"] > 0:
+            situation.append(f"{stats['high_priority']} high priority")
 
-CURRENT TASKS:
+        situation_str = ", ".join(situation) if situation else "all clear"
+
+        return f"""You're a chill, helpful assistant managing tasks via Telegram. Talk like a supportive friend, not a robot.
+
+VIBE:
+- Be conversational and natural - like texting a friend
+- Keep responses SHORT (1-3 sentences max for simple stuff)
+- Don't dump walls of text - break it up naturally
+- Use casual language, contractions, occasional emoji if it fits
+- When asked "what should I focus on" - just pick 1-2 things and explain briefly WHY, don't list everything
+- Be encouraging but not cheesy
+- Ask follow-up questions when it makes sense
+
+RIGHT NOW:
+- It's {time_ctx['time_of_day']} on {time_ctx['today']}
+- Today's date for due dates: {time_ctx['date_iso']}
+- Status: {situation_str}
+
+THEIR TASKS:
 {task_list}
 
-You can help the user with:
-- Adding new tasks
-- Marking tasks as done
-- Deleting tasks
-- Listing/filtering tasks
-- Answering questions about their tasks
-- General conversation and advice
+RESPOND WITH JSON:
+{{"action": "TYPE", "data": {{}}, "response": "your message"}}
 
-When the user wants to perform an action, respond with JSON in this exact format:
-{{"action": "ACTION_TYPE", "data": {{}}, "response": "Your message to the user"}}
+ACTIONS:
+- "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
+- "done": data: {{"task_num": N}}
+- "delete": data: {{"task_num": N}}
+- "list": data: {{"filter": "all/today/business/personal"}}
+- "answer": Just chat - use this most of the time
 
-ACTION TYPES:
-- "add_task": Add a new task. data: {{"title": "task title", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
-- "done": Mark task complete. data: {{"task_num": NUMBER}}
-- "delete": Delete a task. data: {{"task_num": NUMBER}}
-- "list": Show tasks. data: {{"filter": "all/today/business/personal"}}
-- "summary": Analyze tasks (triggers /analyze)
-- "answer": Just respond to the user. data: {{"text": "your response"}}
+SMART BEHAVIORS:
+- "tomorrow", "next week", "friday" -> convert to actual dates
+- Guess category from context (work stuff = Business, life stuff = Personal)
+- Suggest priority based on urgency/importance
+- If they seem stressed, be extra supportive
+- If task is vague, maybe ask what specifically they need to do
+- Celebrate wins when they complete stuff!
 
-IMPORTANT:
-- For casual conversation, greetings, or questions, use "answer" action
-- Task numbers refer to the numbered list above
-- Always include a friendly "response" message
-- Keep responses concise (Telegram messages)
-- If uncertain about task number, ask for clarification with "answer" action
-
-Respond ONLY with the JSON object, no other text."""
+Keep it real. No corporate speak. Just be helpful."""
 
     async def process(self, user_input, tasks=None):
         """Process user input and return action."""
@@ -117,33 +219,28 @@ Respond ONLY with the JSON object, no other text."""
             return {"action": "fallback", "data": {}, "response": None}
 
         try:
-            # Add user message to history
             self.conversation_history.append({
                 "role": "user",
                 "content": to_ascii(user_input) or "hello"
             })
 
-            # Keep history manageable
             if len(self.conversation_history) > self.max_history * 2:
                 self.conversation_history = self.conversation_history[-self.max_history * 2:]
 
-            # Get system prompt with current tasks
             system_prompt = self._get_system_prompt(tasks or [])
 
-            # Call Claude
             response_text, error = call_anthropic_chat(
                 system_prompt,
                 self.conversation_history,
-                max_tokens=300
+                max_tokens=250  # Shorter responses
             )
 
             if error:
-                return {"action": "answer", "data": {}, "response": f"AI error: {error}"}
+                return {"action": "answer", "data": {}, "response": f"Hmm, hit a snag: {error}"}
 
             if not response_text:
                 return {"action": "fallback", "data": {}, "response": None}
 
-            # Add assistant response to history
             self.conversation_history.append({
                 "role": "assistant",
                 "content": response_text
@@ -151,10 +248,7 @@ Respond ONLY with the JSON object, no other text."""
 
             # Parse JSON response
             try:
-                # Clean up response - find JSON object
                 text = response_text.strip()
-
-                # Find JSON boundaries
                 start = text.find("{")
                 end = text.rfind("}") + 1
 
@@ -162,36 +256,30 @@ Respond ONLY with the JSON object, no other text."""
                     json_str = text[start:end]
                     result = json.loads(json_str)
 
-                    action = result.get("action", "answer")
-                    data = result.get("data", {})
-                    response = result.get("response", "")
-
                     return {
-                        "action": action,
-                        "data": data,
-                        "response": response
+                        "action": result.get("action", "answer"),
+                        "data": result.get("data", {}),
+                        "response": result.get("response", "")
                     }
                 else:
-                    # No JSON found, treat as plain answer
                     return {
                         "action": "answer",
                         "data": {},
-                        "response": to_ascii(response_text)[:500]
+                        "response": to_ascii(response_text)[:400]
                     }
 
             except json.JSONDecodeError:
-                # Couldn't parse JSON, return as plain answer
                 return {
                     "action": "answer",
                     "data": {},
-                    "response": to_ascii(response_text)[:500]
+                    "response": to_ascii(response_text)[:400]
                 }
 
         except Exception as e:
             return {
                 "action": "answer",
                 "data": {},
-                "response": f"Sorry, I encountered an error: {to_ascii(type(e).__name__)}"
+                "response": f"Oops, something went wrong on my end"
             }
 
     def clear_history(self):
@@ -199,30 +287,32 @@ Respond ONLY with the JSON object, no other text."""
         self.conversation_history = []
 
     async def weekly_summary(self, tasks):
-        """Generate task analysis using Claude API."""
+        """Generate brief, actionable task insights."""
         if not tasks:
-            return "No tasks to analyze."
+            return "No tasks to look at - you're all clear!"
 
         try:
-            lines = []
-            for t in tasks:
-                try:
-                    title = to_ascii(t.get("title", "Task")) or "Task"
-                    cat = to_ascii(t.get("category", "Personal")) or "Personal"
-                    pri = to_ascii(t.get("priority", "Medium")) or "Medium"
-                    lines.append(f"- {title} ({cat}, {pri})")
-                except Exception:
-                    lines.append("- Task (Personal, Medium)")
+            stats = self._analyze_tasks(tasks)
+            task_list = self._build_task_context(tasks)
+            time_ctx = self._get_time_context()
 
-            if not lines:
-                return "No valid tasks to analyze."
+            prompt = f"""It's {time_ctx['time_of_day']} on {time_ctx['today']}.
 
-            prompt = "Analyze these tasks briefly:\n" + "\n".join(lines) + "\n\nProvide: 1) Overview 2) Top priorities 3) Tips"
-            return call_anthropic(prompt)
+Here are the tasks:
+{task_list}
+
+Give a quick, friendly analysis:
+1. What's the vibe? (overwhelmed, manageable, light?)
+2. Top 1-2 things to focus on and why
+3. One quick tip
+
+Keep it conversational and SHORT - like you're texting a friend. No bullet points or headers, just natural sentences."""
+
+            result, error = call_anthropic_chat("", [{"role": "user", "content": prompt}], max_tokens=200)
+            return result if result else (error or "Couldn't analyze right now")
 
         except Exception as e:
-            err_name = to_ascii(type(e).__name__) or "Error"
-            return f"Analysis failed: {err_name}"
+            return "Had trouble analyzing - try again in a sec"
 
 
 # Singleton instance
