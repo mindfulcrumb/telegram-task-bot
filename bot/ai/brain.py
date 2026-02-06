@@ -30,42 +30,54 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using official SDK.
-    Logging is disabled to prevent UnicodeEncodeError in Docker/Railway.
+    Call Anthropic API in a SEPARATE SUBPROCESS to completely isolate encoding issues.
+    This is the nuclear option that bypasses ALL Python encoding problems.
     """
-    import logging
+    import subprocess
+    import sys
 
-    # Suppress ALL logging during API call to prevent encoding errors
-    logging.disable(logging.CRITICAL)
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "Error: API key not configured"
+
+    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
+    # Python script that runs in subprocess with forced ASCII output
+    script = '''
+import os, sys, json
+sys.stdout.reconfigure(encoding='ascii', errors='replace') if hasattr(sys.stdout, 'reconfigure') else None
+sys.stderr.reconfigure(encoding='ascii', errors='replace') if hasattr(sys.stderr, 'reconfigure') else None
+try:
+    import anthropic
+    c = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    m = c.messages.create(model="claude-3-5-sonnet-20241022", max_tokens=500, messages=[{"role":"user","content":sys.argv[1]}])
+    t = m.content[0].text if m.content else ""
+    print(''.join(x if ord(x)<128 else ' ' for x in t))
+except Exception as e:
+    print("ERROR:" + type(e).__name__)
+'''
 
     try:
-        import anthropic
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return "Error: API key not configured"
-
-        # Convert prompt to ASCII FIRST
-        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=500,
-            messages=[{"role": "user", "content": safe_prompt}]
+        result = subprocess.run(
+            [sys.executable, '-c', script, safe_prompt],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            env={
+                **os.environ,
+                'PYTHONUTF8': '1',
+                'PYTHONIOENCODING': 'ascii:replace',
+                'PYTHONLEGACYWINDOWSSTDIO': '0'
+            }
         )
-
-        if message.content and len(message.content) > 0:
-            raw_text = message.content[0].text
-            return to_ascii(raw_text)
-        return "No response from AI"
-
+        output = result.stdout.strip()
+        if output.startswith("ERROR:"):
+            return "Error: " + output[6:]
+        return output or "No response from AI"
+    except subprocess.TimeoutExpired:
+        return "Error: Request timed out"
     except Exception as e:
-        err_type = to_ascii(type(e).__name__) or "Error"
-        return "Error: " + err_type
-    finally:
-        # Re-enable logging after API call
-        logging.disable(logging.NOTSET)
+        return "Error: " + to_ascii(type(e).__name__)
 
 
 class AIBrain:
