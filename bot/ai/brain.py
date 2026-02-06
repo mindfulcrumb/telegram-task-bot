@@ -30,85 +30,62 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using only stdlib. Returns ASCII string.
-    This function catches ALL exceptions and returns safe ASCII error messages.
+    Call Anthropic API using curl subprocess. 100% encoding-safe.
+    Bypasses Python's HTTP stack which has known UnicodeEncodeError issues.
     """
-    import urllib.request
-    import urllib.error
-    import ssl
+    import subprocess
 
-    # Get API key
-    try:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    except Exception:
-        api_key = ""
-
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "Error: API key not configured"
 
+    # Convert prompt to ASCII
+    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
+    # Build JSON body - escape special characters for JSON
+    safe_prompt_escaped = safe_prompt.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+    json_body = '{"model":"claude-3-5-sonnet-20241022","max_tokens":500,"messages":[{"role":"user","content":"' + safe_prompt_escaped + '"}]}'
+
     try:
-        # Convert prompt to pure ASCII
-        safe_prompt = to_ascii(prompt_text)
-        if not safe_prompt:
-            safe_prompt = "Analyze tasks"
-
-        # Build request body as pure ASCII JSON
-        body_dict = {
-            "model": "claude-3-5-sonnet-20241022",
-            "max_tokens": 500,
-            "messages": [{"role": "user", "content": safe_prompt}]
-        }
-
-        # json.dumps with ensure_ascii=True guarantees ASCII output
-        body_json = json.dumps(body_dict, ensure_ascii=True)
-        body_bytes = body_json.encode("ascii")
-
-        # Create request
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=body_bytes,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            },
-            method="POST"
+        result = subprocess.run(
+            [
+                "curl", "-s", "-X", "POST",
+                "https://api.anthropic.com/v1/messages",
+                "-H", "x-api-key: " + api_key,
+                "-H", "anthropic-version: 2023-06-01",
+                "-H", "content-type: application/json",
+                "-d", json_body
+            ],
+            capture_output=True,
+            timeout=60,
+            text=True
         )
 
-        # Make request with SSL
-        ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
-            # Read and decode response with error handling
-            response_bytes = resp.read()
-            response_text = response_bytes.decode("utf-8", errors="replace")
-            response_data = json.loads(response_text)
+        if result.returncode != 0:
+            return "Error: curl failed with code " + str(result.returncode)
 
-            # Extract content and convert to ASCII
-            content = response_data.get("content", [])
-            if content and len(content) > 0:
-                raw_text = content[0].get("text", "")
-                return to_ascii(raw_text)
-            return "No response from AI"
+        # Parse response
+        response_data = json.loads(result.stdout)
 
-    except urllib.error.HTTPError as e:
-        try:
-            code = e.code
-        except Exception:
-            code = 0
-        return "API error: HTTP " + str(code)
-    except urllib.error.URLError:
-        return "Network error: Could not connect"
+        # Check for API error
+        if "error" in response_data:
+            err_msg = response_data.get("error", {}).get("message", "Unknown API error")
+            return "API error: " + to_ascii(err_msg)
+
+        content = response_data.get("content", [])
+        if content and len(content) > 0:
+            raw_text = content[0].get("text", "")
+            return to_ascii(raw_text)
+        return "No response from AI"
+
+    except subprocess.TimeoutExpired:
+        return "Error: Request timed out"
     except json.JSONDecodeError:
         return "Error: Invalid API response"
+    except FileNotFoundError:
+        return "Error: curl not found"
     except Exception as e:
-        # Get exception type name safely
-        try:
-            err_name = to_ascii(type(e).__name__)
-        except Exception:
-            err_name = "Unknown"
-        if not err_name:
-            err_name = "Unknown"
-        return "Error: " + err_name
+        return "Error: " + to_ascii(type(e).__name__)
 
 
 class AIBrain:
