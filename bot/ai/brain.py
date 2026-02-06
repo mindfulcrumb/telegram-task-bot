@@ -1,8 +1,29 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
+import sys
+import io
 from datetime import datetime, date, timedelta
 from anthropic import Anthropic
 import config
+
+# Force UTF-8 encoding for stdout/stderr (fixes Railway encoding issues)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+
+def sanitize_text(text) -> str:
+    """
+    Sanitize text to ensure it's safe for processing.
+    Handles Cyrillic and other non-ASCII characters.
+    """
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode('utf-8', errors='replace')
+    # Encode to UTF-8 and back to ensure valid string
+    return str(text).encode('utf-8', errors='replace').decode('utf-8', errors='replace')
 
 
 class AIBrain:
@@ -33,14 +54,17 @@ class AIBrain:
         if not client:
             return {"action": "fallback", "data": {}, "response": None}
 
+        # Sanitize user input
+        user_input = sanitize_text(user_input)
+
         # Build context about current tasks (with safe string handling)
         tasks_context = ""
         if tasks:
             tasks_context = "\n\nCurrent tasks:\n"
             for t in tasks[:10]:
-                title = str(t.get('title', 'Untitled'))
-                category = str(t.get('category', 'Personal'))
-                priority = str(t.get('priority', 'Medium'))
+                title = sanitize_text(t.get('title', 'Untitled'))
+                category = sanitize_text(t.get('category', 'Personal'))
+                priority = sanitize_text(t.get('priority', 'Medium'))
                 tasks_context += f"- #{t['index']}: {title} ({category}, {priority})"
                 if t.get('due_date'):
                     tasks_context += f" due {t['due_date']}"
@@ -109,18 +133,12 @@ SMART RULES:
             return result
 
         except Exception as e:
-            # Use repr() to safely log errors with non-ASCII characters
-            print(f"[AI Brain] Error: {repr(e)}")
+            # Safe error logging
+            try:
+                print(f"[AI Brain] Error: {e}")
+            except UnicodeEncodeError:
+                print("[AI Brain] Error (encoding issue in error message)")
             return {"action": "fallback", "data": {}, "response": None}
-
-    def _safe_str(self, text: str) -> str:
-        """Safely handle text that may contain non-ASCII characters."""
-        if not text:
-            return ""
-        # Ensure we're working with a proper string
-        if isinstance(text, bytes):
-            text = text.decode('utf-8', errors='replace')
-        return str(text)
 
     async def weekly_summary(self, tasks: list) -> str:
         """Generate weekly task analysis."""
@@ -131,9 +149,9 @@ SMART RULES:
         # Build tasks text with safe string handling
         task_lines = []
         for t in tasks:
-            title = self._safe_str(t.get('title', 'Untitled'))
-            category = self._safe_str(t.get('category', 'Personal'))
-            priority = self._safe_str(t.get('priority', 'Medium'))
+            title = sanitize_text(t.get('title', 'Untitled'))
+            category = sanitize_text(t.get('category', 'Personal'))
+            priority = sanitize_text(t.get('priority', 'Medium'))
             line = f"- {title} ({category}, {priority})"
             if t.get('due_date'):
                 line += f" due {t['due_date']}"
@@ -160,10 +178,13 @@ Give:
 Be concise."""
                 }]
             )
-            return response.content[0].text
+            return sanitize_text(response.content[0].text)
         except Exception as e:
-            # Use repr() to safely handle non-ASCII in error messages
-            return f"Analysis unavailable: {repr(e)}"
+            # Safe error message
+            try:
+                return f"Analysis unavailable: {e}"
+            except UnicodeEncodeError:
+                return "Analysis unavailable: encoding error"
 
 
 # Singleton
