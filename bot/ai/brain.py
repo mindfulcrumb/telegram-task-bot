@@ -40,7 +40,9 @@ def call_anthropic(prompt_text):
         return "No response from AI"
 
     except anthropic.AuthenticationError:
-        return "Error: Invalid API key - check ANTHROPIC_API_KEY in Railway"
+        # Show key debug info - first 15 and last 5 chars
+        key_preview = f"{api_key[:15]}...{api_key[-5:]}" if len(api_key) > 20 else "too short"
+        return f"Invalid key (len={len(api_key)}, preview={key_preview})"
     except anthropic.RateLimitError:
         return "Error: Rate limit exceeded - try again later"
     except anthropic.APIError as e:
