@@ -1,6 +1,8 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
-import httpx
+import urllib.request
+import urllib.error
+import ssl
 from datetime import date
 import config
 
@@ -26,43 +28,50 @@ class AIBrain:
         self.api_url = "https://api.anthropic.com/v1/messages"
 
     def _make_request(self, messages: list, system: str = None, max_tokens: int = 500) -> str:
-        """Make direct HTTP request to Anthropic API, bypassing SDK encoding issues."""
-        api_key = getattr(config, 'ANTHROPIC_API_KEY', None)
-        if not api_key:
-            return None
-
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json; charset=utf-8",
-        }
-
-        body = {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": max_tokens,
-            "messages": messages,
-        }
-        if system:
-            body["system"] = system
-
-        # Serialize to JSON with ensure_ascii=True to guarantee ASCII output
-        json_body = json.dumps(body, ensure_ascii=True)
-
+        """Make direct HTTP request to Anthropic API using urllib (no third-party libs)."""
         try:
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(
-                    self.api_url,
-                    headers=headers,
-                    content=json_body.encode('utf-8')
-                )
+            api_key = getattr(config, 'ANTHROPIC_API_KEY', None)
+            if not api_key:
+                return None
 
-            if response.status_code == 200:
-                data = response.json()
+            body = {
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": max_tokens,
+                "messages": messages,
+            }
+            if system:
+                body["system"] = system
+
+            # Serialize to JSON with ensure_ascii=True - GUARANTEES pure ASCII output
+            json_body = json.dumps(body, ensure_ascii=True)
+            data_bytes = json_body.encode('ascii')  # Safe because ensure_ascii=True
+
+            # Build request manually
+            req = urllib.request.Request(
+                self.api_url,
+                data=data_bytes,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                method="POST"
+            )
+
+            # Make request with timeout
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
+                response_bytes = response.read()
+                response_text = response_bytes.decode('utf-8')
+                data = json.loads(response_text)
                 return data["content"][0]["text"]
-            else:
-                return "API error: " + str(response.status_code)
-        except Exception as e:
-            return "Request failed: " + make_ascii(str(e))
+
+        except urllib.error.HTTPError as e:
+            return "API error: " + str(e.code)
+        except urllib.error.URLError as e:
+            return "Network error"
+        except Exception:
+            return "Request failed"
 
     async def process(self, user_input: str, tasks: list = None) -> dict:
         """Process user input with Claude."""
@@ -99,7 +108,7 @@ class AIBrain:
 
         response_text = self._make_request(messages, system=system_prompt, max_tokens=1024)
 
-        if not response_text or response_text.startswith("API error") or response_text.startswith("Request failed"):
+        if not response_text or response_text.startswith("API error") or response_text.startswith("Request failed") or response_text.startswith("Network error"):
             return {"action": "fallback", "data": {}, "response": None}
 
         try:
@@ -150,8 +159,8 @@ class AIBrain:
         result = self._make_request(messages, max_tokens=500)
 
         if result:
-            return result
-        return "Analysis unavailable - API request failed"
+            return make_ascii(result)  # Ensure response is also ASCII
+        return "Analysis unavailable"
 
 
 ai_brain = AIBrain()
