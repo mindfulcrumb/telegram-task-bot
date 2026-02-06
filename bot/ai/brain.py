@@ -29,20 +29,48 @@ def to_ascii(text):
 
 
 def call_anthropic(prompt_text):
-    """Call Anthropic API - works with proper UTF-8 locale from Dockerfile."""
+    """Call Anthropic API with full debug info."""
     import requests
+    import sys
+    import traceback
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "Error: No API key"
-
-    # Clean API key - Railway env vars can have hidden chars
-    api_key = "".join(c for c in api_key if c.isalnum() or c in "-_")
-
-    # Clean prompt to ASCII for safety
-    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+    debug_info = []
 
     try:
+        # Debug: Check encoding environment
+        debug_info.append("enc:" + str(sys.stdout.encoding))
+
+        # Get and clean API key
+        raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        debug_info.append("keylen:" + str(len(raw_key)))
+
+        if not raw_key:
+            return "Error: No API key"
+
+        # Clean API key - only safe chars
+        api_key = "".join(c for c in raw_key if c.isalnum() or c in "-_")
+        debug_info.append("cleankey:" + str(len(api_key)))
+
+        if not api_key:
+            return "Error: Empty key after clean"
+
+        # Clean prompt
+        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+        debug_info.append("prompt:" + str(len(safe_prompt)))
+
+        # Build body with EXPLICIT ascii encoding
+        body_dict = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 500,
+            "messages": [{"role": "user", "content": safe_prompt}]
+        }
+
+        # Force ASCII JSON - this CANNOT have encoding issues
+        body_str = json.dumps(body_dict, ensure_ascii=True)
+        body_bytes = body_str.encode("ascii")
+        debug_info.append("body:" + str(len(body_bytes)))
+
+        # Make request with raw bytes
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -50,18 +78,18 @@ def call_anthropic(prompt_text):
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json"
             },
-            json={
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": safe_prompt}]
-            },
+            data=body_bytes,
             timeout=60
         )
+        debug_info.append("status:" + str(response.status_code))
 
-        data = response.json()
+        # Parse response safely
+        resp_text = response.content.decode("utf-8", errors="replace")
+        data = json.loads(resp_text)
 
         if "error" in data:
-            return "API error: " + to_ascii(str(data["error"].get("message", "")))
+            err_msg = str(data.get("error", {}).get("message", ""))
+            return "API error: " + to_ascii(err_msg)[:100]
 
         content = data.get("content", [])
         if content:
@@ -69,10 +97,14 @@ def call_anthropic(prompt_text):
 
         return "No response"
 
-    except requests.Timeout:
-        return "Error: Timeout"
     except Exception as e:
-        return "Error: " + to_ascii(type(e).__name__)
+        # Get full traceback
+        tb = traceback.format_exc()
+        # Find the actual error line
+        lines = tb.strip().split("\n")
+        last_lines = lines[-3:] if len(lines) >= 3 else lines
+        err_detail = " | ".join(to_ascii(l.strip())[:50] for l in last_lines)
+        return "DEBUG[" + ",".join(debug_info) + "] " + err_detail[:200]
 
 
 class AIBrain:
