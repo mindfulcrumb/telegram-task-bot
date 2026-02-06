@@ -210,7 +210,11 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return True
 
     except Exception as e:
-        print(f"[AI] Error: {e}")
+        # Safe print - avoid encoding errors with non-ASCII in exception message
+        try:
+            print("[AI] Error:", str(e).encode('ascii', errors='replace').decode('ascii'))
+        except Exception:
+            print("[AI] Error occurred (details unavailable)")
         return False  # Fallback on error
 
 

@@ -1,4 +1,24 @@
 """Main entry point for the Telegram Task Bot."""
+# CRITICAL: Set encoding BEFORE any other imports to fix Railway ASCII issues
+import sys
+import os
+import io
+
+# Force UTF-8 for all IO operations
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['LANG'] = 'en_US.UTF-8'
+os.environ['LC_ALL'] = 'en_US.UTF-8'
+
+# Reconfigure stdout/stderr with UTF-8 encoding
+try:
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'buffer'):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+except Exception:
+    pass  # Ignore if already configured
+
+# Now import everything else
 import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import config
@@ -18,10 +38,15 @@ from bot.handlers.tasks import (
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
 
-# Set up logging
+# Suppress httpx debug logging (can cause encoding issues)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Set up logging with UTF-8 handler
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
