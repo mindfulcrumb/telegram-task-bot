@@ -30,10 +30,9 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using RAW http.client - NO external libraries.
-    This bypasses httpx, requests, anthropic SDK - everything.
+    Call Anthropic API using urllib.request with explicit byte handling.
     """
-    import http.client
+    import urllib.request
     import ssl
 
     step = "init"
@@ -59,34 +58,28 @@ def call_anthropic(prompt_text):
         step = "encode_body"
         body_bytes = body_str.encode("ascii")
 
+        step = "create_request"
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=body_bytes,
+            method="POST"
+        )
+
+        step = "add_headers"
+        req.add_header("x-api-key", to_ascii(api_key))
+        req.add_header("anthropic-version", "2023-06-01")
+        req.add_header("content-type", "application/json")
+
         step = "ssl_context"
         ctx = ssl.create_default_context()
 
-        step = "connection"
-        conn = http.client.HTTPSConnection("api.anthropic.com", 443, context=ctx, timeout=60)
-
-        step = "headers"
-        headers = {
-            "x-api-key": to_ascii(api_key),
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-            "accept": "application/json"
-        }
-
-        step = "request"
-        conn.request("POST", "/v1/messages", body=body_bytes, headers=headers)
-
-        step = "getresponse"
-        response = conn.getresponse()
-
-        step = "read_response"
-        response_bytes = response.read()
+        step = "urlopen"
+        with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+            step = "read_response"
+            response_bytes = response.read()
 
         step = "decode_response"
         response_text = response_bytes.decode("utf-8", errors="replace")
-
-        step = "close"
-        conn.close()
 
         step = "parse_json"
         data = json.loads(response_text)
