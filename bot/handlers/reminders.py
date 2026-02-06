@@ -27,6 +27,8 @@ async def send_reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
     task_data = job.data
 
+    print(f"[REMINDER] Callback fired! Sending reminder for: {task_data.get('title')}")
+
     # Build the reminder message
     title = task_data.get("title", "Task")
     priority = task_data.get("priority", "Medium")
@@ -45,8 +47,9 @@ async def send_reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
             text=message,
             parse_mode="Markdown"
         )
+        print(f"[REMINDER] Message sent successfully to chat_id={job.chat_id}")
     except Exception as e:
-        print(f"Error sending scheduled reminder: {e}")
+        print(f"[REMINDER] Error sending reminder: {e}")
 
 
 def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime, task_data: dict) -> None:
@@ -61,13 +64,25 @@ def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime
         reminder_time: Exact datetime when reminder should fire
         task_data: Dict with 'title', 'priority', 'due_date' etc.
     """
+    # Calculate delay in seconds (more reliable than passing datetime)
+    now = datetime.now()
+    delay_seconds = (reminder_time - now).total_seconds()
+
+    # Ensure minimum delay of 1 second
+    if delay_seconds < 1:
+        delay_seconds = 1
+
+    print(f"[REMINDER] Scheduling reminder for '{task_data.get('title')}' in {delay_seconds:.0f} seconds (chat_id={chat_id})")
+
     job_queue.run_once(
         send_reminder_callback,
-        when=reminder_time,
+        when=delay_seconds,  # Use seconds instead of datetime for reliability
         chat_id=chat_id,
         data=task_data,
         name=f"reminder_{chat_id}_{reminder_time.timestamp()}"
     )
+
+    print(f"[REMINDER] Job scheduled successfully!")
 
 
 def parse_reminder_time(time_str: str) -> timedelta:
@@ -144,7 +159,20 @@ async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = tasks[task_num - 1]
         reminder_time = datetime.now() + time_delta
 
+        # Save to Notion (as backup record)
         notion_service.set_reminder(task["id"], reminder_time)
+
+        # Schedule the actual reminder using run_once() for EXACT timing
+        schedule_reminder(
+            job_queue=context.job_queue,
+            chat_id=update.effective_chat.id,
+            reminder_time=reminder_time,
+            task_data={
+                "title": task["title"],
+                "priority": task.get("priority", "Medium"),
+                "due_date": task.get("due_date")
+            }
+        )
 
         # Format the reminder time for display
         if time_delta.days > 0:
@@ -155,8 +183,8 @@ async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time_str = f"{time_delta.seconds // 60} minute(s)"
 
         await update.message.reply_text(
-            f'Reminder set for "{task["title"]}" in {time_str}\n'
-            f'   ({reminder_time.strftime("%I:%M %p")})'
+            f'⏰ Reminder set for "{task["title"]}" in {time_str}\n'
+            f'   (at {reminder_time.strftime("%I:%M %p")})'
         )
 
     except Exception as e:
