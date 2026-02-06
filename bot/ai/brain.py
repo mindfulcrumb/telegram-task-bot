@@ -33,12 +33,15 @@ class AIBrain:
         if not client:
             return {"action": "fallback", "data": {}, "response": None}
 
-        # Build context about current tasks
+        # Build context about current tasks (with safe string handling)
         tasks_context = ""
         if tasks:
             tasks_context = "\n\nCurrent tasks:\n"
             for t in tasks[:10]:
-                tasks_context += f"- #{t['index']}: {t['title']} ({t['category']}, {t['priority']})"
+                title = str(t.get('title', 'Untitled'))
+                category = str(t.get('category', 'Personal'))
+                priority = str(t.get('priority', 'Medium'))
+                tasks_context += f"- #{t['index']}: {title} ({category}, {priority})"
                 if t.get('due_date'):
                     tasks_context += f" due {t['due_date']}"
                 tasks_context += "\n"
@@ -106,8 +109,18 @@ SMART RULES:
             return result
 
         except Exception as e:
-            print(f"[AI Brain] Error: {e}")
+            # Use repr() to safely log errors with non-ASCII characters
+            print(f"[AI Brain] Error: {repr(e)}")
             return {"action": "fallback", "data": {}, "response": None}
+
+    def _safe_str(self, text: str) -> str:
+        """Safely handle text that may contain non-ASCII characters."""
+        if not text:
+            return ""
+        # Ensure we're working with a proper string
+        if isinstance(text, bytes):
+            text = text.decode('utf-8', errors='replace')
+        return str(text)
 
     async def weekly_summary(self, tasks: list) -> str:
         """Generate weekly task analysis."""
@@ -115,10 +128,18 @@ SMART RULES:
         if not client or not tasks:
             return "No tasks to analyze."
 
-        tasks_text = "\n".join([
-            f"- {t['title']} ({t['category']}, {t['priority']})" + (f" due {t['due_date']}" if t.get('due_date') else "")
-            for t in tasks
-        ])
+        # Build tasks text with safe string handling
+        task_lines = []
+        for t in tasks:
+            title = self._safe_str(t.get('title', 'Untitled'))
+            category = self._safe_str(t.get('category', 'Personal'))
+            priority = self._safe_str(t.get('priority', 'Medium'))
+            line = f"- {title} ({category}, {priority})"
+            if t.get('due_date'):
+                line += f" due {t['due_date']}"
+            task_lines.append(line)
+
+        tasks_text = "\n".join(task_lines)
 
         try:
             response = client.messages.create(
@@ -141,7 +162,8 @@ Be concise."""
             )
             return response.content[0].text
         except Exception as e:
-            return f"Analysis unavailable: {e}"
+            # Use repr() to safely handle non-ASCII in error messages
+            return f"Analysis unavailable: {repr(e)}"
 
 
 # Singleton
