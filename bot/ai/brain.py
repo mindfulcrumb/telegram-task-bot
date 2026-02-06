@@ -47,9 +47,11 @@ def call_anthropic(prompt_text):
         if not raw_key:
             return "Error: No API key"
 
-        # Clean API key - strip whitespace, then convert to pure ASCII
-        api_key = raw_key.strip()
-        # Remove any non-ASCII by encoding to ASCII and ignoring errors
+        # Clean API key - remove ALL whitespace and control characters
+        import re
+        # Remove: whitespace, control chars (0x00-0x1f), DEL (0x7f), extended control (0x80-0x9f)
+        api_key = re.sub(r'[\s\x00-\x1f\x7f-\x9f]', '', raw_key)
+        # Also ensure pure ASCII
         api_key = api_key.encode("ascii", errors="ignore").decode("ascii")
         debug_info.append("cleankey:" + str(len(api_key)))
 
