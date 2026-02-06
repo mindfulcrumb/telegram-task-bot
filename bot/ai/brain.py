@@ -36,8 +36,8 @@ def call_anthropic(prompt_text):
     if not api_key:
         return "Error: No API key"
 
-    # Clean API key
-    api_key = api_key.strip()
+    # Clean API key - Railway env vars can have hidden chars
+    api_key = "".join(c for c in api_key if c.isalnum() or c in "-_")
 
     # Clean prompt to ASCII for safety
     safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
