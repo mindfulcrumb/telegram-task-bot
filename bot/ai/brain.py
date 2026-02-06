@@ -116,7 +116,7 @@ SMART RULES:
             return "No tasks to analyze."
 
         tasks_text = "\n".join([
-            f"- {t['title']} ({t['category']}, {t['priority']}) {f'due {t[\"due_date\"]}' if t.get('due_date') else ''}"
+            f"- {t['title']} ({t['category']}, {t['priority']})" + (f" due {t['due_date']}" if t.get('due_date') else "")
             for t in tasks
         ])
 
