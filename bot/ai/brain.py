@@ -1,124 +1,52 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
-import json
 import os
 
 
 def to_ascii(text):
-    """
-    Convert any text to pure ASCII by removing non-ASCII characters.
-    This function CANNOT raise any exception - it is 100% safe.
-    """
-    if text is None:
+    """Convert text to ASCII safely."""
+    if not text:
         return ""
     try:
-        s = str(text)
-    except Exception:
-        return ""
-    try:
-        result = []
-        for char in s:
-            try:
-                code = ord(char)
-                if code < 128:
-                    result.append(char)
-            except Exception:
-                pass
-        return "".join(result)
+        return "".join(c for c in str(text) if ord(c) < 128)
     except Exception:
         return ""
 
 
 def call_anthropic(prompt_text):
-    """Call Anthropic API with full debug info."""
-    import requests
-    import sys
-    import traceback
+    """Call Anthropic API using the official SDK."""
+    import anthropic
 
-    debug_info = []
+    # Get API key from config (already cleaned)
+    import config
+    api_key = config.ANTHROPIC_API_KEY
+
+    if not api_key:
+        return "Error: No ANTHROPIC_API_KEY configured"
 
     try:
-        # Debug: Check encoding environment
-        debug_info.append("enc:" + str(sys.stdout.encoding))
+        # Use the official SDK - it handles all encoding properly
+        client = anthropic.Anthropic(api_key=api_key)
 
-        # Get and clean API key
-        raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        debug_info.append("keylen:" + str(len(raw_key)))
-
-        if not raw_key:
-            return "Error: No API key"
-
-        # Clean API key - Railway might add quotes automatically
-        import re
-        api_key = raw_key.strip()
-        # Strip surrounding quotes
-        if len(api_key) >= 2:
-            if (api_key.startswith('"') and api_key.endswith('"')) or \
-               (api_key.startswith("'") and api_key.endswith("'")):
-                api_key = api_key[1:-1]
-            elif api_key.startswith('"') or api_key.startswith("'"):
-                api_key = api_key[1:]
-            elif api_key.endswith('"') or api_key.endswith("'"):
-                api_key = api_key[:-1]
-        # Remove whitespace and control characters
-        api_key = re.sub(r'[\s\x00-\x1f\x7f-\x9f]', '', api_key)
-        # Ensure pure ASCII
-        api_key = api_key.encode("ascii", errors="ignore").decode("ascii")
-        debug_info.append("cleankey:" + str(len(api_key)))
-
-        if not api_key:
-            return "Error: Empty key after clean"
-
-        # Clean prompt
-        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-        debug_info.append("prompt:" + str(len(safe_prompt)))
-
-        # Build body with EXPLICIT ascii encoding
-        body_dict = {
-            "model": "claude-3-5-sonnet-20241022",
-            "max_tokens": 500,
-            "messages": [{"role": "user", "content": safe_prompt}]
-        }
-
-        # Force ASCII JSON - this CANNOT have encoding issues
-        body_str = json.dumps(body_dict, ensure_ascii=True)
-        body_bytes = body_str.encode("ascii")
-        debug_info.append("body:" + str(len(body_bytes)))
-
-        # Make request with raw bytes
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            },
-            data=body_bytes,
-            timeout=60
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt_text}]
         )
-        debug_info.append("status:" + str(response.status_code))
 
-        # Parse response safely
-        resp_text = response.content.decode("utf-8", errors="replace")
-        data = json.loads(resp_text)
+        # Extract text from response
+        if message.content:
+            return message.content[0].text
 
-        if "error" in data:
-            err_msg = str(data.get("error", {}).get("message", ""))
-            return "API error: " + to_ascii(err_msg)[:100]
+        return "No response from AI"
 
-        content = data.get("content", [])
-        if content:
-            return to_ascii(content[0].get("text", ""))
-
-        return "No response"
-
+    except anthropic.AuthenticationError:
+        return "Error: Invalid API key - check ANTHROPIC_API_KEY in Railway"
+    except anthropic.RateLimitError:
+        return "Error: Rate limit exceeded - try again later"
+    except anthropic.APIError as e:
+        return f"API Error: {to_ascii(str(e))[:100]}"
     except Exception as e:
-        # Get full traceback
-        tb = traceback.format_exc()
-        # Find the actual error line
-        lines = tb.strip().split("\n")
-        last_lines = lines[-3:] if len(lines) >= 3 else lines
-        err_detail = " | ".join(to_ascii(l.strip())[:50] for l in last_lines)
-        return "DEBUG[" + ",".join(debug_info) + "] " + err_detail[:200]
+        return f"Error: {to_ascii(type(e).__name__)}"
 
 
 class AIBrain:
