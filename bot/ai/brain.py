@@ -30,65 +30,37 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using urllib.request with explicit byte handling.
+    Call Anthropic API using requests library - robust encoding handling.
     """
-    import urllib.request
-    import ssl
+    import requests
 
-    step = "init"
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "Error: API key not configured"
+
+    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
     try:
-        step = "get_key"
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return "Error: API key not configured"
-
-        step = "ascii_prompt"
-        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-
-        step = "build_body"
-        body_dict = {
-            "model": "claude-3-5-sonnet-20241022",
-            "max_tokens": 500,
-            "messages": [{"role": "user", "content": safe_prompt}]
-        }
-
-        step = "json_dumps"
-        body_str = json.dumps(body_dict, ensure_ascii=True)
-
-        step = "encode_body"
-        body_bytes = body_str.encode("ascii")
-
-        step = "create_request"
-        req = urllib.request.Request(
+        response = requests.post(
             "https://api.anthropic.com/v1/messages",
-            data=body_bytes,
-            method="POST"
+            headers={
+                "x-api-key": api_key.strip(),
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": safe_prompt}]
+            },
+            timeout=60
         )
 
-        step = "add_headers"
-        req.add_header("x-api-key", to_ascii(api_key))
-        req.add_header("anthropic-version", "2023-06-01")
-        req.add_header("content-type", "application/json")
+        data = response.json()
 
-        step = "ssl_context"
-        ctx = ssl.create_default_context()
-
-        step = "urlopen"
-        with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
-            step = "read_response"
-            response_bytes = response.read()
-
-        step = "decode_response"
-        response_text = response_bytes.decode("utf-8", errors="replace")
-
-        step = "parse_json"
-        data = json.loads(response_text)
-
-        step = "check_error"
         if "error" in data:
             return "API error: " + to_ascii(str(data["error"].get("message", "Unknown")))
 
-        step = "extract"
         content = data.get("content", [])
         if content and len(content) > 0:
             raw_text = content[0].get("text", "")
@@ -96,8 +68,10 @@ def call_anthropic(prompt_text):
 
         return "No response from AI"
 
+    except requests.Timeout:
+        return "Error: Request timed out"
     except Exception as e:
-        return "Error at " + step + ": " + to_ascii(type(e).__name__)
+        return "Error: " + to_ascii(type(e).__name__)
 
 
 class AIBrain:
