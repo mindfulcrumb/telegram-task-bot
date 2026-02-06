@@ -31,17 +31,23 @@ def to_ascii(text):
 def call_anthropic(prompt_text):
     """
     Call Anthropic API using official SDK.
+    Logging is disabled to prevent UnicodeEncodeError in Docker/Railway.
     """
-    import anthropic
+    import logging
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "Error: API key not configured"
-
-    # Convert prompt to ASCII FIRST
-    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+    # Suppress ALL logging during API call to prevent encoding errors
+    logging.disable(logging.CRITICAL)
 
     try:
+        import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return "Error: API key not configured"
+
+        # Convert prompt to ASCII FIRST
+        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
@@ -54,12 +60,12 @@ def call_anthropic(prompt_text):
             return to_ascii(raw_text)
         return "No response from AI"
 
-    except anthropic.APITimeoutError:
-        return "Error: Request timed out"
-    except anthropic.APIError as e:
-        return "API error: " + to_ascii(str(e))
     except Exception as e:
-        return "Error: " + to_ascii(type(e).__name__)
+        err_type = to_ascii(type(e).__name__) or "Error"
+        return "Error: " + err_type
+    finally:
+        # Re-enable logging after API call
+        logging.disable(logging.NOTSET)
 
 
 class AIBrain:

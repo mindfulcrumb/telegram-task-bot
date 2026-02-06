@@ -1,24 +1,13 @@
 """Main entry point for the Telegram Task Bot."""
-# CRITICAL: Set encoding BEFORE any other imports to fix Railway ASCII issues
-import sys
-import os
-import io
-
-# Force UTF-8 for all IO operations
-os.environ['PYTHONIOENCODING'] = 'utf-8'
-os.environ['LANG'] = 'en_US.UTF-8'
-os.environ['LC_ALL'] = 'en_US.UTF-8'
-
-# Reconfigure stdout/stderr with UTF-8 encoding
-try:
-    if hasattr(sys.stdout, 'buffer'):
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    if hasattr(sys.stderr, 'buffer'):
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-except Exception:
-    pass  # Ignore if already configured
+# CRITICAL: Import encoding fix FIRST before ANY other imports
+# This must be the very first import to fix Railway/Docker ASCII encoding issues
+from bot import encoding_fix
+encoding_fix.disable_httpx_logging()
+encoding_fix.configure_safe_logging()
 
 # Now import everything else
+import sys
+import os
 import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import config
