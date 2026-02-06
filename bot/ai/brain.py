@@ -30,10 +30,9 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using httpx with EXPLICIT ASCII JSON encoding.
-    This bypasses all Python encoding issues by using ensure_ascii=True.
+    Call Anthropic API using official SDK.
     """
-    import httpx
+    import anthropic
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -42,44 +41,23 @@ def call_anthropic(prompt_text):
     # Convert prompt to ASCII FIRST
     safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
 
-    # Build request with pure ASCII data
-    url = "https://api.anthropic.com/v1/messages"
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
-    body = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 500,
-        "messages": [{"role": "user", "content": safe_prompt}]
-    }
-
     try:
-        # CRITICAL: Use json.dumps with ensure_ascii=True to force ASCII encoding
-        # This prevents ANY unicode from reaching httpx internals
-        json_body = json.dumps(body, ensure_ascii=True)
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=500,
+            messages=[{"role": "user", "content": safe_prompt}]
+        )
 
-        # Use httpx with explicit timeout, pass raw bytes
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(url, headers=headers, content=json_body.encode("ascii"))
-
-        # Parse response
-        response_data = response.json()
-
-        # Check for API error
-        if "error" in response_data:
-            err_msg = response_data.get("error", {}).get("message", "Unknown API error")
-            return "API error: " + to_ascii(err_msg)
-
-        content = response_data.get("content", [])
-        if content and len(content) > 0:
-            raw_text = content[0].get("text", "")
+        if message.content and len(message.content) > 0:
+            raw_text = message.content[0].text
             return to_ascii(raw_text)
         return "No response from AI"
 
-    except httpx.TimeoutException:
+    except anthropic.APITimeoutError:
         return "Error: Request timed out"
+    except anthropic.APIError as e:
+        return "API error: " + to_ascii(str(e))
     except Exception as e:
         return "Error: " + to_ascii(type(e).__name__)
 
