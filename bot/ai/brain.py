@@ -30,8 +30,8 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using httpx with explicit encoding.
-    All strings are converted to ASCII before any network operation.
+    Call Anthropic API using httpx with EXPLICIT ASCII JSON encoding.
+    This bypasses all Python encoding issues by using ensure_ascii=True.
     """
     import httpx
 
@@ -56,9 +56,13 @@ def call_anthropic(prompt_text):
     }
 
     try:
-        # Use httpx with explicit timeout
+        # CRITICAL: Use json.dumps with ensure_ascii=True to force ASCII encoding
+        # This prevents ANY unicode from reaching httpx internals
+        json_body = json.dumps(body, ensure_ascii=True)
+
+        # Use httpx with explicit timeout, pass raw bytes
         with httpx.Client(timeout=60.0) as client:
-            response = client.post(url, headers=headers, json=body)
+            response = client.post(url, headers=headers, content=json_body.encode("ascii"))
 
         # Parse response
         response_data = response.json()
