@@ -35,7 +35,7 @@ class AIBrain:
                 return None
 
             body = {
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": max_tokens,
                 "messages": messages,
             }
@@ -67,11 +67,16 @@ class AIBrain:
                 return data["content"][0]["text"]
 
         except urllib.error.HTTPError as e:
-            return "API error: " + str(e.code)
-        except urllib.error.URLError as e:
-            return "Network error"
+            # Read error body for details
+            try:
+                err_body = e.read().decode('utf-8', errors='replace')
+                return None  # Return None so caller knows it failed
+            except Exception:
+                return None
+        except urllib.error.URLError:
+            return None
         except Exception:
-            return "Request failed"
+            return None
 
     async def process(self, user_input: str, tasks: list = None) -> dict:
         """Process user input with Claude."""
@@ -108,7 +113,7 @@ class AIBrain:
 
         response_text = self._make_request(messages, system=system_prompt, max_tokens=1024)
 
-        if not response_text or response_text.startswith("API error") or response_text.startswith("Request failed") or response_text.startswith("Network error"):
+        if not response_text:
             return {"action": "fallback", "data": {}, "response": None}
 
         try:
@@ -158,9 +163,9 @@ class AIBrain:
         messages = [{"role": "user", "content": prompt}]
         result = self._make_request(messages, max_tokens=500)
 
-        if result:
-            return make_ascii(result)  # Ensure response is also ASCII
-        return "Analysis unavailable"
+        if result and not result.startswith("API error") and not result.startswith("Request failed"):
+            return make_ascii(result)
+        return "Analysis unavailable - check API key and try again"
 
 
 ai_brain = AIBrain()
