@@ -171,7 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         # Add as new task
-        await add_new_task(update, text)
+        await add_new_task(update, context, text)
 
 
 async def handle_delete(update: Update, task_num: int):
@@ -257,7 +257,7 @@ async def handle_today(update: Update):
         await update.message.reply_text(f"Error: {str(e)}")
 
 
-async def add_new_task(update: Update, text: str):
+async def add_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     """Add a new task from natural text."""
     parsed = parse_task_input(text)
 
@@ -273,6 +273,20 @@ async def add_new_task(update: Update, text: str):
             priority=parsed["priority"],
             reminder_time=parsed.get("reminder_time")
         )
+
+        # Schedule reminder using job_queue.run_once() for EXACT timing
+        if parsed.get("reminder_time"):
+            from bot.handlers.reminders import schedule_reminder
+            schedule_reminder(
+                job_queue=context.job_queue,
+                chat_id=update.effective_chat.id,
+                reminder_time=parsed["reminder_time"],
+                task_data={
+                    "title": parsed["title"],
+                    "priority": parsed["priority"],
+                    "due_date": parsed["due_date"].strftime('%b %d') if parsed["due_date"] else None
+                }
+            )
 
         # Clean response
         cat_emoji = "💼" if parsed["category"] == "Business" else "🏠"
@@ -326,6 +340,20 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
             priority=parsed["priority"],
             reminder_time=parsed.get("reminder_time")
         )
+
+        # Schedule reminder using job_queue.run_once() for EXACT timing
+        if parsed.get("reminder_time"):
+            from bot.handlers.reminders import schedule_reminder
+            schedule_reminder(
+                job_queue=context.job_queue,
+                chat_id=update.effective_chat.id,
+                reminder_time=parsed["reminder_time"],
+                task_data={
+                    "title": parsed["title"],
+                    "priority": parsed["priority"],
+                    "due_date": parsed["due_date"].strftime('%b %d') if parsed["due_date"] else None
+                }
+            )
 
         response = f"Task added to {parsed['category']}\n"
         response += f"   {parsed['title']}"
