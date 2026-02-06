@@ -30,81 +30,64 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API with explicit byte handling to avoid ALL encoding issues.
-    Uses raw bytes for request/response to bypass Python's encoding layer.
+    Call Anthropic API in isolated subprocess to completely bypass encoding issues.
+    The subprocess has its own controlled encoding environment.
     """
-    import requests
+    import subprocess
+    import sys
 
-    step = "init"
+    # Clean inputs in main process
+    raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not raw_key:
+        return "Error: No API key"
+    api_key = "".join(c for c in raw_key if c.isalnum() or c in "-_")
+    if not api_key:
+        return "Error: Invalid key"
+
+    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
+    # Self-contained Python script that runs in subprocess
+    script = '''
+import sys, json, http.client, ssl
+key, prompt = sys.argv[1], sys.argv[2]
+try:
+    body = json.dumps({"model":"claude-3-5-sonnet-20241022","max_tokens":500,"messages":[{"role":"user","content":prompt}]}, ensure_ascii=True).encode("ascii")
+    ctx = ssl.create_default_context()
+    c = http.client.HTTPSConnection("api.anthropic.com", context=ctx, timeout=60)
+    c.request("POST", "/v1/messages", body=body, headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"})
+    r = c.getresponse()
+    d = json.loads(r.read().decode("utf-8", errors="replace"))
+    c.close()
+    if "error" in d:
+        print("ERR:" + str(d.get("error",{}).get("message",""))[:200])
+    else:
+        t = d.get("content",[{}])[0].get("text","") if d.get("content") else ""
+        print("OK:" + "".join(x if ord(x)<128 else "" for x in t))
+except Exception as e:
+    print("ERR:" + type(e).__name__)
+'''
+
     try:
-        # Step 1: Get and clean API key - ONLY alphanumeric and dash/underscore
-        step = "key"
-        raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not raw_key:
-            return "Error: No API key"
-        api_key = "".join(c for c in raw_key if c.isalnum() or c in "-_")
-        if not api_key:
-            return "Error: Invalid key"
-
-        # Step 2: Clean prompt to pure ASCII
-        step = "prompt"
-        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-
-        # Step 3: Build JSON body with GUARANTEED ASCII encoding
-        step = "body"
-        body_dict = {
-            "model": "claude-3-5-sonnet-20241022",
-            "max_tokens": 500,
-            "messages": [{"role": "user", "content": safe_prompt}]
-        }
-        # json.dumps with ensure_ascii=True guarantees pure ASCII output
-        body_str = json.dumps(body_dict, ensure_ascii=True)
-        body_bytes = body_str.encode("ascii")  # Safe because ensure_ascii=True
-
-        # Step 4: Make request with raw bytes (not json= parameter)
-        step = "request"
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            },
-            data=body_bytes,  # Send raw bytes, NOT json=
-            timeout=60
+        result = subprocess.run(
+            [sys.executable, "-c", script, api_key, safe_prompt],
+            capture_output=True,
+            timeout=90,
+            text=True,
+            env={**os.environ, "PYTHONIOENCODING": "ascii:replace", "PYTHONUTF8": "0"}
         )
 
-        # Step 5: Get response as raw bytes and decode safely
-        step = "response"
-        response_bytes = response.content
-        response_text = response_bytes.decode("utf-8", errors="replace")
+        output = (result.stdout or "").strip()
+        if output.startswith("OK:"):
+            return output[3:] or "Analysis complete (no details)"
+        elif output.startswith("ERR:"):
+            return "API error: " + output[4:]
+        else:
+            return "Error: " + to_ascii(result.stderr or "Unknown")[:100]
 
-        # Step 6: Parse JSON from safe string
-        step = "parse"
-        data = json.loads(response_text)
-
-        # Step 7: Extract result
-        step = "extract"
-        if "error" in data:
-            err_msg = data.get("error", {}).get("message", "Unknown")
-            return "API error: " + to_ascii(str(err_msg))
-
-        content = data.get("content", [])
-        if content and len(content) > 0:
-            raw_text = content[0].get("text", "")
-            return to_ascii(raw_text)
-
-        return "No response"
-
-    except requests.Timeout:
+    except subprocess.TimeoutExpired:
         return "Error: Timeout"
     except Exception as e:
-        err = "Unknown"
-        try:
-            err = to_ascii(type(e).__name__)
-        except:
-            pass
-        return "Err@" + step + ":" + err
+        return "Error: " + to_ascii(type(e).__name__)
 
 
 class AIBrain:
