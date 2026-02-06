@@ -33,10 +33,18 @@ def call_anthropic(prompt_text):
     Call Anthropic API using requests library - robust encoding handling.
     """
     import requests
+    import re
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
+    raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not raw_key:
         return "Error: API key not configured"
+
+    # Aggressively clean the API key - remove ALL whitespace and control characters
+    api_key = re.sub(r'\s+', '', raw_key)  # Remove all whitespace including newlines
+    api_key = ''.join(c for c in api_key if c.isprintable())  # Keep only printable chars
+
+    if not api_key:
+        return "Error: API key empty after cleaning"
 
     safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
 
@@ -44,7 +52,7 @@ def call_anthropic(prompt_text):
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key": api_key.strip(),
+                "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json"
             },
