@@ -47,11 +47,21 @@ def call_anthropic(prompt_text):
         if not raw_key:
             return "Error: No API key"
 
-        # Clean API key - remove ALL whitespace and control characters
+        # Clean API key - Railway might add quotes automatically
         import re
-        # Remove: whitespace, control chars (0x00-0x1f), DEL (0x7f), extended control (0x80-0x9f)
-        api_key = re.sub(r'[\s\x00-\x1f\x7f-\x9f]', '', raw_key)
-        # Also ensure pure ASCII
+        api_key = raw_key.strip()
+        # Strip surrounding quotes
+        if len(api_key) >= 2:
+            if (api_key.startswith('"') and api_key.endswith('"')) or \
+               (api_key.startswith("'") and api_key.endswith("'")):
+                api_key = api_key[1:-1]
+            elif api_key.startswith('"') or api_key.startswith("'"):
+                api_key = api_key[1:]
+            elif api_key.endswith('"') or api_key.endswith("'"):
+                api_key = api_key[:-1]
+        # Remove whitespace and control characters
+        api_key = re.sub(r'[\s\x00-\x1f\x7f-\x9f]', '', api_key)
+        # Ensure pure ASCII
         api_key = api_key.encode("ascii", errors="ignore").decode("ascii")
         debug_info.append("cleankey:" + str(len(api_key)))
 
