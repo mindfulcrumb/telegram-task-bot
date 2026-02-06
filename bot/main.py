@@ -13,6 +13,7 @@ from bot.handlers.tasks import (
     cmd_edit,
     cmd_week,
     cmd_overdue,
+    cmd_analyze,
     handle_message
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
@@ -66,6 +67,7 @@ def main():
     application.add_handler(CommandHandler("week", cmd_week))
     application.add_handler(CommandHandler("overdue", cmd_overdue))
     application.add_handler(CommandHandler("remind", cmd_remind))
+    application.add_handler(CommandHandler("analyze", cmd_analyze))
 
     # Add message handler for plain text (creates tasks)
     application.add_handler(MessageHandler(

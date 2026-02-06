@@ -20,3 +20,9 @@ ALLOWED_USER_IDS = [int(id.strip()) for id in os.getenv("ALLOWED_USER_IDS", "").
 
 # Reminder check interval in minutes
 REMINDER_CHECK_INTERVAL = int(os.getenv("REMINDER_CHECK_INTERVAL", "5"))
+
+# Anthropic API Key for Claude AI (optional - enables smart mode)
+ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+
+# AI Mode: Set to "smart" to use Claude for all input processing
+AI_MODE = (os.getenv("AI_MODE") or "basic").strip().lower()

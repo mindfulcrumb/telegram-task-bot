@@ -123,6 +123,97 @@ def detect_intent(text: str) -> dict:
     return {"action": "unclear", "text": text}
 
 
+async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    """Process message with AI brain. Returns True if handled, False to fallback."""
+    try:
+        from bot.ai.brain import ai_brain
+        tasks = notion_service.get_tasks()
+        result = await ai_brain.process(text, tasks)
+
+        if result["action"] == "fallback":
+            return False  # Use rule-based fallback
+
+        action = result["action"]
+        data = result.get("data", {})
+        response = result.get("response", "")
+
+        if action == "add_task":
+            # Create task from AI-parsed data
+            from datetime import datetime, timedelta
+            due_date = None
+            if data.get("due_date"):
+                try:
+                    due_date = datetime.fromisoformat(data["due_date"]).date()
+                except (ValueError, TypeError):
+                    pass
+
+            reminder_time = None
+            if data.get("reminder_minutes"):
+                reminder_time = datetime.now() + timedelta(minutes=data["reminder_minutes"])
+
+            notion_service.add_task(
+                title=data.get("title", text),
+                category=data.get("category", "Personal"),
+                due_date=due_date,
+                priority=data.get("priority", "Medium"),
+                reminder_time=reminder_time
+            )
+
+            if reminder_time:
+                from bot.handlers.reminders import schedule_reminder
+                schedule_reminder(
+                    context.job_queue, update.effective_chat.id,
+                    reminder_time, {"title": data.get("title"), "priority": data.get("priority")}
+                )
+
+            await update.message.reply_text(response or f"✅ Added: {data.get('title')}")
+
+        elif action == "done":
+            task_num = data.get("task_num", 1)
+            if 1 <= task_num <= len(tasks):
+                task = tasks[task_num - 1]
+                notion_service.mark_complete(task["id"])
+                await update.message.reply_text(response or f'✅ Done: "{task["title"]}"')
+            else:
+                await update.message.reply_text(f"Task #{task_num} not found.")
+
+        elif action == "delete":
+            task_num = data.get("task_num", 1)
+            if 1 <= task_num <= len(tasks):
+                task = tasks[task_num - 1]
+                notion_service.delete_task(task["id"])
+                await update.message.reply_text(response or f'🗑️ Deleted: "{task["title"]}"')
+            else:
+                await update.message.reply_text(f"Task #{task_num} not found.")
+
+        elif action == "list":
+            filter_type = data.get("filter", "all")
+            if filter_type == "today":
+                await handle_today(update)
+            elif filter_type == "business":
+                await handle_list(update, "Business")
+            elif filter_type == "personal":
+                await handle_list(update, "Personal")
+            else:
+                await handle_list(update, None)
+
+        elif action == "summary":
+            summary = await ai_brain.weekly_summary(tasks)
+            await update.message.reply_text(f"📊 *Task Analysis*\n\n{summary}", parse_mode="Markdown")
+
+        elif action == "answer":
+            await update.message.reply_text(response or data.get("text", "I'm here to help!"))
+
+        else:
+            return False  # Unknown action, fallback
+
+        return True
+
+    except Exception as e:
+        print(f"[AI] Error: {e}")
+        return False  # Fallback on error
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle plain text messages with smart intent detection."""
     if not is_authorized(update.effective_user.id):
@@ -137,7 +228,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # Detect what the user wants to do
+    # Use AI mode if enabled
+    if config.AI_MODE == "smart" and config.ANTHROPIC_API_KEY:
+        handled = await handle_ai_message(update, context, text)
+        if handled:
+            return
+
+    # Fallback to rule-based detection
     intent = detect_intent(text)
 
     if intent["action"] == "delete":
@@ -697,3 +794,30 @@ I'll create a task, auto-detect the category, and set the due date.
 Type /help for all commands."""
 
     await update.message.reply_text(welcome, parse_mode="Markdown")
+
+
+async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /analyze command - AI analysis of tasks."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    if not config.ANTHROPIC_API_KEY:
+        await update.message.reply_text("AI features require ANTHROPIC_API_KEY to be set.")
+        return
+
+    await update.message.reply_text("🤔 Analyzing your tasks...")
+
+    try:
+        from bot.ai.brain import ai_brain
+        tasks = notion_service.get_tasks()
+
+        if not tasks:
+            await update.message.reply_text("No tasks to analyze. Add some tasks first!")
+            return
+
+        summary = await ai_brain.weekly_summary(tasks)
+        await update.message.reply_text(f"📊 *Task Analysis*\n\n{summary}", parse_mode="Markdown")
+
+    except Exception as e:
+        await update.message.reply_text(f"Error analyzing tasks: {str(e)}")
