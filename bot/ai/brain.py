@@ -1,29 +1,30 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
-import sys
-import io
+import os
 from datetime import datetime, date, timedelta
 from anthropic import Anthropic
 import config
 
-# Force UTF-8 encoding for stdout/stderr (fixes Railway encoding issues)
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+# Set environment variable for httpx/anthropic client
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 
-def sanitize_text(text) -> str:
+def to_ascii_safe(text) -> str:
     """
-    Sanitize text to ensure it's safe for processing.
-    Handles Cyrillic and other non-ASCII characters.
+    Convert text to ASCII-safe string by replacing non-ASCII characters.
+    This ensures compatibility with environments that have ASCII-only encoding.
     """
     if text is None:
         return ""
     if isinstance(text, bytes):
         text = text.decode('utf-8', errors='replace')
-    # Encode to UTF-8 and back to ensure valid string
-    return str(text).encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+
+    # Convert to string and encode to ASCII, replacing non-ASCII with ?
+    try:
+        return str(text).encode('ascii', errors='replace').decode('ascii')
+    except Exception:
+        # Ultimate fallback - remove all non-ASCII
+        return ''.join(c if ord(c) < 128 else '?' for c in str(text))
 
 
 class AIBrain:
@@ -54,17 +55,17 @@ class AIBrain:
         if not client:
             return {"action": "fallback", "data": {}, "response": None}
 
-        # Sanitize user input
-        user_input = sanitize_text(user_input)
+        # Make user input ASCII-safe
+        safe_input = to_ascii_safe(user_input)
 
-        # Build context about current tasks (with safe string handling)
+        # Build context about current tasks (ASCII-safe)
         tasks_context = ""
         if tasks:
             tasks_context = "\n\nCurrent tasks:\n"
             for t in tasks[:10]:
-                title = sanitize_text(t.get('title', 'Untitled'))
-                category = sanitize_text(t.get('category', 'Personal'))
-                priority = sanitize_text(t.get('priority', 'Medium'))
+                title = to_ascii_safe(t.get('title', 'Untitled'))
+                category = to_ascii_safe(t.get('category', 'Personal'))
+                priority = to_ascii_safe(t.get('priority', 'Medium'))
                 tasks_context += f"- #{t['index']}: {title} ({category}, {priority})"
                 if t.get('due_date'):
                     tasks_context += f" due {t['due_date']}"
@@ -87,13 +88,13 @@ Return ONLY valid JSON:
 {{"action": "...", "data": {{...}}, "response": "what to say"}}
 
 SMART RULES:
-- "meeting with client" → Business, Medium priority
-- "URGENT" or "ASAP" → High priority
-- "groceries", "gym" → Personal
-- "next week" → due_date = next Monday
-- "remind me in 2 hours" → reminder_minutes: 120
-- Questions about tasks → use 'answer' with analysis
-- Greetings → friendly 'answer'
+- "meeting with client" -> Business, Medium priority
+- "URGENT" or "ASAP" -> High priority
+- "groceries", "gym" -> Personal
+- "next week" -> due_date = next Monday
+- "remind me in 2 hours" -> reminder_minutes: 120
+- Questions about tasks -> use 'answer' with analysis
+- Greetings -> friendly 'answer'
 {tasks_context}"""
 
         try:
@@ -103,7 +104,7 @@ SMART RULES:
                 system=system_prompt,
                 messages=[
                     *self.conversation_history[-6:],
-                    {"role": "user", "content": user_input}
+                    {"role": "user", "content": safe_input}
                 ]
             )
 
@@ -124,20 +125,17 @@ SMART RULES:
                     "response": response_text
                 }
 
-            # Update history
-            self.conversation_history.append({"role": "user", "content": user_input})
-            self.conversation_history.append({"role": "assistant", "content": response_text})
+            # Update history (with safe strings)
+            self.conversation_history.append({"role": "user", "content": safe_input})
+            self.conversation_history.append({"role": "assistant", "content": to_ascii_safe(response_text)})
             if len(self.conversation_history) > 20:
                 self.conversation_history = self.conversation_history[-10:]
 
             return result
 
         except Exception as e:
-            # Safe error logging
-            try:
-                print(f"[AI Brain] Error: {e}")
-            except UnicodeEncodeError:
-                print("[AI Brain] Error (encoding issue in error message)")
+            error_msg = to_ascii_safe(str(e))
+            print(f"[AI Brain] Error: {error_msg}")
             return {"action": "fallback", "data": {}, "response": None}
 
     async def weekly_summary(self, tasks: list) -> str:
@@ -146,12 +144,12 @@ SMART RULES:
         if not client or not tasks:
             return "No tasks to analyze."
 
-        # Build tasks text with safe string handling
+        # Build tasks text (ASCII-safe for API call)
         task_lines = []
         for t in tasks:
-            title = sanitize_text(t.get('title', 'Untitled'))
-            category = sanitize_text(t.get('category', 'Personal'))
-            priority = sanitize_text(t.get('priority', 'Medium'))
+            title = to_ascii_safe(t.get('title', 'Untitled'))
+            category = to_ascii_safe(t.get('category', 'Personal'))
+            priority = to_ascii_safe(t.get('priority', 'Medium'))
             line = f"- {title} ({category}, {priority})"
             if t.get('due_date'):
                 line += f" due {t['due_date']}"
@@ -178,13 +176,10 @@ Give:
 Be concise."""
                 }]
             )
-            return sanitize_text(response.content[0].text)
+            return response.content[0].text
         except Exception as e:
-            # Safe error message
-            try:
-                return f"Analysis unavailable: {e}"
-            except UnicodeEncodeError:
-                return "Analysis unavailable: encoding error"
+            error_msg = to_ascii_safe(str(e))
+            return f"Analysis unavailable: {error_msg}"
 
 
 # Singleton
