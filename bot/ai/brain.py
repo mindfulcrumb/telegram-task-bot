@@ -47,9 +47,10 @@ def call_anthropic(prompt_text):
         if not raw_key:
             return "Error: No API key"
 
-        # Clean API key - ONLY ASCII chars (ord < 128) that are alphanumeric or -_
-        # This catches Unicode lookalikes that pass isalnum() but aren't real ASCII
-        api_key = "".join(c for c in raw_key if ord(c) < 128 and (c.isalnum() or c in "-_"))
+        # Clean API key - strip whitespace, then convert to pure ASCII
+        api_key = raw_key.strip()
+        # Remove any non-ASCII by encoding to ASCII and ignoring errors
+        api_key = api_key.encode("ascii", errors="ignore").decode("ascii")
         debug_info.append("cleankey:" + str(len(api_key)))
 
         if not api_key:
