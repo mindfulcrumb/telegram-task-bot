@@ -30,25 +30,39 @@ def to_ascii(text):
 
 def call_anthropic(prompt_text):
     """
-    Call Anthropic API using requests library - robust encoding handling.
+    Call Anthropic API with explicit byte handling to avoid ALL encoding issues.
+    Uses raw bytes for request/response to bypass Python's encoding layer.
     """
     import requests
-    import re
 
-    raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not raw_key:
-        return "Error: API key not configured"
-
-    # Aggressively clean the API key - remove ALL whitespace and control characters
-    api_key = re.sub(r'\s+', '', raw_key)  # Remove all whitespace including newlines
-    api_key = ''.join(c for c in api_key if c.isprintable())  # Keep only printable chars
-
-    if not api_key:
-        return "Error: API key empty after cleaning"
-
-    safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
-
+    step = "init"
     try:
+        # Step 1: Get and clean API key - ONLY alphanumeric and dash/underscore
+        step = "key"
+        raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not raw_key:
+            return "Error: No API key"
+        api_key = "".join(c for c in raw_key if c.isalnum() or c in "-_")
+        if not api_key:
+            return "Error: Invalid key"
+
+        # Step 2: Clean prompt to pure ASCII
+        step = "prompt"
+        safe_prompt = to_ascii(prompt_text) or "Analyze tasks"
+
+        # Step 3: Build JSON body with GUARANTEED ASCII encoding
+        step = "body"
+        body_dict = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 500,
+            "messages": [{"role": "user", "content": safe_prompt}]
+        }
+        # json.dumps with ensure_ascii=True guarantees pure ASCII output
+        body_str = json.dumps(body_dict, ensure_ascii=True)
+        body_bytes = body_str.encode("ascii")  # Safe because ensure_ascii=True
+
+        # Step 4: Make request with raw bytes (not json= parameter)
+        step = "request"
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -56,30 +70,41 @@ def call_anthropic(prompt_text):
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json"
             },
-            json={
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": safe_prompt}]
-            },
+            data=body_bytes,  # Send raw bytes, NOT json=
             timeout=60
         )
 
-        data = response.json()
+        # Step 5: Get response as raw bytes and decode safely
+        step = "response"
+        response_bytes = response.content
+        response_text = response_bytes.decode("utf-8", errors="replace")
 
+        # Step 6: Parse JSON from safe string
+        step = "parse"
+        data = json.loads(response_text)
+
+        # Step 7: Extract result
+        step = "extract"
         if "error" in data:
-            return "API error: " + to_ascii(str(data["error"].get("message", "Unknown")))
+            err_msg = data.get("error", {}).get("message", "Unknown")
+            return "API error: " + to_ascii(str(err_msg))
 
         content = data.get("content", [])
         if content and len(content) > 0:
             raw_text = content[0].get("text", "")
             return to_ascii(raw_text)
 
-        return "No response from AI"
+        return "No response"
 
     except requests.Timeout:
-        return "Error: Request timed out"
+        return "Error: Timeout"
     except Exception as e:
-        return "Error: " + to_ascii(type(e).__name__)
+        err = "Unknown"
+        try:
+            err = to_ascii(type(e).__name__)
+        except:
+            pass
+        return "Err@" + step + ":" + err
 
 
 class AIBrain:
