@@ -1,4 +1,4 @@
-"""Voice message handler - transcribes voice notes via OpenAI Whisper."""
+"""Voice message handler - transcribes voice notes via Groq Whisper."""
 import logging
 import os
 import tempfile
@@ -11,20 +11,20 @@ logger = logging.getLogger(__name__)
 
 def is_voice_configured() -> bool:
     """Check if voice transcription is available."""
-    return bool(config.OPENAI_API_KEY)
+    return bool(config.GROQ_API_KEY)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle voice messages: transcribe with Whisper, then process as text."""
-    from bot.handlers.tasks import is_authorized, handle_ai_message, detect_intent
+    """Handle voice messages: transcribe with Whisper via Groq, then process as text."""
+    from bot.handlers.tasks import is_authorized
     from bot.handlers.reminders import register_chat_id
 
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return
 
-    if not config.OPENAI_API_KEY:
-        await update.message.reply_text("Voice messages aren't configured yet. Set OPENAI_API_KEY to enable.")
+    if not config.GROQ_API_KEY:
+        await update.message.reply_text("Voice messages aren't configured yet. Set GROQ_API_KEY to enable.")
         return
 
     voice = update.message.voice or update.message.audio
@@ -45,7 +45,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"Voice message downloaded ({voice.duration}s, {voice.file_size} bytes)")
 
-        # Transcribe with Whisper
+        # Transcribe with Whisper via Groq (no content filtering)
         text = await _transcribe(tmp_path)
 
         if not text or not text.strip():
@@ -96,7 +96,7 @@ async def _process_transcribed_text(update: Update, context: ContextTypes.DEFAUL
     else:
         # Default: create a task
         task_info = parse_task_input(text)
-        result = notion_service.add_task(
+        notion_service.add_task(
             title=task_info["title"],
             category=task_info.get("category", "Personal"),
             due_date=task_info.get("due_date"),
@@ -106,14 +106,14 @@ async def _process_transcribed_text(update: Update, context: ContextTypes.DEFAUL
 
 
 async def _transcribe(file_path: str) -> str:
-    """Transcribe audio file using OpenAI Whisper API."""
-    from openai import OpenAI
+    """Transcribe audio file using Whisper via Groq (no content filtering)."""
+    from groq import Groq
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = Groq(api_key=config.GROQ_API_KEY)
 
     with open(file_path, "rb") as audio_file:
         response = client.audio.transcriptions.create(
-            model="whisper-1",
+            model="whisper-large-v3",
             file=audio_file
         )
 

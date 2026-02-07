@@ -54,8 +54,9 @@ EMAIL_CHECK_INTERVAL = int(os.getenv("EMAIL_CHECK_INTERVAL", "2"))
 # Anthropic API Key for Claude AI (optional - enables smart mode)
 ANTHROPIC_API_KEY = clean_env_value(os.getenv("ANTHROPIC_API_KEY"))
 
-# OpenAI API Key (for Whisper voice transcription)
-OPENAI_API_KEY = clean_env_value(os.getenv("OPENAI_API_KEY"))
+# Groq API Key (for Whisper voice transcription - no content filtering)
+# Get one free at: https://console.groq.com/keys
+GROQ_API_KEY = clean_env_value(os.getenv("GROQ_API_KEY"))
 
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
