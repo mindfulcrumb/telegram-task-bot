@@ -27,6 +27,7 @@ from bot.handlers.tasks import (
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
 from bot.handlers.proactive import setup_proactive_jobs
+from bot.handlers.voice import handle_voice
 from bot.handlers.accounting import (
     cmd_reconcile,
     cmd_acct_categories,
@@ -107,6 +108,9 @@ def main():
 
     # Inline keyboard callback handler (for accounting category selection)
     application.add_handler(CallbackQueryHandler(handle_acct_callback))
+
+    # Voice message handler (transcribe with Whisper, then process as text)
+    application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
 
     # Add message handler for plain text (creates tasks)
     application.add_handler(MessageHandler(
