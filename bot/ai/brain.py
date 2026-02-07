@@ -159,10 +159,8 @@ class AIBrain:
 
     def _get_contacts_context(self):
         """Get contacts for context."""
-        contacts = getattr(config, 'CONTACTS', {})
-        if not contacts:
-            return "No saved contacts yet."
-        return ", ".join(f"{name}: {val}" for name, val in contacts.items())
+        from bot.services.contacts_store import contacts_store
+        return contacts_store.format_for_prompt()
 
     def _get_capabilities(self):
         """Check what capabilities are available."""
@@ -201,10 +199,19 @@ class AIBrain:
             caps_text += '\n- "send_email": data: {"to": "email@example.com", "subject": "...", "body": "..."}'
         if "whatsapp" in capabilities:
             caps_text += '\n- "send_whatsapp": data: {"to": "+1234567890", "message": "..."}'
+        if capabilities:
+            caps_text += '\n- "save_contact": data: {"name": "Will", "email": "will@example.com", "phone": "+1234567890"}'
 
         caps_note = ""
         if capabilities:
-            caps_note = f"\n\nYOU CAN ALSO:\n- Send emails and WhatsApp messages when asked\n- Use saved contacts by name (e.g., 'message john' -> looks up john's number)\n\nSAVED CONTACTS:\n{contacts}"
+            caps_note = (
+                f"\n\nYOU CAN ALSO:"
+                f"\n- Send emails and WhatsApp messages when asked"
+                f"\n- Use saved contacts by name (e.g., 'email will' -> looks up will's email)"
+                f"\n- Save new contacts when you learn someone's email or phone"
+                f"\n- IMPORTANT: When sending an email to someone NEW (not in contacts), also use save_contact to remember them for next time"
+                f"\n\nSAVED CONTACTS:\n{contacts}"
+            )
 
         return f"""You're a chill, helpful assistant managing tasks via Telegram. Talk like a supportive friend, not a robot.
 
@@ -244,6 +251,8 @@ SMART BEHAVIORS:
 - Celebrate wins when they complete stuff!
 - For emails/messages: if no recipient specified, ASK who to send to
 - Always confirm before sending emails/messages (show what you'll send)
+- When user says "email Will" and Will is in contacts, use their saved email
+- When user provides a new contact detail (like "Will's email is will@x.com"), save it with save_contact
 
 Keep it real. No corporate speak. Just be helpful."""
 

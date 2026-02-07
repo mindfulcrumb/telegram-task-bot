@@ -123,6 +123,26 @@ def detect_intent(text: str) -> dict:
     return {"action": "unclear", "text": text}
 
 
+def _auto_save_email_contact(to_email: str, ai_data: dict):
+    """Auto-save a contact after a successful email send, if not already known."""
+    try:
+        from bot.services.contacts_store import contacts_store
+        all_contacts = contacts_store.get_all()
+        for c in all_contacts.values():
+            if c.get("email", "").lower() == to_email.lower():
+                return  # Already known
+
+        name = ai_data.get("recipient_name", "")
+        if not name:
+            local_part = to_email.split("@")[0]
+            name = local_part.replace(".", " ").replace("_", " ").replace("-", " ").title()
+
+        if name:
+            contacts_store.add_or_update_contact(name=name, email=to_email, source="auto_email")
+    except Exception:
+        pass
+
+
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
     """Process message with AI brain. Returns True if handled, False to fallback."""
     try:
@@ -215,6 +235,7 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 success, msg = send_email(to_email, subject, body)
                 if success:
                     await update.message.reply_text(response or f"✉️ Email sent to {to_email}!")
+                    _auto_save_email_contact(to_email, data)
                 else:
                     await update.message.reply_text(f"Couldn't send email: {msg}")
 
@@ -231,6 +252,28 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     await update.message.reply_text(response or f"📱 WhatsApp sent to {to_number}!")
                 else:
                     await update.message.reply_text(f"Couldn't send WhatsApp: {msg}")
+
+        elif action == "save_contact":
+            from bot.services.contacts_store import contacts_store
+            contact_name = data.get("name", "")
+            contact_email = data.get("email", "")
+            contact_phone = data.get("phone", "")
+
+            if not contact_name:
+                await update.message.reply_text(response or "Need a name to save a contact.")
+            elif not contact_email and not contact_phone:
+                await update.message.reply_text(response or "Need an email or phone number to save.")
+            else:
+                success = contacts_store.add_or_update_contact(
+                    name=contact_name, email=contact_email,
+                    phone=contact_phone, source="manual"
+                )
+                if success:
+                    await update.message.reply_text(
+                        response or f"Contact saved: {contact_name} ({contact_email or contact_phone})"
+                    )
+                else:
+                    await update.message.reply_text(f"Couldn't save contact for {contact_name}.")
 
         elif action == "answer":
             await update.message.reply_text(response or data.get("text", "I'm here to help!"))

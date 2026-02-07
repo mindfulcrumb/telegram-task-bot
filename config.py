@@ -38,6 +38,9 @@ NOTION_TOKEN = clean_env_value(os.getenv("NOTION_TOKEN"))
 # Notion Database ID (the ID from your tasks database URL)
 NOTION_DATABASE_ID = clean_env_value(os.getenv("NOTION_DATABASE_ID"))
 
+# Notion Contacts Database ID (for persistent contact storage)
+NOTION_CONTACTS_DB_ID = clean_env_value(os.getenv("NOTION_CONTACTS_DB_ID"))
+
 # Your Telegram user ID (for security - only you can use the bot)
 # Get this by messaging @userinfobot on Telegram
 ALLOWED_USER_IDS = [int(id.strip()) for id in os.getenv("ALLOWED_USER_IDS", "").split(",") if id.strip()]
