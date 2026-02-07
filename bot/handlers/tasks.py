@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 # Pending email drafts keyed by chat_id
 _pending_emails = {}
 
-# Undo buffer: stores last action per chat_id for recovery
-# Format: {chat_id: {"action": "delete"|"done", "task_id": "...", "title": "..."}}
+# Undo buffer: stores last action(s) per chat_id for recovery
+# Format: {chat_id: [{"action": "delete"|"done", "task_id": "...", "title": "..."}, ...]}
 _undo_buffer = {}
 
 
@@ -24,31 +24,35 @@ def is_authorized(user_id: int) -> bool:
     return user_id in config.ALLOWED_USER_IDS
 
 
+def _parse_numbers(text: str) -> list:
+    """Extract all numbers from text like '1 3 5', '1, 3, and 5', '#1 #3 #5'."""
+    nums = [int(n) for n in re.findall(r'\d+', text)]
+    return nums
+
+
 def detect_intent(text: str) -> dict:
     """Detect the user's intent from natural language."""
     text_lower = text.lower().strip()
 
-    # Delete/Remove/Cancel patterns
-    delete_match = re.match(r"^(delete|remove|cancel|trash)\s*(task\s*)?#?(\d+)$", text_lower)
+    # Delete/Remove/Cancel patterns (supports multiple numbers: "delete 1 3 5", "delete 1, 3 and 5")
+    delete_match = re.match(r"^(delete|remove|cancel|trash)\s*(tasks?\s*)?(.+)$", text_lower)
     if delete_match:
-        return {"action": "delete", "task_num": int(delete_match.group(3))}
+        nums = _parse_numbers(delete_match.group(3))
+        if nums:
+            return {"action": "delete", "task_nums": nums}
 
-    delete_match2 = re.match(r"^(delete|remove|cancel|trash)\s+(\d+)$", text_lower)
-    if delete_match2:
-        return {"action": "delete", "task_num": int(delete_match2.group(2))}
-
-    # Done/Complete/Finish patterns
-    done_match = re.match(r"^(done|complete|completed|finish|finished)\s*(task\s*)?#?(\d+)$", text_lower)
+    # Done/Complete/Finish patterns (supports multiple: "done 1 3 5")
+    done_match = re.match(r"^(done|complete|completed|finish|finished)\s*(tasks?\s*)?(.+)$", text_lower)
     if done_match:
-        return {"action": "done", "task_num": int(done_match.group(3))}
+        nums = _parse_numbers(done_match.group(3))
+        if nums:
+            return {"action": "done", "task_nums": nums}
 
-    done_match2 = re.match(r"^(done|complete|completed|finish|finished)\s+(\d+)$", text_lower)
-    if done_match2:
-        return {"action": "done", "task_num": int(done_match2.group(2))}
-
-    mark_done = re.match(r"^mark\s+(\d+)\s+(as\s+)?(done|complete|finished)$", text_lower)
+    mark_done = re.match(r"^mark\s+(.+?)\s+(as\s+)?(done|complete|finished)$", text_lower)
     if mark_done:
-        return {"action": "done", "task_num": int(mark_done.group(1))}
+        nums = _parse_numbers(mark_done.group(1))
+        if nums:
+            return {"action": "done", "task_nums": nums}
 
     # Explicit add/create commands - these ARE tasks
     if re.match(r"^(add|create|new|make|set|schedule)\s+", text_lower):
@@ -210,37 +214,61 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             await update.message.reply_text(response or f"✅ Added: {data.get('title')}")
 
         elif action == "done":
-            task_num = data.get("task_num", 1)
-            if 1 <= task_num <= len(tasks):
-                task = tasks[task_num - 1]
-                notion_service.mark_complete(task["id"])
-                _undo_buffer[update.effective_chat.id] = {
-                    "action": "done", "task_id": task["id"], "title": task["title"]
-                }
-                await update.message.reply_text(response or f'✅ Done: "{task["title"]}"')
+            # Support both task_nums (array) and legacy task_num (single)
+            task_nums = data.get("task_nums") or [data.get("task_num", 1)]
+            if isinstance(task_nums, int):
+                task_nums = [task_nums]
+            completed = []
+            undo_entries = []
+            for num in sorted(set(task_nums), reverse=True):
+                if 1 <= num <= len(tasks):
+                    task = tasks[num - 1]
+                    notion_service.mark_complete(task["id"])
+                    completed.append(task["title"])
+                    undo_entries.append({"action": "done", "task_id": task["id"], "title": task["title"]})
+            if undo_entries:
+                _undo_buffer[update.effective_chat.id] = undo_entries
+            if completed:
+                default = "✅ Done: " + ", ".join(f'"{t}"' for t in reversed(completed))
+                await update.message.reply_text(response or default)
             else:
-                await update.message.reply_text(f"Task #{task_num} not found.")
+                await update.message.reply_text(f"Task(s) not found.")
 
         elif action == "delete":
-            task_num = data.get("task_num", 1)
-            if 1 <= task_num <= len(tasks):
-                task = tasks[task_num - 1]
-                notion_service.delete_task(task["id"])
-                _undo_buffer[update.effective_chat.id] = {
-                    "action": "delete", "task_id": task["id"], "title": task["title"]
-                }
-                await update.message.reply_text(response or f'🗑️ Deleted: "{task["title"]}"')
+            task_nums = data.get("task_nums") or [data.get("task_num", 1)]
+            if isinstance(task_nums, int):
+                task_nums = [task_nums]
+            deleted = []
+            undo_entries = []
+            for num in sorted(set(task_nums), reverse=True):
+                if 1 <= num <= len(tasks):
+                    task = tasks[num - 1]
+                    notion_service.delete_task(task["id"])
+                    deleted.append(task["title"])
+                    undo_entries.append({"action": "delete", "task_id": task["id"], "title": task["title"]})
+            if undo_entries:
+                _undo_buffer[update.effective_chat.id] = undo_entries
+            if deleted:
+                default = "🗑️ Deleted: " + ", ".join(f'"{t}"' for t in reversed(deleted))
+                await update.message.reply_text(response or default)
             else:
-                await update.message.reply_text(f"Task #{task_num} not found.")
+                await update.message.reply_text(f"Task(s) not found.")
 
         elif action == "undo":
-            last_action = _undo_buffer.pop(update.effective_chat.id, None)
-            if last_action:
-                try:
-                    notion_service.restore_task(last_action["task_id"])
-                    action_word = "Undeleted" if last_action["action"] == "delete" else "Unmarked"
-                    await update.message.reply_text(response or f'\u21a9\ufe0f {action_word}: "{last_action["title"]}" is back!')
-                except Exception:
+            entries = _undo_buffer.pop(update.effective_chat.id, None)
+            if entries:
+                restored = []
+                for entry in entries:
+                    try:
+                        notion_service.restore_task(entry["task_id"])
+                        word = "Undeleted" if entry["action"] == "delete" else "Unmarked"
+                        restored.append(f'{word}: "{entry["title"]}"')
+                    except Exception:
+                        pass
+                if restored:
+                    default = "\u21a9\ufe0f " + "\n\u21a9\ufe0f ".join(restored)
+                    await update.message.reply_text(response or default)
+                else:
                     await update.message.reply_text("Couldn't undo that action.")
             else:
                 await update.message.reply_text(response or "Nothing to undo.")
@@ -485,10 +513,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intent = detect_intent(text)
 
     if intent["action"] == "delete":
-        await handle_delete(update, intent["task_num"])
+        await handle_delete(update, intent["task_nums"])
 
     elif intent["action"] == "done":
-        await handle_done(update, intent["task_num"])
+        await handle_done(update, intent["task_nums"])
 
     elif intent["action"] == "list":
         await handle_list(update, intent.get("category"))
@@ -518,49 +546,84 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_new_task(update, context, text)
 
 
-async def handle_delete(update: Update, task_num: int):
-    """Delete/remove a task."""
+async def handle_delete(update: Update, task_nums: list):
+    """Delete/remove one or more tasks."""
     try:
         tasks = notion_service.get_tasks()
+        deleted = []
+        not_found = []
+        undo_entries = []
 
-        if task_num < 1 or task_num > len(tasks):
-            await update.message.reply_text(f"Task #{task_num} not found. Say 'list' to see your tasks.")
-            return
+        # Process in reverse order so indices stay valid
+        for num in sorted(set(task_nums), reverse=True):
+            if num < 1 or num > len(tasks):
+                not_found.append(num)
+                continue
+            task = tasks[num - 1]
+            notion_service.delete_task(task["id"])
+            deleted.append(task["title"])
+            undo_entries.append({"action": "delete", "task_id": task["id"], "title": task["title"]})
 
-        task = tasks[task_num - 1]
-        notion_service.delete_task(task["id"])
+        # Save all to undo buffer
+        if undo_entries:
+            _undo_buffer[update.effective_chat.id] = undo_entries
 
-        # Save to undo buffer
-        _undo_buffer[update.effective_chat.id] = {
-            "action": "delete", "task_id": task["id"], "title": task["title"]
-        }
+        # Build response
+        parts = []
+        if deleted:
+            names = ", ".join(f'"{t}"' for t in reversed(deleted))
+            parts.append(f'Deleted: {names}')
+        if not_found:
+            nums_str = ", ".join(f"#{n}" for n in not_found)
+            parts.append(f'Not found: {nums_str}')
 
-        await update.message.reply_text(f'Deleted: "{task["title"]}"\n_Say /undo to recover_')
+        msg = "\n".join(parts)
+        if deleted:
+            msg += "\n_Say /undo to recover_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
+        logger.error(f"Delete failed: {type(e).__name__}: {e}")
         await update.message.reply_text("Error occurred")
 
 
-async def handle_done(update: Update, task_num: int):
-    """Mark a task as done."""
+async def handle_done(update: Update, task_nums: list):
+    """Mark one or more tasks as done."""
     try:
         tasks = notion_service.get_tasks()
+        completed = []
+        not_found = []
+        undo_entries = []
 
-        if task_num < 1 or task_num > len(tasks):
-            await update.message.reply_text(f"Task #{task_num} not found. Say 'list' to see your tasks.")
-            return
+        for num in sorted(set(task_nums), reverse=True):
+            if num < 1 or num > len(tasks):
+                not_found.append(num)
+                continue
+            task = tasks[num - 1]
+            notion_service.mark_complete(task["id"])
+            completed.append(task["title"])
+            undo_entries.append({"action": "done", "task_id": task["id"], "title": task["title"]})
 
-        task = tasks[task_num - 1]
-        notion_service.mark_complete(task["id"])
+        # Save all to undo buffer
+        if undo_entries:
+            _undo_buffer[update.effective_chat.id] = undo_entries
 
-        # Save to undo buffer
-        _undo_buffer[update.effective_chat.id] = {
-            "action": "done", "task_id": task["id"], "title": task["title"]
-        }
+        # Build response
+        parts = []
+        if completed:
+            names = ", ".join(f'"{t}"' for t in reversed(completed))
+            parts.append(f'Done: {names}')
+        if not_found:
+            nums_str = ", ".join(f"#{n}" for n in not_found)
+            parts.append(f'Not found: {nums_str}')
 
-        await update.message.reply_text(f'Done: "{task["title"]}"\n_Say /undo to recover_')
+        msg = "\n".join(parts)
+        if completed:
+            msg += "\n_Say /undo to recover_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
+        logger.error(f"Done failed: {type(e).__name__}: {e}")
         await update.message.reply_text("Error occurred")
 
 
@@ -571,19 +634,30 @@ async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-    last_action = _undo_buffer.pop(chat_id, None)
+    entries = _undo_buffer.pop(chat_id, None)
 
-    if not last_action:
+    if not entries:
         await update.message.reply_text("Nothing to undo.")
         return
 
-    try:
-        notion_service.restore_task(last_action["task_id"])
-        action_word = "Undeleted" if last_action["action"] == "delete" else "Unmarked"
-        await update.message.reply_text(f'\u21a9\ufe0f {action_word}: "{last_action["title"]}" is back!')
-    except Exception as e:
-        logger.error(f"Undo failed: {type(e).__name__}: {e}")
-        await update.message.reply_text("Couldn't undo that action. The task may have been permanently removed.")
+    restored = []
+    failed = []
+    for entry in entries:
+        try:
+            notion_service.restore_task(entry["task_id"])
+            action_word = "Undeleted" if entry["action"] == "delete" else "Unmarked"
+            restored.append(f'{action_word}: "{entry["title"]}"')
+        except Exception as e:
+            logger.error(f"Undo failed for {entry['title']}: {type(e).__name__}: {e}")
+            failed.append(entry["title"])
+
+    parts = []
+    if restored:
+        parts.append("\u21a9\ufe0f " + "\n\u21a9\ufe0f ".join(restored))
+    if failed:
+        parts.append(f"Couldn't restore: {', '.join(failed)}")
+
+    await update.message.reply_text("\n".join(parts) or "Couldn't undo that action.")
 
 
 async def handle_list(update: Update, category: str = None):
@@ -839,74 +913,51 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /done command - mark task as complete."""
+    """Handle /done command - mark task(s) as complete. Supports multiple: /done 1 3 5"""
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return
 
     if not context.args:
         await update.message.reply_text(
-            "Usage: /done <task number>\n\n"
+            "Usage: /done <task numbers>\n\n"
+            "Examples:\n"
+            "  /done 1\n"
+            "  /done 1 3 5\n\n"
             "Use /list to see task numbers."
         )
         return
 
-    try:
-        task_num = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("Please provide a valid task number.")
+    nums = _parse_numbers(" ".join(context.args))
+    if not nums:
+        await update.message.reply_text("Please provide valid task number(s).")
         return
 
-    try:
-        # Get current tasks to find the one to mark done
-        tasks = notion_service.get_tasks()
-
-        if task_num < 1 or task_num > len(tasks):
-            await update.message.reply_text(f"Invalid task number. Use /list to see available tasks (1-{len(tasks)}).")
-            return
-
-        task = tasks[task_num - 1]
-        notion_service.mark_complete(task["id"])
-
-        await update.message.reply_text(f'"{task["title"]}" marked complete!')
-
-    except Exception as e:
-        await update.message.reply_text("Error completing task")
+    await handle_done(update, nums)
 
 
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /delete command - remove a task."""
+    """Handle /delete command - remove task(s). Supports multiple: /delete 1 3 5"""
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return
 
     if not context.args:
         await update.message.reply_text(
-            "Usage: /delete <task number>\n\n"
+            "Usage: /delete <task numbers>\n\n"
+            "Examples:\n"
+            "  /delete 1\n"
+            "  /delete 1 3 5\n\n"
             "Use /list to see task numbers."
         )
         return
 
-    try:
-        task_num = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("Please provide a valid task number.")
+    nums = _parse_numbers(" ".join(context.args))
+    if not nums:
+        await update.message.reply_text("Please provide valid task number(s).")
         return
 
-    try:
-        tasks = notion_service.get_tasks()
-
-        if task_num < 1 or task_num > len(tasks):
-            await update.message.reply_text(f"Invalid task number. Use /list to see available tasks (1-{len(tasks)}).")
-            return
-
-        task = tasks[task_num - 1]
-        notion_service.delete_task(task["id"])
-
-        await update.message.reply_text(f'🗑️ Deleted: "{task["title"]}"')
-
-    except Exception as e:
-        await update.message.reply_text("Error deleting task")
+    await handle_delete(update, nums)
 
 
 async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):

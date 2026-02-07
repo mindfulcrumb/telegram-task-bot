@@ -88,9 +88,9 @@ async def _process_transcribed_text(update: Update, context: ContextTypes.DEFAUL
     intent = detect_intent(text)
 
     if intent["action"] == "delete":
-        await handle_delete(update, intent["task_num"])
+        await handle_delete(update, intent["task_nums"])
     elif intent["action"] == "done":
-        await handle_done(update, intent["task_num"])
+        await handle_done(update, intent["task_nums"])
     elif intent["action"] == "list":
         await handle_list(update, intent.get("category"))
     else:

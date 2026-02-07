@@ -295,9 +295,9 @@ For emails, write a proper email body in the "body" field based on the user's co
 
 ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
-- "done": data: {{"task_num": N}}
-- "delete": data: {{"task_num": N}}
-- "undo": data: {{}} - Undo the last delete or done action (restores the task)
+- "done": data: {{"task_nums": [N]}} - Mark task(s) as done. Use array even for single task. E.g. "done 1 and 3" -> {{"task_nums": [1, 3]}}
+- "delete": data: {{"task_nums": [N]}} - Delete task(s). Use array even for single task. E.g. "delete 2 4 5" -> {{"task_nums": [2, 4, 5]}}
+- "undo": data: {{}} - Undo the last delete or done action (restores all affected tasks)
 - "list": data: {{"filter": "all/today/business/personal"}}{caps_text}{acct_actions}
 - "answer": Just chat - use this most of the time
 
@@ -486,6 +486,22 @@ Keep it real. No corporate speak. Just be helpful."""
                     "action": "accounting_update",
                     "data": {"transactions": txn_data},
                     "response": resp_match.group(1) if resp_match else ""
+                }
+
+            # Recovery for delete/done with task_nums array
+            if action in ("delete", "done"):
+                nums_match = re.search(r'"task_nums"\s*:\s*\[([^\]]*)\]', text)
+                num_match = re.search(r'"task_num"\s*:\s*(\d+)', text)
+                resp_val = self._extract_json_value(text, "response")
+                task_nums = []
+                if nums_match:
+                    task_nums = [int(n) for n in re.findall(r'\d+', nums_match.group(1))]
+                elif num_match:
+                    task_nums = [int(num_match.group(1))]
+                return {
+                    "action": action,
+                    "data": {"task_nums": task_nums} if task_nums else {},
+                    "response": resp_val or ""
                 }
 
             # Generic recovery for other actions
