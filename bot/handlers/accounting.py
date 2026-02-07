@@ -23,7 +23,7 @@ from bot.accounting.categorizer import (
     get_categories,
     get_category_display,
 )
-from bot.accounting.export_service import export_excel, export_csv
+from bot.accounting.export_service import export_excel, export_csv, export_pdf
 from bot.accounting.ai_categorizer import categorize_with_ai
 from bot.accounting import storage as acct_db
 
@@ -67,6 +67,9 @@ def _export_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("Excel (.xlsx)", callback_data="acct_export:excel"),
             InlineKeyboardButton("CSV (.csv)", callback_data="acct_export:csv"),
+        ],
+        [
+            InlineKeyboardButton("PDF (.pdf)", callback_data="acct_export:pdf"),
         ],
     ])
 
@@ -341,6 +344,9 @@ async def _handle_export_callback(update: Update, context: ContextTypes.DEFAULT_
             if fmt == "excel":
                 out = Path(tmp_dir) / f"{filename_base}_categorizado.xlsx"
                 export_excel(result, out)
+            elif fmt == "pdf":
+                out = Path(tmp_dir) / f"{filename_base}_categorizado.pdf"
+                export_pdf(result, out)
             else:
                 out = Path(tmp_dir) / f"{filename_base}_categorizado.csv"
                 export_csv(result, out)
@@ -361,3 +367,103 @@ async def _handle_export_callback(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.error(f"Export error: {e}", exc_info=True)
         await update.effective_chat.send_message(f"Erro ao exportar: {str(e)}")
+
+
+# --- Helper functions for AI-routed accounting messages ---
+
+
+async def handle_accounting_export(update: Update, context: ContextTypes.DEFAULT_TYPE, fmt: str):
+    """Export current session in the given format. Called from AI brain or text handler."""
+    session = context.user_data.get("acct_session")
+    if not session or not session.get("result"):
+        await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
+        return
+
+    result = session["result"]
+    filename_base = Path(session["filename"]).stem
+
+    await update.message.reply_text(f"A gerar {fmt.upper()}...")
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            if fmt == "excel":
+                out = Path(tmp_dir) / f"{filename_base}_categorizado.xlsx"
+                export_excel(result, out)
+            elif fmt == "pdf":
+                out = Path(tmp_dir) / f"{filename_base}_categorizado.pdf"
+                export_pdf(result, out)
+            else:
+                out = Path(tmp_dir) / f"{filename_base}_categorizado.csv"
+                export_csv(result, out)
+
+            with open(out, "rb") as f:
+                await update.effective_chat.send_document(
+                    document=f, filename=out.name,
+                    caption=f"Reconciliacao: {session['filename']} ({len(result.all_transactions)} transacoes)",
+                )
+
+        acct_db.complete_session(session["id"])
+
+    except Exception as e:
+        logger.error(f"Export error: {e}", exc_info=True)
+        await update.message.reply_text(f"Erro ao exportar: {str(e)}")
+
+
+async def handle_accounting_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current accounting session status. Called from AI brain."""
+    session = context.user_data.get("acct_session")
+    if not session or not session.get("result"):
+        await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
+        return
+
+    result = session["result"]
+    pending = session.get("pending_review", [])
+    reviewed = session.get("reviewed_count", 0)
+    current_idx = session.get("current_index", 0)
+    remaining = max(0, len(pending) - current_idx)
+
+    text = (
+        f"Sessao ativa: {session.get('filename', '?')}\n\n"
+        f"Total transacoes: {len(result.all_transactions)}\n"
+        f"  Debitos banco: {len(result.debit_transactions)}\n"
+        f"  Creditos banco: {len(result.credit_transactions)}\n"
+        f"  Debitos empresa: {len(result.company_debits)}\n"
+        f"  Creditos empresa: {len(result.company_credits)}\n\n"
+        f"Categorizadas: {len(result.categorized)}\n"
+        f"Revisadas manualmente: {reviewed}\n"
+        f"Restantes para revisao: {remaining}\n"
+    )
+    if result.bank_balance is not None:
+        text += f"\nSaldo bancario: {result.bank_balance:.2f} EUR"
+    if result.difference is not None:
+        text += f"\nDiferenca: {result.difference:.2f} EUR"
+
+    text += "\n\nUsa /acct_export ou diz 'exportar' para gerar o ficheiro."
+    await update.message.reply_text(text)
+
+
+def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """Get accounting session context string for the AI brain. Returns None if no active session."""
+    session = context.user_data.get("acct_session")
+    if not session or not session.get("result"):
+        return None
+
+    result = session["result"]
+    pending = session.get("pending_review", [])
+    reviewed = session.get("reviewed_count", 0)
+    current_idx = session.get("current_index", 0)
+    remaining = max(0, len(pending) - current_idx)
+
+    text = (
+        f"ACTIVE ACCOUNTING SESSION:\n"
+        f"- File: {session.get('filename', '?')}\n"
+        f"- Total transactions: {len(result.all_transactions)}\n"
+        f"- Categorized: {len(result.categorized)}\n"
+        f"- Manually reviewed: {reviewed}\n"
+        f"- Remaining for review: {remaining}"
+    )
+    if result.bank_balance is not None:
+        text += f"\n- Bank balance: {result.bank_balance:.2f} EUR"
+    if result.difference is not None:
+        text += f"\n- Difference: {result.difference:.2f} EUR"
+    return text

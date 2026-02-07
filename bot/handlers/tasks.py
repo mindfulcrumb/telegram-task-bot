@@ -162,8 +162,10 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     """Process message with AI brain. Returns True if handled, False to fallback."""
     try:
         from bot.ai.brain import ai_brain
+        from bot.handlers.accounting import get_session_context
         tasks = notion_service.get_tasks()
-        result = await ai_brain.process(text, tasks)
+        acct_context = get_session_context(context)
+        result = await ai_brain.process(text, tasks, acct_context=acct_context)
 
         if result["action"] == "fallback":
             return False  # Use rule-based fallback
@@ -381,6 +383,28 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     )
                 else:
                     await update.message.reply_text(f"Couldn't save contact for {contact_name}.")
+
+        elif action == "accounting_export":
+            from bot.handlers.accounting import handle_accounting_export
+            fmt = data.get("format", "excel")
+            if fmt not in ("excel", "csv", "pdf"):
+                fmt = "excel"
+            if response:
+                await update.message.reply_text(response)
+            await handle_accounting_export(update, context, fmt)
+
+        elif action == "accounting_status":
+            from bot.handlers.accounting import handle_accounting_status
+            await handle_accounting_status(update, context)
+
+        elif action == "accounting_skip":
+            from bot.handlers.accounting import _send_next_review
+            session = context.user_data.get("acct_session")
+            if session:
+                session["current_index"] = session.get("current_index", 0) + 1
+                await _send_next_review(update, context)
+            else:
+                await update.message.reply_text(response or "No active accounting session.")
 
         elif action == "answer":
             await update.message.reply_text(response or data.get("text", "I'm here to help!"))

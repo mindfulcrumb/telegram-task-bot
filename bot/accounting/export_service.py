@@ -179,3 +179,133 @@ def export_csv(result: ReconciliationResult, output_path: str | Path) -> Path:
 
     logger.info(f"CSV exported to {output_path}")
     return output_path
+
+
+def export_pdf(result: ReconciliationResult, output_path: str | Path) -> Path:
+    """Export reconciliation as a formatted PDF report."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        str(output_path), pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("CustomTitle", parent=styles["Title"], fontSize=16, spaceAfter=12)
+    heading_style = ParagraphStyle("CustomHeading", parent=styles["Heading2"], fontSize=12, spaceAfter=6)
+
+    elements = []
+
+    # Title
+    elements.append(Paragraph(f"Reconciliacao Bancaria - {result.filename}", title_style))
+    elements.append(Paragraph(f"Gerado em: {result.parsed_at.strftime('%Y-%m-%d %H:%M')}", styles["Normal"]))
+    elements.append(Spacer(1, 10 * mm))
+
+    # Summary table
+    summary_data = [
+        ["Resumo", ""],
+        ["Total transacoes", str(len(result.all_transactions))],
+        ["Debitos banco", str(len(result.debit_transactions))],
+        ["Creditos banco", str(len(result.credit_transactions))],
+        ["Debitos empresa", str(len(result.company_debits))],
+        ["Creditos empresa", str(len(result.company_credits))],
+    ]
+    if result.bank_balance is not None:
+        summary_data.append(["Saldo bancario", f"{result.bank_balance:.2f} EUR"])
+    if result.reconciled_balance is not None:
+        summary_data.append(["Saldo reconciliado", f"{result.reconciled_balance:.2f} EUR"])
+    if result.difference is not None:
+        summary_data.append(["Diferenca", f"{result.difference:.2f} EUR"])
+
+    summary_table = Table(summary_data, colWidths=[130, 150])
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 8 * mm))
+
+    # Transaction sections
+    sections = [
+        ("Movimentos a Debito no Banco", result.debit_transactions),
+        ("Movimentos a Credito no Banco", result.credit_transactions),
+        ("Movimentos a Debito pela Empresa", result.company_debits),
+        ("Movimentos a Credito pela Empresa", result.company_credits),
+    ]
+
+    for section_title, transactions in sections:
+        if not transactions:
+            continue
+
+        elements.append(Paragraph(section_title, heading_style))
+
+        table_data = [["Data", "Descricao", "Valor (EUR)", "Categoria", "Nota"]]
+        for txn in transactions:
+            cat_display = get_category_display(txn.category) if txn.category else ""
+            desc = txn.description
+            if len(desc) > 40:
+                desc = desc[:37] + "..."
+            note = txn.note or ""
+            if len(note) > 30:
+                note = note[:27] + "..."
+            table_data.append([txn.date, desc, f"{txn.value:.2f}", cat_display, note])
+
+        col_widths = [60, 155, 55, 95, 100]
+        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F2F2")]),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 6 * mm))
+
+    # Category summary
+    elements.append(Paragraph("Resumo por Categoria", heading_style))
+
+    totals = {}
+    for txn in result.all_transactions:
+        cat = txn.category or "sem_categoria"
+        if cat not in totals:
+            totals[cat] = {"debits": 0.0, "credits": 0.0, "count": 0}
+        if txn.type == "debit":
+            totals[cat]["debits"] += txn.value
+        else:
+            totals[cat]["credits"] += txn.value
+        totals[cat]["count"] += 1
+
+    cat_data = [["Categoria", "Debitos (EUR)", "Creditos (EUR)", "N. Transacoes"]]
+    for cat, t in sorted(totals.items()):
+        display = get_category_display(cat) if cat != "sem_categoria" else "Sem Categoria"
+        cat_data.append([display, f"{t['debits']:.2f}", f"{t['credits']:.2f}", str(t["count"])])
+
+    cat_table = Table(cat_data, colWidths=[120, 90, 90, 80])
+    cat_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ALIGN", (1, 0), (3, -1), "RIGHT"),
+    ]))
+    elements.append(cat_table)
+
+    doc.build(elements)
+    logger.info(f"PDF exported to {output_path}")
+    return output_path

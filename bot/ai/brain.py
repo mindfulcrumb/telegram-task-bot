@@ -294,7 +294,7 @@ SMART BEHAVIORS:
 {acct_behavior}
 Keep it real. No corporate speak. Just be helpful."""
 
-    async def process(self, user_input, tasks=None):
+    async def process(self, user_input, tasks=None, acct_context=None):
         """Process user input and return action."""
         if not config.ANTHROPIC_API_KEY:
             return {"action": "fallback", "data": {}, "response": None}
@@ -308,7 +308,7 @@ Keep it real. No corporate speak. Just be helpful."""
             if len(self.conversation_history) > self.max_history * 2:
                 self.conversation_history = self.conversation_history[-self.max_history * 2:]
 
-            system_prompt = self._get_system_prompt(tasks or [])
+            system_prompt = self._get_system_prompt(tasks or [], acct_context=acct_context)
 
             response_text, error = call_anthropic_chat(
                 system_prompt,
