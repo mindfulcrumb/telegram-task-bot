@@ -265,30 +265,51 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 await update.message.reply_text("No email draft to send. Tell me what to email!")
             else:
                 from bot.services.email_service import send_email
-                success, msg = send_email(pending["to"], pending["subject"], pending["body"])
-                if success:
-                    await update.message.reply_text(response or f"✉️ Email sent to {pending['to']}!")
-                    _auto_save_email_contact(pending["to"], pending)
+                to_raw = pending["to"]
+                recipients = [e.strip() for e in to_raw.replace(";", ",").split(",") if e.strip()]
+                sent = []
+                failed = []
+                for rcpt in recipients:
+                    success, msg = send_email(rcpt, pending["subject"], pending["body"])
+                    if success:
+                        sent.append(rcpt)
+                        _auto_save_email_contact(rcpt, pending)
+                    else:
+                        failed.append(f"{rcpt}: {msg}")
+                if sent and not failed:
+                    await update.message.reply_text(response or f"✉️ Email sent to {', '.join(sent)}!")
+                elif sent and failed:
+                    await update.message.reply_text(f"✉️ Sent to {', '.join(sent)}\n❌ Failed: {'; '.join(failed)}")
                 else:
                     _pending_emails[chat_id] = pending  # Restore draft on failure
-                    await update.message.reply_text(f"Couldn't send email: {msg}")
+                    await update.message.reply_text(f"Couldn't send email: {'; '.join(failed)}")
 
         elif action == "send_email":
             # Fallback if AI skips preview (shouldn't happen but just in case)
             from bot.services.email_service import send_email
-            to_email = data.get("to", "")
+            to_raw = data.get("to", "")
             subject = data.get("subject", "")
             body = data.get("body", "")
 
-            if not to_email or not subject or not body:
+            if not to_raw or not subject or not body:
                 await update.message.reply_text(response or "Need email address, subject, and message to send.")
             else:
-                success, msg = send_email(to_email, subject, body)
-                if success:
-                    await update.message.reply_text(response or f"✉️ Email sent to {to_email}!")
-                    _auto_save_email_contact(to_email, data)
+                recipients = [e.strip() for e in to_raw.replace(";", ",").split(",") if e.strip()]
+                sent = []
+                failed = []
+                for rcpt in recipients:
+                    success, msg = send_email(rcpt, subject, body)
+                    if success:
+                        sent.append(rcpt)
+                        _auto_save_email_contact(rcpt, data)
+                    else:
+                        failed.append(f"{rcpt}: {msg}")
+                if sent and not failed:
+                    await update.message.reply_text(response or f"✉️ Email sent to {', '.join(sent)}!")
+                elif sent and failed:
+                    await update.message.reply_text(f"✉️ Sent to {', '.join(sent)}\n❌ Failed: {'; '.join(failed)}")
                 else:
-                    await update.message.reply_text(f"Couldn't send email: {msg}")
+                    await update.message.reply_text(f"Couldn't send email: {'; '.join(failed)}")
 
         elif action == "send_whatsapp":
             from bot.services.whatsapp_service import send_whatsapp

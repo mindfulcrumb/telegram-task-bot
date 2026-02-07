@@ -235,7 +235,7 @@ THEIR TASKS:
 
 CRITICAL: You MUST respond with ONLY a JSON object - no text before or after it. No preamble, no explanation, just the JSON:
 {{"action": "TYPE", "data": {{}}, "response": "your message"}}
-For emails, keep the body field SHORT (2-3 sentences max). Put your friendly message in "response", the actual email text in "body".
+For emails, write a proper email body in the "body" field based on the user's context. Put your friendly chat message in "response".
 
 ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
@@ -252,8 +252,10 @@ SMART BEHAVIORS:
 - If task is vague, maybe ask what specifically they need to do
 - Celebrate wins when they complete stuff!
 - For emails/messages: if no recipient specified, ASK who to send to
-- When asked to send an email, FIRST use "preview_email" action to show a draft. Include the full email data in the preview. The user will confirm or ask for changes before it actually sends.
-- When user confirms the email (says yes, send it, looks good, etc.), use "confirm_email" action with empty data - the system remembers the draft
+- When asked to send an email, DRAFT the full email content yourself based on context. Use "preview_email" action with a complete subject and body you wrote. Be creative and natural with the email text.
+- The user will then review your draft. If they say to change something ("make it shorter", "change the subject", "add a greeting"), generate a NEW "preview_email" with the updated content.
+- When user confirms the email (says yes, send it, looks good, go ahead, etc.), use "confirm_email" action with empty data - the system remembers the draft.
+- For MULTIPLE recipients, put all emails comma-separated in the "to" field: "to": "will@x.com, john@x.com"
 - When user says "email Will" and Will is in contacts, use their saved email
 - When user provides a new contact detail (like "Will's email is will@x.com"), save it with save_contact
 
