@@ -51,9 +51,14 @@ ANTHROPIC_API_KEY = clean_env_value(os.getenv("ANTHROPIC_API_KEY"))
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
 
-# Email Configuration (SMTP)
+# Email Configuration
+# Option 1: Agentmail (recommended for AI agents)
+# Get API key from agentmail.to dashboard
+AGENTMAIL_API_KEY = clean_env_value(os.getenv("AGENTMAIL_API_KEY"))
+AGENTMAIL_INBOX = clean_env_value(os.getenv("AGENTMAIL_INBOX"))  # e.g., marlene@agentmail.to
+
+# Option 2: SMTP (Gmail, etc.)
 # For Gmail: enable 2FA, create App Password at https://myaccount.google.com/apppasswords
-# For Agentmail: use smtp.agentmail.to with your API key as password
 SMTP_EMAIL = clean_env_value(os.getenv("SMTP_EMAIL"))
 SMTP_PASSWORD = clean_env_value(os.getenv("SMTP_PASSWORD"))
 SMTP_HOST = clean_env_value(os.getenv("SMTP_HOST")) or "smtp.gmail.com"
