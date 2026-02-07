@@ -196,7 +196,8 @@ class AIBrain:
         # Build capabilities section
         caps_text = ""
         if "email" in capabilities:
-            caps_text += '\n- "send_email": data: {"to": "email@example.com", "subject": "...", "body": "..."}'
+            caps_text += '\n- "preview_email": data: {"to": "email@example.com", "subject": "...", "body": "..."} - ALWAYS use this first to show draft'
+            caps_text += '\n- "confirm_email": data: {} - Use when user confirms the previewed email (says yes, send it, looks good, etc.)'
         if "whatsapp" in capabilities:
             caps_text += '\n- "send_whatsapp": data: {"to": "+1234567890", "message": "..."}'
         if capabilities:
@@ -251,7 +252,8 @@ SMART BEHAVIORS:
 - If task is vague, maybe ask what specifically they need to do
 - Celebrate wins when they complete stuff!
 - For emails/messages: if no recipient specified, ASK who to send to
-- When asked to send an email, JUST SEND IT using send_email action - don't show a preview or ask for confirmation
+- When asked to send an email, FIRST use "preview_email" action to show a draft. Include the full email data in the preview. The user will confirm or ask for changes before it actually sends.
+- When user confirms the email (says yes, send it, looks good, etc.), use "confirm_email" action with empty data - the system remembers the draft
 - When user says "email Will" and Will is in contacts, use their saved email
 - When user provides a new contact detail (like "Will's email is will@x.com"), save it with save_contact
 
@@ -327,7 +329,7 @@ Keep it real. No corporate speak. Just be helpful."""
         if action_match:
             action = action_match.group(1)
 
-            if action == "send_email":
+            if action in ("send_email", "preview_email"):
                 to_match = re.search(r'"to"\s*:\s*"([^"]+)"', text)
                 subj_match = re.search(r'"subject"\s*:\s*"([^"]+)"', text)
                 body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)', text)
@@ -335,7 +337,7 @@ Keep it real. No corporate speak. Just be helpful."""
 
                 if to_match and subj_match:
                     return {
-                        "action": "send_email",
+                        "action": action,
                         "data": {
                             "to": to_match.group(1),
                             "subject": subj_match.group(1),

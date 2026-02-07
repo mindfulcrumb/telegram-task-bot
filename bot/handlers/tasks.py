@@ -1,10 +1,16 @@
 """Task management handlers for Telegram bot."""
 import re
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.services.notion import notion_service
 from bot.services.classifier import parse_task_input
 import config
+
+logger = logging.getLogger(__name__)
+
+# Pending email drafts keyed by chat_id
+_pending_emails = {}
 
 
 def is_authorized(user_id: int) -> bool:
@@ -127,9 +133,11 @@ def _auto_save_email_contact(to_email: str, ai_data: dict):
     """Auto-save a contact after a successful email send, if not already known."""
     try:
         from bot.services.contacts_store import contacts_store
+        logger.info(f"Auto-save contact check for: {to_email}")
         all_contacts = contacts_store.get_all()
         for c in all_contacts.values():
             if c.get("email", "").lower() == to_email.lower():
+                logger.info(f"Contact already known: {to_email}")
                 return  # Already known
 
         name = ai_data.get("recipient_name", "")
@@ -138,9 +146,16 @@ def _auto_save_email_contact(to_email: str, ai_data: dict):
             name = local_part.replace(".", " ").replace("_", " ").replace("-", " ").title()
 
         if name:
-            contacts_store.add_or_update_contact(name=name, email=to_email, source="auto_email")
-    except Exception:
-        pass
+            logger.info(f"Saving new contact: {name} -> {to_email}")
+            success = contacts_store.add_or_update_contact(name=name, email=to_email, source="auto_email")
+            if success:
+                logger.info(f"Contact saved successfully: {name}")
+            else:
+                logger.error(f"contacts_store.add_or_update_contact returned False for {name}")
+        else:
+            logger.warning(f"Could not derive name from email: {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to auto-save contact for {to_email}: {type(e).__name__}: {e}")
 
 
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
@@ -223,7 +238,43 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             safe_summary = to_ascii(summary) if summary else "Analysis unavailable"
             await update.message.reply_text("TASK ANALYSIS\n\n" + safe_summary)
 
+        elif action == "preview_email":
+            to_email = data.get("to", "")
+            subject = data.get("subject", "")
+            body = data.get("body", "")
+
+            if not to_email or not subject or not body:
+                await update.message.reply_text(response or "Need email address, subject, and message to send.")
+            else:
+                chat_id = update.effective_chat.id
+                _pending_emails[chat_id] = {"to": to_email, "subject": subject, "body": body}
+                preview = (
+                    f"📧 Email Draft:\n\n"
+                    f"To: {to_email}\n"
+                    f"Subject: {subject}\n\n"
+                    f"{body}\n\n"
+                    f"---\n"
+                    f"{response or 'Send it? (yes/no, or tell me what to change)'}"
+                )
+                await update.message.reply_text(preview)
+
+        elif action == "confirm_email":
+            chat_id = update.effective_chat.id
+            pending = _pending_emails.pop(chat_id, None)
+            if not pending:
+                await update.message.reply_text("No email draft to send. Tell me what to email!")
+            else:
+                from bot.services.email_service import send_email
+                success, msg = send_email(pending["to"], pending["subject"], pending["body"])
+                if success:
+                    await update.message.reply_text(response or f"✉️ Email sent to {pending['to']}!")
+                    _auto_save_email_contact(pending["to"], pending)
+                else:
+                    _pending_emails[chat_id] = pending  # Restore draft on failure
+                    await update.message.reply_text(f"Couldn't send email: {msg}")
+
         elif action == "send_email":
+            # Fallback if AI skips preview (shouldn't happen but just in case)
             from bot.services.email_service import send_email
             to_email = data.get("to", "")
             subject = data.get("subject", "")

@@ -62,7 +62,7 @@ class ContactsStore:
                     page = self._create_notion_page(contact["name"], email, phone, source)
                     contact["page_id"] = page["id"]
                 except Exception as e:
-                    logger.warning(f"Failed to create contact in Notion: {e}")
+                    logger.error(f"Failed to create contact in Notion: {type(e).__name__}: {e}")
                     return False
 
             self._cache[name_lower] = contact
