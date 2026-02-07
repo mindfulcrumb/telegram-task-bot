@@ -129,6 +129,25 @@ def main():
         setup_email_check_job(application, primary_chat)
         logger.info("Email check job set up")
 
+    # Send startup notification to register chat ID and confirm deploy
+    if config.ALLOWED_USER_IDS:
+        async def startup_notify(context: ContextTypes.DEFAULT_TYPE):
+            """Send startup message to register chat ID for notifications."""
+            from bot.handlers.reminders import register_chat_id
+            for uid in config.ALLOWED_USER_IDS:
+                try:
+                    await context.bot.send_message(
+                        chat_id=uid,
+                        text="I'm back online! All systems ready."
+                    )
+                    register_chat_id(uid)
+                    logger.info(f"Startup notification sent to {uid}, chat ID registered")
+                except Exception as e:
+                    logger.error(f"Failed to send startup notification to {uid}: {e}")
+
+        application.job_queue.run_once(startup_notify, when=5)
+        logger.info("Startup notification scheduled (5s after boot)")
+
     logger.info("Bot is ready! Starting polling...")
 
     # Start the bot

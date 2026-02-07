@@ -1,9 +1,12 @@
 """Notion API service for task management."""
+import logging
 from datetime import datetime, date
 from typing import Optional
 from notion_client import Client
 import httpx
 import config
+
+logger = logging.getLogger(__name__)
 
 
 class NotionTaskService:
@@ -31,7 +34,8 @@ class NotionTaskService:
                     self._db_schema = resp.json().get("properties", {})
                 else:
                     self._db_schema = {}
-            except Exception:
+            except Exception as e:
+                logger.error(f"Failed to fetch DB schema: {type(e).__name__}: {e}")
                 self._db_schema = {}
         return self._db_schema
 
@@ -145,7 +149,8 @@ class NotionTaskService:
             else:
                 # Safe print - avoid encoding errors
                 response = {"results": []}
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to query Notion tasks: {type(e).__name__}: {e}")
             response = {"results": []}
 
         tasks = []
@@ -309,7 +314,8 @@ class NotionTaskService:
                     "due_date": self._extract_property_value(props, "Due Date", "date")
                 })
             return tasks
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get tasks with reminders: {type(e).__name__}: {e}")
             return []
 
     def mark_complete(self, page_id: str) -> dict:
@@ -333,8 +339,8 @@ class NotionTaskService:
                     page_id=page_id,
                     properties=properties
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to mark task complete: {type(e).__name__}: {e}")
 
         # Fallback: archive
         return self.client.pages.update(page_id=page_id, archived=True)
@@ -363,7 +369,8 @@ class NotionTaskService:
                 page_id=page_id,
                 properties={reminder_prop: {"date": None}}
             )
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to clear reminder: {type(e).__name__}: {e}")
             return {}
 
     def set_reminder(self, page_id: str, reminder_time: datetime) -> dict:
@@ -376,7 +383,8 @@ class NotionTaskService:
                 page_id=page_id,
                 properties={reminder_prop: {"date": {"start": reminder_time.isoformat()}}}
             )
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to set reminder: {type(e).__name__}: {e}")
             return {}
 
 

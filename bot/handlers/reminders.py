@@ -1,10 +1,13 @@
 """Reminder handlers for Telegram bot."""
+import logging
 import re
 from datetime import datetime, timedelta
 from telegram import Update, Bot
 from telegram.ext import ContextTypes, JobQueue
 from bot.services.notion import notion_service
 import config
+
+logger = logging.getLogger(__name__)
 
 # Store active chat IDs for sending reminders
 _active_chat_ids = set()
@@ -47,9 +50,8 @@ async def send_reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
             text=message,
             parse_mode="Markdown"
         )
-        pass  # Message sent
-    except Exception:
-        pass  # Error sending reminder
+    except Exception as e:
+        logger.error(f"Failed to send reminder to chat {job.chat_id}: {type(e).__name__}: {e}")
 
 
 def schedule_reminder(job_queue: JobQueue, chat_id: int, reminder_time: datetime, task_data: dict) -> None:
@@ -187,8 +189,9 @@ async def cmd_remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'   (at {reminder_time.strftime("%I:%M %p")})'
         )
 
-    except Exception:
-        await update.message.reply_text("Error setting reminder")
+    except Exception as e:
+        logger.error(f"Error setting reminder: {type(e).__name__}: {e}")
+        await update.message.reply_text("Error setting reminder. Check the logs for details.")
 
 
 async def check_reminders(bot: Bot, chat_ids: set = None):
@@ -219,14 +222,14 @@ async def check_reminders(bot: Bot, chat_ids: set = None):
             for chat_id in target_chats:
                 try:
                     await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-                except Exception:
-                    pass  # Error sending to chat
+                except Exception as e:
+                    logger.error(f"Failed to send reminder to chat {chat_id}: {type(e).__name__}: {e}")
 
             # Clear the reminder so it doesn't fire again
             notion_service.clear_reminder(task["id"])
 
-    except Exception:
-        pass  # Error checking reminders
+    except Exception as e:
+        logger.error(f"Error checking reminders: {type(e).__name__}: {e}")
 
 
 def setup_reminder_job(application, chat_id: int = None):

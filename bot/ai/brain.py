@@ -1,7 +1,10 @@
 """AI Brain - Claude-powered intelligence for the task bot."""
 import json
+import logging
 from datetime import datetime, date
 import config
+
+logger = logging.getLogger(__name__)
 
 
 def to_ascii(text):
@@ -105,8 +108,8 @@ class AIBrain:
                         overdue += 1
                     elif due_date == today:
                         due_today += 1
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not parse due date '{due}': {e}")
 
         return {
             "total": len(tasks),
@@ -149,7 +152,8 @@ class AIBrain:
                         due_str = f" - due {due_date.strftime('%A')}"
                     else:
                         due_str = f" - due {due_date.strftime('%b %d')}"
-                except:
+                except Exception as e:
+                    logger.warning(f"Could not format due date '{due}': {e}")
                     due_str = f" - due {due}"
 
             pri_marker = "!" if pri == "High" else ""
