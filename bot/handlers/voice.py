@@ -16,7 +16,8 @@ def is_voice_configured() -> bool:
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle voice messages: transcribe with Whisper, then process as text."""
-    from bot.handlers.tasks import is_authorized, handle_ai_message, handle_message
+    from bot.handlers.tasks import is_authorized, handle_ai_message, detect_intent
+    from bot.handlers.reminders import register_chat_id
 
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
@@ -29,6 +30,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     voice = update.message.voice or update.message.audio
     if not voice:
         return
+
+    register_chat_id(update.effective_chat.id)
 
     # Show typing indicator while transcribing
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -46,18 +49,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = await _transcribe(tmp_path)
 
         if not text or not text.strip():
-            await update.message.reply_text("Couldn't catch that — try again?")
+            await update.message.reply_text("Couldn't catch that \u2014 try again?")
             return
 
+        text = text.strip()
         logger.info(f"Transcribed voice: {text[:100]}...")
 
         # Show the user what we heard
-        await update.message.reply_text(f"🎙️ _{text}_", parse_mode="Markdown")
+        await update.message.reply_text(f"\U0001f399\ufe0f _{text}_", parse_mode="Markdown")
 
-        # Process transcribed text through the normal message pipeline
-        # Temporarily set the message text so handle_message can use it
-        update.message.text = text
-        await handle_message(update, context)
+        # Process transcribed text directly (can't set text on frozen Message object)
+        await _process_transcribed_text(update, context, text)
 
     except Exception as e:
         logger.error(f"Voice handling failed: {type(e).__name__}: {e}")
@@ -68,6 +70,39 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+async def _process_transcribed_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Process transcribed text through the AI or rule-based pipeline."""
+    from bot.handlers.tasks import handle_ai_message, detect_intent, handle_done, handle_delete, handle_list
+    from bot.services.notion import notion_service
+    from bot.services.classifier import parse_task_input
+
+    # Try AI mode first
+    if config.AI_MODE == "smart" and config.ANTHROPIC_API_KEY:
+        handled = await handle_ai_message(update, context, text)
+        if handled:
+            return
+
+    # Fallback to rule-based detection
+    intent = detect_intent(text)
+
+    if intent["action"] == "delete":
+        await handle_delete(update, intent["task_num"])
+    elif intent["action"] == "done":
+        await handle_done(update, intent["task_num"])
+    elif intent["action"] == "list":
+        await handle_list(update, intent.get("category"))
+    else:
+        # Default: create a task
+        task_info = parse_task_input(text)
+        result = notion_service.add_task(
+            title=task_info["title"],
+            category=task_info.get("category", "Personal"),
+            due_date=task_info.get("due_date"),
+            priority=task_info.get("priority", "Medium")
+        )
+        await update.message.reply_text(f"\u2705 Added: {task_info['title']}")
 
 
 async def _transcribe(file_path: str) -> str:
