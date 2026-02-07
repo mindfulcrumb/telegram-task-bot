@@ -16,32 +16,40 @@ def create_contacts_database(parent_page_id: str):
 
     print("Creating Contacts database...")
 
+    # Create database with just the title property first
     database = client.databases.create(
         parent={"type": "page_id", "page_id": parent_page_id},
         title=[{"type": "text", "text": {"content": "Contacts"}}],
         properties={
-            "Name": {
-                "title": {}
-            },
-            "Email": {
-                "email": {}
-            },
-            "Phone": {
-                "phone_number": {}
-            },
-            "Source": {
-                "select": {
-                    "options": [
-                        {"name": "manual", "color": "gray"},
-                        {"name": "auto_email", "color": "blue"},
-                        {"name": "auto_whatsapp", "color": "green"}
-                    ]
-                }
-            }
+            "Name": {"title": {}}
         }
     )
 
     database_id = database["id"]
+
+    # Add remaining properties via update (create sometimes drops them)
+    print("Adding Email, Phone, Source properties...")
+    import httpx
+    headers = {
+        'Authorization': f'Bearer {NOTION_TOKEN}',
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+    }
+    httpx.patch(
+        f'https://api.notion.com/v1/databases/{database_id}',
+        headers=headers,
+        json={
+            'properties': {
+                'Email': {'email': {}},
+                'Phone': {'phone_number': {}},
+                'Source': {'select': {'options': [
+                    {'name': 'manual', 'color': 'gray'},
+                    {'name': 'auto_email', 'color': 'blue'},
+                    {'name': 'auto_whatsapp', 'color': 'green'}
+                ]}}
+            }
+        }
+    )
     print(f"\nContacts database created!")
     print(f"\nYour Contacts Database ID: {database_id}")
     print(f"\nAdd this to your .env and Railway:")

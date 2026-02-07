@@ -1,6 +1,8 @@
 """Contact store service - persistent contacts via Notion with in-memory cache."""
+from __future__ import annotations
 import time
 import logging
+from typing import Optional
 import httpx
 import config
 
@@ -22,7 +24,7 @@ class ContactsStore:
         self._ensure_cache()
         return dict(self._cache)
 
-    def get_by_name(self, name: str) -> dict | None:
+    def get_by_name(self, name: str) -> Optional[dict]:
         """Look up a single contact by name (case-insensitive)."""
         self._ensure_cache()
         return self._cache.get(name.strip().lower())
