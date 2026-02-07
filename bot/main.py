@@ -26,6 +26,7 @@ from bot.handlers.tasks import (
     handle_message
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
+from bot.handlers.proactive import setup_proactive_jobs
 from bot.handlers.accounting import (
     cmd_reconcile,
     cmd_acct_categories,
@@ -128,6 +129,9 @@ def main():
         primary_chat = config.ALLOWED_USER_IDS[0] if config.ALLOWED_USER_IDS else None
         setup_email_check_job(application, primary_chat)
         logger.info("Email check job set up")
+
+    # Set up proactive jobs (daily briefing + smart nudges)
+    setup_proactive_jobs(application)
 
     # Send startup notification to register chat ID and confirm deploy
     if config.ALLOWED_USER_IDS:

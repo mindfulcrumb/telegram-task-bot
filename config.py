@@ -83,6 +83,18 @@ TWILIO_ACCOUNT_SID = clean_env_value(os.getenv("TWILIO_ACCOUNT_SID"))
 TWILIO_AUTH_TOKEN = clean_env_value(os.getenv("TWILIO_AUTH_TOKEN"))
 TWILIO_WHATSAPP_FROM = clean_env_value(os.getenv("TWILIO_WHATSAPP_FROM"))
 
+# Proactive Features
+# Daily briefing: sends task summary at this hour (in your timezone)
+BRIEFING_HOUR = int(os.getenv("BRIEFING_HOUR", "8"))
+BRIEFING_MINUTE = int(os.getenv("BRIEFING_MINUTE", "0"))
+
+# Timezone for scheduled jobs (e.g., "Europe/Lisbon", "America/New_York")
+# See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+TIMEZONE = clean_env_value(os.getenv("TIMEZONE")) or ""
+
+# Smart nudges: how often to check for overdue/stale tasks (in hours)
+NUDGE_INTERVAL_HOURS = int(os.getenv("NUDGE_INTERVAL_HOURS", "6"))
+
 # Contact book for quick references (name -> email/phone)
 # Format: "john:john@email.com,mom:+1234567890"
 CONTACTS_RAW = clean_env_value(os.getenv("CONTACTS", ""))

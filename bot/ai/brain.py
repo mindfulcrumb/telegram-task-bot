@@ -89,6 +89,7 @@ class AIBrain:
             return {"total": 0, "overdue": 0, "today": 0, "high_priority": 0}
 
         today = date.today()
+        today_str = today.isoformat()
         overdue = 0
         due_today = 0
         high_priority = 0
@@ -97,10 +98,20 @@ class AIBrain:
             if t.get("priority") == "High":
                 high_priority += 1
 
-            due = t.get("due_date")
+            # Prefer ISO date (YYYY-MM-DD) if available, fall back to due_date
+            due = t.get("due_date_iso") or t.get("due_date")
             if due:
                 try:
                     if isinstance(due, str):
+                        # Try ISO format first (YYYY-MM-DD)
+                        if len(due) >= 10 and due[4] == '-':
+                            due_str = due[:10]
+                            if due_str < today_str:
+                                overdue += 1
+                            elif due_str == today_str:
+                                due_today += 1
+                            continue
+                        # Fall back to parsing other formats
                         due_date = datetime.fromisoformat(due.replace("Z", "")).date()
                     else:
                         due_date = due

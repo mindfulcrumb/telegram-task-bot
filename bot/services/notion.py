@@ -266,6 +266,7 @@ class NotionTaskService:
                 "title": title.strip(),
                 "category": task_category,
                 "due_date": due_display,
+                "due_date_iso": task_due_date,
                 "priority": task_priority,
                 "status": task_status,
                 "done": is_done
