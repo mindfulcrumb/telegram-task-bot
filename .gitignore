@@ -39,3 +39,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Accounting data (runtime, per-deployment)
+data/

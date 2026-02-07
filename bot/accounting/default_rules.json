@@ -1,0 +1,111 @@
+{
+  "categories": {
+    "estacionamento": "Estacionamento",
+    "transportes": "Transportes",
+    "combustivel": "Combustivel",
+    "viagens": "Viagens e Deslocacoes",
+    "alimentacao": "Alimentacao e Bebidas",
+    "receita_vendas": "Receita de Vendas",
+    "receita_servicos": "Receita de Servicos",
+    "software": "Software e Subscricoes",
+    "material_escritorio": "Material de Escritorio",
+    "servicos_profissionais": "Servicos Profissionais",
+    "marketing": "Marketing e Publicidade",
+    "fornecedor": "Fornecedor",
+    "salarios": "Salarios e Remuneracoes",
+    "aluguer": "Aluguer e Espacos",
+    "seguros": "Seguros",
+    "impostos": "Impostos e Taxas",
+    "telecomunicacoes": "Telecomunicacoes",
+    "saude": "Saude e Bem-estar",
+    "transferencia": "Transferencia Interna",
+    "suprimentos": "Suprimentos de Socios",
+    "outros": "Outros"
+  },
+  "rules": [
+    {"pattern": "Easypark", "category": "estacionamento", "note": "Estacionamento - Easypark", "match_type": "contains"},
+    {"pattern": "Park Capitolio", "category": "estacionamento", "note": "Estacionamento - Capitolio", "match_type": "contains"},
+    {"pattern": "Parque C.c", "category": "estacionamento", "note": "Estacionamento", "match_type": "contains"},
+
+    {"pattern": "Ubr* Pending.uber.com", "category": "transportes", "note": "Uber - transporte", "match_type": "contains"},
+    {"pattern": "Uber", "category": "transportes", "note": "Uber - transporte", "match_type": "contains"},
+    {"pattern": "Bolt.eu", "category": "transportes", "note": "Bolt - transporte", "match_type": "contains"},
+    {"pattern": "Taxi", "category": "transportes", "note": "Taxi", "match_type": "contains"},
+    {"pattern": "Tmb Bus Transit", "category": "transportes", "note": "Transporte publico - Barcelona", "match_type": "contains"},
+    {"pattern": "Monbus", "category": "transportes", "note": "Transporte publico - autocarro", "match_type": "contains"},
+
+    {"pattern": "Galp", "category": "combustivel", "note": "Combustivel - Galp", "match_type": "contains"},
+    {"pattern": "Repsol", "category": "combustivel", "note": "Combustivel - Repsol", "match_type": "contains"},
+    {"pattern": "Bp ", "category": "combustivel", "note": "Combustivel - BP", "match_type": "contains"},
+    {"pattern": "Auchan Energy", "category": "combustivel", "note": "Combustivel - Auchan Energy", "match_type": "contains"},
+
+    {"pattern": "Ryanair", "category": "viagens", "note": "Viagem - voo Ryanair", "match_type": "contains"},
+    {"pattern": "Aer Bcn", "category": "viagens", "note": "Aeroporto Barcelona", "match_type": "contains"},
+    {"pattern": "Aeroport", "category": "viagens", "note": "Aeroporto", "match_type": "contains"},
+    {"pattern": "Ssp Airport", "category": "viagens", "note": "Restaurante aeroporto", "match_type": "contains"},
+    {"pattern": "Wifi Onboard", "category": "viagens", "note": "WiFi a bordo - viagem", "match_type": "contains"},
+    {"pattern": "Newrest Travel", "category": "viagens", "note": "Catering viagem", "match_type": "contains"},
+
+    {"pattern": "Pingo Doce", "category": "alimentacao", "note": "Supermercado - Pingo Doce", "match_type": "contains"},
+    {"pattern": "Auchan", "category": "alimentacao", "note": "Supermercado - Auchan", "match_type": "contains"},
+    {"pattern": "Mercadona", "category": "alimentacao", "note": "Supermercado - Mercadona", "match_type": "contains"},
+    {"pattern": "Supercor", "category": "alimentacao", "note": "Supermercado - Supercor", "match_type": "contains"},
+    {"pattern": "Consum", "category": "alimentacao", "note": "Supermercado - Consum", "match_type": "contains"},
+    {"pattern": "Contin Bom Dia", "category": "alimentacao", "note": "Supermercado - Continente Bom Dia", "match_type": "contains"},
+    {"pattern": "Casa Ametller", "category": "alimentacao", "note": "Alimentacao - Casa Ametller", "match_type": "contains"},
+    {"pattern": "El Nacional", "category": "alimentacao", "note": "Restaurante - El Nacional", "match_type": "contains"},
+
+    {"pattern": "Stripe Technology", "category": "receita_vendas", "note": "Receita vendas online - Stripe", "match_type": "contains"},
+
+    {"pattern": "Shopify", "category": "software", "note": "Plataforma e-commerce - Shopify", "match_type": "contains"},
+    {"pattern": "Hostinger", "category": "software", "note": "Alojamento web - Hostinger", "match_type": "contains"},
+    {"pattern": "Distrokid", "category": "software", "note": "Distribuicao musical - DistroKid", "match_type": "contains"},
+    {"pattern": "Suno Inc", "category": "software", "note": "Software IA musica - Suno", "match_type": "contains"},
+    {"pattern": "Kits Ai", "category": "software", "note": "Software IA - Kits AI", "match_type": "contains"},
+    {"pattern": "Woo___", "category": "software", "note": "Subscricao WooCommerce", "match_type": "contains"},
+    {"pattern": "Temu.com", "category": "software", "note": "Compra online - Temu", "match_type": "contains"},
+
+    {"pattern": "Workcenter", "category": "material_escritorio", "note": "Material escritorio - Workcenter", "match_type": "contains"},
+    {"pattern": "Centro Impress", "category": "material_escritorio", "note": "Impressoes", "match_type": "contains"},
+    {"pattern": "Grafipronto", "category": "material_escritorio", "note": "Grafica - Grafipronto", "match_type": "contains"},
+    {"pattern": "GERALDES GR", "category": "material_escritorio", "note": "Grafica - Geraldes", "match_type": "contains"},
+    {"pattern": "Stickermule", "category": "marketing", "note": "Material marketing - StickerMule", "match_type": "contains"},
+
+    {"pattern": "Lionesa Services", "category": "aluguer", "note": "Escritorio - Lionesa Business Hub", "match_type": "contains"},
+
+    {"pattern": "BreatheSportFitness", "category": "saude", "note": "Ginasio - BreatheSportFitness", "match_type": "contains"},
+    {"pattern": "Academia Workout", "category": "saude", "note": "Ginasio - Academia Workout", "match_type": "contains"},
+    {"pattern": "Fc R.c.sanches", "category": "saude", "note": "Desporto", "match_type": "contains"},
+    {"pattern": "Decathlon", "category": "saude", "note": "Material desportivo - Decathlon", "match_type": "contains"},
+    {"pattern": "Naturitas", "category": "saude", "note": "Produtos naturais - Naturitas", "match_type": "contains"},
+
+    {"pattern": "ECOIDEAL 2019 LTD", "category": "fornecedor", "note": "Fornecedor - Ecoideal", "match_type": "contains"},
+    {"pattern": "Cocina sin L", "category": "fornecedor", "note": "Fornecedor - Cocina sin Limites", "match_type": "contains"},
+    {"pattern": "Eurofins Food Testing", "category": "fornecedor", "note": "Testes laboratoriais - Eurofins", "match_type": "contains"},
+    {"pattern": "Gasin group", "category": "fornecedor", "note": "Fornecedor gas - Gasin", "match_type": "contains"},
+    {"pattern": "Mol*natural Spices", "category": "fornecedor", "note": "Fornecedor especiarias", "match_type": "contains"},
+    {"pattern": "BRANDS CONNECTION", "category": "fornecedor", "note": "Fornecedor - Brands Connection", "match_type": "contains"},
+    {"pattern": "Pack 4", "category": "fornecedor", "note": "Fornecedor embalagens - Pack 4", "match_type": "contains"},
+    {"pattern": "ADELAIDE CRISTINA TEIXEIRA", "category": "fornecedor", "note": "Fornecedor - Adelaide Cristina Teixeira", "match_type": "contains"},
+    {"pattern": "Inocentro", "category": "fornecedor", "note": "Fornecedor - Inocentro", "match_type": "contains"},
+    {"pattern": "Leroy Merlin", "category": "fornecedor", "note": "Material - Leroy Merlin", "match_type": "contains"},
+
+    {"pattern": "Paypayue", "category": "servicos_profissionais", "note": "Servico pagamentos - PayPay", "match_type": "contains"},
+    {"pattern": "INTESA SAN PAOLO", "category": "servicos_profissionais", "note": "Servico bancario - Intesa Sanpaolo", "match_type": "contains"},
+
+    {"pattern": "Uber * Eats", "category": "alimentacao", "note": "Uber Eats - refeicao", "match_type": "contains"},
+
+    {"pattern": "ISAURA MARIA DOS SANTOS MOREIRA", "category": "suprimentos", "note": "Suprimento socia - Isaura Moreira", "match_type": "contains"},
+    {"pattern": "CHADLEY STEVEN KEMP", "category": "suprimentos", "note": "Suprimento socio - Chadley Kemp", "match_type": "contains"},
+    {"pattern": "GARTH DAVID SAU", "category": "suprimentos", "note": "Investidor - Garth David Saunders", "match_type": "contains"},
+    {"pattern": "William K", "category": "suprimentos", "note": "Suprimento - William K", "match_type": "contains"},
+    {"pattern": "Chadley K", "category": "suprimentos", "note": "Suprimento socio - Chadley Kemp", "match_type": "contains"},
+
+    {"pattern": "IDEIAPACK", "category": "transferencia", "note": "Transferencia - Ideiapack", "match_type": "contains"},
+    {"pattern": "Para Main", "category": "transferencia", "note": "Transferencia interna", "match_type": "contains"},
+    {"pattern": "De Euro", "category": "transferencia", "note": "Transferencia interna - EUR", "match_type": "contains"},
+    {"pattern": "From Euro", "category": "transferencia", "note": "Transferencia interna - EUR", "match_type": "contains"},
+    {"pattern": "Carolina P", "category": "transferencia", "note": "Transferencia - Carolina P", "match_type": "contains"},
+    {"pattern": "Carolina Padilha", "category": "transferencia", "note": "Transferencia - Carolina Padilha", "match_type": "contains"}
+  ]
+}

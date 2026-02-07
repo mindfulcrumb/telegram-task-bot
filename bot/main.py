@@ -9,7 +9,7 @@ encoding_fix.configure_safe_logging()
 import sys
 import os
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 import config
 from bot.handlers.tasks import (
     cmd_start,
@@ -26,6 +26,15 @@ from bot.handlers.tasks import (
     handle_message
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
+from bot.handlers.accounting import (
+    cmd_reconcile,
+    cmd_acct_categories,
+    cmd_acct_export,
+    cmd_acct_skip,
+    handle_pdf_upload,
+    handle_acct_callback,
+)
+from bot.accounting import storage as acct_db
 
 # Suppress httpx debug logging (can cause encoding issues)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -55,7 +64,10 @@ def main():
         logger.error("NOTION_DATABASE_ID not set. Please check your .env file.")
         return
 
-    logger.info("Starting Task Bot...")
+    logger.info("Starting Task Bot + Accounting Assistant...")
+
+    # Initialize accounting database
+    acct_db.initialize()
 
     # Security warning if no user restrictions
     if not config.ALLOWED_USER_IDS:
@@ -83,6 +95,18 @@ def main():
     application.add_handler(CommandHandler("remind", cmd_remind))
     application.add_handler(CommandHandler("analyze", cmd_analyze))
 
+    # Accounting handlers
+    application.add_handler(CommandHandler("reconcile", cmd_reconcile))
+    application.add_handler(CommandHandler("acct_categories", cmd_acct_categories))
+    application.add_handler(CommandHandler("acct_export", cmd_acct_export))
+    application.add_handler(CommandHandler("acct_skip", cmd_acct_skip))
+
+    # PDF document handler (for accounting reconciliation)
+    application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf_upload))
+
+    # Inline keyboard callback handler (for accounting category selection)
+    application.add_handler(CallbackQueryHandler(handle_acct_callback))
+
     # Add message handler for plain text (creates tasks)
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
@@ -101,7 +125,7 @@ def main():
     logger.info("Bot is ready! Starting polling...")
 
     # Start the bot
-    application.run_polling(allowed_updates=["message"])
+    application.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
