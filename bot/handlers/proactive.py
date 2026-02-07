@@ -8,6 +8,20 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Track which tasks were nudged today to avoid repeat spam
+_nudged_today: dict[str, str] = {}  # task_id -> date_str
+
+
+def _now_local():
+    """Get current datetime in user's configured timezone."""
+    if config.TIMEZONE:
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(config.TIMEZONE))
+        except Exception:
+            pass
+    return datetime.now()
+
 
 def _days_overdue(task):
     """Get number of days a task is overdue. Returns 0 if not overdue."""
@@ -56,8 +70,8 @@ async def send_daily_briefing(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Could not check emails for briefing: {e}")
 
-        # Build briefing message
-        now = datetime.now()
+        # Build briefing message (use user's timezone for greeting)
+        now = _now_local()
         greeting = "Good morning" if now.hour < 12 else "Good afternoon"
         day_name = now.strftime("%A, %B %d")
 
@@ -127,7 +141,9 @@ async def send_daily_briefing(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_nudges(context: ContextTypes.DEFAULT_TYPE):
-    """Check for tasks that need proactive nudges."""
+    """Check for tasks that need proactive nudges. Only nudges once per day per task."""
+    global _nudged_today
+
     target_chats = set(config.ALLOWED_USER_IDS or [])
     if not target_chats:
         return
@@ -137,18 +153,23 @@ async def check_nudges(context: ContextTypes.DEFAULT_TYPE):
         if not tasks:
             return
 
+        today_str = date.today().isoformat()
+
+        # Clear yesterday's nudge tracking
+        _nudged_today = {k: v for k, v in _nudged_today.items() if v == today_str}
+
         nudges = []
 
         # Tasks overdue by 3+ days
         for t in tasks:
             days = _days_overdue(t)
-            if days >= 3:
-                nudges.append(f"\U0001f534 \"{t['title']}\" is {days} days overdue")
+            if days >= 3 and t["id"] not in _nudged_today:
+                nudges.append((t["id"], f"\U0001f534 \"{t['title']}\" is {days} days overdue"))
 
         # High-priority tasks with no due date
         for t in tasks:
-            if t.get("priority") == "High" and not t.get("due_date_iso"):
-                nudges.append(f"\u26a1 \"{t['title']}\" is high priority but has no due date")
+            if t.get("priority") == "High" and not t.get("due_date_iso") and t["id"] not in _nudged_today:
+                nudges.append((t["id"], f"\u26a1 \"{t['title']}\" is high priority but has no due date"))
 
         if not nudges:
             return
@@ -156,7 +177,12 @@ async def check_nudges(context: ContextTypes.DEFAULT_TYPE):
         # Cap at 3 nudges to avoid spam
         nudges = nudges[:3]
 
-        message = "\U0001f916 **Quick nudge:**\n\n" + "\n".join(nudges)
+        # Mark these tasks as nudged today
+        for task_id, _ in nudges:
+            _nudged_today[task_id] = today_str
+
+        nudge_texts = [text for _, text in nudges]
+        message = "\U0001f916 **Quick nudge:**\n\n" + "\n".join(nudge_texts)
         message += "\n\n_Need help with any of these?_"
 
         for chat_id in target_chats:
