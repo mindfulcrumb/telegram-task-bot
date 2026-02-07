@@ -110,7 +110,15 @@ def setup_email_check_job(application, chat_id: int = None):
     async def email_check_callback(context: ContextTypes.DEFAULT_TYPE):
         """Check for new emails and notify active chats."""
         try:
+            logger.info(f"Email check running. Active chat IDs: {_active_chat_ids}")
+
+            if not _active_chat_ids:
+                logger.warning("No active chat IDs registered - can't send notifications")
+                return
+
             new_messages = email_inbox.get_new_messages()
+            logger.info(f"Email check found {len(new_messages)} new message(s)")
+
             if not new_messages:
                 return
 
@@ -133,12 +141,13 @@ def setup_email_check_job(application, chat_id: int = None):
                 for cid in _active_chat_ids:
                     try:
                         await context.bot.send_message(chat_id=cid, text=notification)
+                        logger.info(f"Sent email notification to chat {cid}")
                     except Exception as e:
-                        logger.warning(f"Failed to notify chat {cid}: {e}")
+                        logger.error(f"Failed to notify chat {cid}: {type(e).__name__}: {e}")
 
         except Exception as e:
             logger.error(f"Email check failed: {type(e).__name__}: {e}")
 
     interval = max(60, config.EMAIL_CHECK_INTERVAL * 60)
-    job_queue.run_repeating(email_check_callback, interval=interval, first=30)
-    logger.info(f"Email check job started (every {config.EMAIL_CHECK_INTERVAL} min)")
+    job_queue.run_repeating(email_check_callback, interval=interval, first=15)
+    logger.info(f"Email check job started (every {interval}s, first check in 15s)")

@@ -36,23 +36,49 @@ class EmailInboxService:
             self._ensure_client()
             inbox = getattr(config, 'AGENTMAIL_INBOX', '')
             if not inbox:
+                logger.warning("AGENTMAIL_INBOX not set")
                 return []
 
+            logger.info(f"Fetching inbox messages for {inbox}...")
             response = self._client.inboxes.messages.list(
                 inbox_id=inbox,
                 limit=limit
             )
 
-            messages = []
-            for msg in response.messages:
-                messages.append({
-                    "id": msg.message_id,
-                    "from": getattr(msg, 'from_', '') or '',
-                    "subject": msg.subject or '(no subject)',
-                    "preview": getattr(msg, 'preview', '') or '',
-                    "timestamp": msg.timestamp if hasattr(msg, 'timestamp') else None,
-                })
+            # Handle different response formats from the SDK
+            raw_messages = []
+            if hasattr(response, 'messages') and response.messages:
+                raw_messages = response.messages
+            elif hasattr(response, 'data') and response.data:
+                raw_messages = response.data
+            elif isinstance(response, list):
+                raw_messages = response
+            else:
+                # Try iterating the response directly
+                try:
+                    raw_messages = list(response)
+                except (TypeError, StopIteration):
+                    logger.error(f"Unknown response type from messages.list: {type(response)}, attrs: {dir(response)}")
+                    return []
 
+            messages = []
+            for msg in raw_messages:
+                msg_id = getattr(msg, 'message_id', None) or getattr(msg, 'id', None) or ''
+                sender = getattr(msg, 'from_', None) or getattr(msg, 'sender', None) or ''
+                subject = getattr(msg, 'subject', None) or '(no subject)'
+                preview = getattr(msg, 'preview', None) or ''
+                timestamp = getattr(msg, 'timestamp', None) or getattr(msg, 'created_at', None)
+
+                if msg_id:
+                    messages.append({
+                        "id": str(msg_id),
+                        "from": str(sender),
+                        "subject": str(subject),
+                        "preview": str(preview),
+                        "timestamp": timestamp,
+                    })
+
+            logger.info(f"Fetched {len(messages)} inbox messages")
             self._messages_cache = messages
             return messages
 
@@ -119,6 +145,8 @@ class EmailInboxService:
             if msg["id"] not in self._seen_ids:
                 new.append(msg)
                 self._seen_ids.add(msg["id"])
+        if new:
+            logger.info(f"Found {len(new)} new email(s)")
         return new
 
     def seed_seen_ids(self):
