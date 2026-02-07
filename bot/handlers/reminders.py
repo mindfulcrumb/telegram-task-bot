@@ -202,8 +202,8 @@ async def check_reminders(bot: Bot, chat_ids: set = None):
         if not tasks:
             return
 
-        # Use provided chat_ids or fall back to registered ones
-        target_chats = chat_ids or _active_chat_ids
+        # Use provided chat_ids, then registered ones, then ALLOWED_USER_IDS as final fallback
+        target_chats = chat_ids or _active_chat_ids or set(config.ALLOWED_USER_IDS or [])
 
         if not target_chats:
             return

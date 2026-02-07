@@ -110,10 +110,12 @@ def setup_email_check_job(application, chat_id: int = None):
     async def email_check_callback(context: ContextTypes.DEFAULT_TYPE):
         """Check for new emails and notify active chats."""
         try:
-            logger.info(f"Email check running. Active chat IDs: {_active_chat_ids}")
+            # Use ALLOWED_USER_IDS directly as fallback - don't depend on in-memory state
+            target_ids = _active_chat_ids or set(config.ALLOWED_USER_IDS or [])
+            logger.info(f"Email check running. Target chat IDs: {target_ids}")
 
-            if not _active_chat_ids:
-                logger.warning("No active chat IDs registered - can't send notifications")
+            if not target_ids:
+                logger.warning("No chat IDs available - can't send notifications")
                 return
 
             new_messages = email_inbox.get_new_messages()
@@ -138,7 +140,7 @@ def setup_email_check_job(application, chat_id: int = None):
                     notification += f"\n{preview}\n"
                 notification += "\nSay \"check my email\" to see your inbox"
 
-                for cid in _active_chat_ids:
+                for cid in target_ids:
                     try:
                         await context.bot.send_message(chat_id=cid, text=notification)
                         logger.info(f"Sent email notification to chat {cid}")
