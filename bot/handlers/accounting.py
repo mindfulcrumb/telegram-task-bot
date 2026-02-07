@@ -450,6 +450,59 @@ async def handle_accounting_status(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text(text)
 
 
+async def handle_accounting_update(update: Update, context: ContextTypes.DEFAULT_TYPE, transactions_data: list[dict]):
+    """Update category/note for one or more transactions. Called from AI brain."""
+    session = _try_restore_session(context)
+    if not session or not session.get("result"):
+        await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
+        return
+
+    result = session["result"]
+    all_txns = result.all_transactions
+    categories = get_categories()
+    updated = []
+
+    for update_item in transactions_data:
+        search_desc = (update_item.get("description") or "").lower().strip()
+        new_category = update_item.get("category", "")
+        new_note = update_item.get("note", "")
+
+        if not search_desc:
+            continue
+
+        # Find matching transactions by partial description match
+        matches = []
+        for txn in all_txns:
+            if search_desc in txn.description.lower():
+                matches.append(txn)
+
+        for txn in matches:
+            if new_category:
+                txn.category = new_category
+                txn.confidence = "user"
+            if new_note:
+                txn.note = new_note
+            if not new_note and new_category:
+                # Auto-generate note from category display name
+                txn.note = categories.get(new_category, new_category)
+
+            # Persist to SQLite
+            acct_db.update_transaction_category(
+                session["id"], txn.date, txn.description, txn.value,
+                txn.category or "", txn.note or "",
+            )
+            updated.append(f"{txn.description[:30]} -> {categories.get(new_category, new_category)}")
+
+    # Also persist full session to SQLite so changes survive restarts
+    if updated:
+        acct_db.save_full_session(
+            session["id"], session["filename"], result,
+            session.get("current_index", 0), session.get("reviewed_count", 0),
+        )
+
+    return updated
+
+
 def _try_restore_session(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
     """Try to restore an active session from SQLite if not in memory."""
     session = context.user_data.get("acct_session")
@@ -489,4 +542,18 @@ def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
         text += f"\n- Bank balance: {result.bank_balance:.2f} EUR"
     if result.difference is not None:
         text += f"\n- Difference: {result.difference:.2f} EUR"
+
+    # Include actual transaction data so AI can see and modify them
+    categories = get_categories()
+    all_txns = result.all_transactions
+    text += f"\n\nTRANSACTION LIST ({len(all_txns)} total):\n"
+    for i, txn in enumerate(all_txns):
+        cat_display = categories.get(txn.category, txn.category) if txn.category else "SEM CATEGORIA"
+        note_str = f' | Note: "{txn.note}"' if txn.note else ""
+        text += (
+            f"  #{i+1}: {txn.date} | {txn.description} | {txn.value:.2f} EUR | "
+            f"{'Debito' if txn.type == 'debit' else 'Credito'} | "
+            f"Cat: {cat_display}{note_str} | [{txn.confidence}]\n"
+        )
+
     return text

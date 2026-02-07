@@ -234,16 +234,26 @@ The user recently uploaded a bank reconciliation PDF. Messages may relate to thi
             acct_actions = """
 - "accounting_export": data: {"format": "excel/csv/pdf"} - Export the current reconciliation session
 - "accounting_status": data: {} - Show status of the current accounting session
-- "accounting_skip": data: {} - Skip the current transaction in review"""
+- "accounting_skip": data: {} - Skip the current transaction in review
+- "accounting_update": data: {"transactions": [{"description": "partial match text", "category": "category_key", "note": "optional note"}]} - Update category/note for one or more transactions. Use the description field to match (partial text is fine). Can update multiple at once."""
 
         # Build clarification note when accounting is active
         acct_behavior = ""
         if acct_context:
             acct_behavior = """
-- IMPORTANT: There is an active accounting/reconciliation session. If the user's message seems related to accounting (export, status, categories, transactions, PDF, reconciliation, skip), use the accounting actions.
+- IMPORTANT: There is an active accounting/reconciliation session. If the user's message seems related to accounting (export, status, categories, transactions, PDF, reconciliation, skip, update, change, rename), use the accounting actions.
 - If the user says "export", "send me the file", "gerar ficheiro", "exportar" -> use "accounting_export" with the format they want (default to "excel" if not specified)
 - If the user says "status", "how many left", "quantas faltam" -> use "accounting_status"
 - If the user says "skip", "next", "saltar" -> use "accounting_skip"
+- If the user wants to CHANGE, UPDATE, RENAME, or SET a category or note on any transaction(s), use "accounting_update". Look at the TRANSACTION LIST above to find matching transactions by their description text. Examples:
+  - "change Easypark to parking" -> accounting_update with description "Easypark", category "estacionamento"
+  - "that Uber one is transport" -> accounting_update with description "Uber", category "transportes"
+  - "mark all the Galp ones as fuel" -> accounting_update with description "Galp", category "combustivel"
+  - "add note 'client dinner' to the restaurant transaction" -> accounting_update with matching description and note
+  - "change #5 to software" -> accounting_update with the description from transaction #5 in the list
+  - User can reference transactions by number (#1, #5), by name/description, or by amount
+- You can update MULTIPLE transactions at once by putting multiple items in the "transactions" array
+- Valid category keys: fornecedor, transportes, alimentacao, software, combustivel, viagens, material_escritorio, marketing, servicos_profissionais, saude, aluguer, suprimentos, transferencia, receita_vendas, estacionamento, telecomunicacoes, seguros, impostos, formacao, entretenimento, limpeza, manutencao, honorarios, outros
 - If the user's message is clearly a task (e.g., "buy groceries tomorrow") -> still add it as a task
 - If you're NOT SURE if the message is about accounting or something else, use "answer" action and ASK the user: "Are you referring to the reconciliation session, or do you want me to do something else (create a task, send an email, etc.)?"
 """
@@ -317,7 +327,7 @@ Keep it real. No corporate speak. Just be helpful."""
             response_text, error = call_anthropic_chat(
                 system_prompt,
                 self.conversation_history,
-                max_tokens=1024
+                max_tokens=2048
             )
 
             if error:
@@ -416,6 +426,23 @@ Keep it real. No corporate speak. Just be helpful."""
                         },
                         "response": resp_match.group(1) if resp_match else ""
                     }
+
+            elif action == "accounting_update":
+                # Try to extract the transactions array from truncated JSON
+                resp_match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+                # Find the transactions array - grab everything between [ and ]
+                txn_array_match = re.search(r'"transactions"\s*:\s*(\[.*?\])', text, re.DOTALL)
+                txn_data = []
+                if txn_array_match:
+                    try:
+                        txn_data = json.loads(txn_array_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+                return {
+                    "action": "accounting_update",
+                    "data": {"transactions": txn_data},
+                    "response": resp_match.group(1) if resp_match else ""
+                }
 
             # Generic recovery for other actions
             data = {}

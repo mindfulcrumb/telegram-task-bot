@@ -397,6 +397,22 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             from bot.handlers.accounting import handle_accounting_status
             await handle_accounting_status(update, context)
 
+        elif action == "accounting_update":
+            from bot.handlers.accounting import handle_accounting_update
+            txn_updates = data.get("transactions", [])
+            if not txn_updates:
+                await update.message.reply_text(response or "No transactions to update.")
+            else:
+                updated = await handle_accounting_update(update, context, txn_updates)
+                if updated:
+                    update_summary = "\n".join(f"  - {u}" for u in updated)
+                    msg = response or f"Updated {len(updated)} transaction(s):\n{update_summary}"
+                    await update.message.reply_text(msg)
+                else:
+                    await update.message.reply_text(
+                        response or "Couldn't find matching transactions. Check the description and try again."
+                    )
+
         elif action == "accounting_skip":
             from bot.handlers.accounting import _send_next_review
             session = context.user_data.get("acct_session")
