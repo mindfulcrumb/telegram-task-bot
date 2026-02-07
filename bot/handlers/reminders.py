@@ -243,6 +243,6 @@ def setup_reminder_job(application, chat_id: int = None):
     async def reminder_callback(context: ContextTypes.DEFAULT_TYPE):
         await check_reminders(context.bot)
 
-    # Run every 1 minute for responsive reminders (minimum interval)
-    interval = max(60, config.REMINDER_CHECK_INTERVAL * 60)  # At least every minute
-    job_queue.run_repeating(reminder_callback, interval=60, first=10)  # Check every minute
+    # Use configured interval (minimum 60 seconds)
+    interval = max(60, config.REMINDER_CHECK_INTERVAL * 60)
+    job_queue.run_repeating(reminder_callback, interval=interval, first=10)

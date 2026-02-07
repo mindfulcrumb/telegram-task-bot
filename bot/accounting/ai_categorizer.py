@@ -67,7 +67,7 @@ Responde APENAS com o JSON array, sem texto adicional."""
     try:
         client = _get_client()
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model=getattr(config, 'CLAUDE_CATEGORIZER_MODEL', 'claude-sonnet-4-5-20250929'),
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
         )

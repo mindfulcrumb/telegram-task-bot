@@ -57,6 +57,12 @@ ANTHROPIC_API_KEY = clean_env_value(os.getenv("ANTHROPIC_API_KEY"))
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
 
+# Claude model for conversational AI (default: haiku for speed/cost)
+CLAUDE_MODEL = clean_env_value(os.getenv("CLAUDE_MODEL")) or "claude-3-haiku-20240307"
+
+# Claude model for AI categorization (default: sonnet for accuracy)
+CLAUDE_CATEGORIZER_MODEL = clean_env_value(os.getenv("CLAUDE_CATEGORIZER_MODEL")) or "claude-sonnet-4-5-20250929"
+
 # Email Configuration
 # Option 1: Agentmail (recommended for AI agents)
 # Get API key from agentmail.to dashboard

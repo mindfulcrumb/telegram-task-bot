@@ -430,8 +430,12 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
         return True
 
-    except Exception:
-        # Silently fallback on any error
+    except Exception as e:
+        logger.error(f"AI message handling failed: {type(e).__name__}: {e}")
+        try:
+            await update.message.reply_text("Something went wrong processing that. Try again or use a /command instead.")
+        except Exception:
+            pass
         return False
 
 

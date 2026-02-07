@@ -158,6 +158,7 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("A processar o PDF de reconciliacao... Um momento.")
 
+    tmp_path = None
     try:
         file = await context.bot.get_file(document.file_id)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -165,7 +166,6 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tmp_path = tmp.name
 
         result = parse_reconciliation_pdf(tmp_path)
-        os.unlink(tmp_path)
 
         if not result.all_transactions:
             await update.message.reply_text(
@@ -236,6 +236,12 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error processing PDF: {e}", exc_info=True)
         await update.message.reply_text(f"Erro ao processar o PDF: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 # --- Interactive Review ---

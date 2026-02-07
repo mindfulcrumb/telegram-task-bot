@@ -29,10 +29,11 @@ def call_anthropic_chat(system_prompt, messages, max_tokens=500):
         client = anthropic.Anthropic(api_key=api_key)
 
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=getattr(config, 'CLAUDE_MODEL', 'claude-3-haiku-20240307'),
             max_tokens=max_tokens,
             system=system_prompt,
-            messages=messages
+            messages=messages,
+            timeout=30.0
         )
 
         if response.content:
@@ -352,6 +353,36 @@ Keep it real. No corporate speak. Just be helpful."""
                 "response": f"Oops, something went wrong on my end"
             }
 
+    @staticmethod
+    def _extract_json_value(text, key):
+        """Extract a JSON string value for a given key, handling escapes and truncation."""
+        import re
+        # Find "key": " pattern
+        pattern = f'"{key}"\\s*:\\s*"'
+        match = re.search(pattern, text)
+        if not match:
+            return None
+        start = match.end()
+        result = []
+        i = start
+        while i < len(text):
+            ch = text[i]
+            if ch == '\\' and i + 1 < len(text):
+                next_ch = text[i + 1]
+                if next_ch == 'n':
+                    result.append('\n')
+                elif next_ch == 't':
+                    result.append('\t')
+                else:
+                    result.append(next_ch)
+                i += 2
+            elif ch == '"':
+                break
+            else:
+                result.append(ch)
+                i += 1
+        return ''.join(result)
+
     def _parse_ai_response(self, response_text):
         """Parse AI response JSON with recovery for truncated/malformed output."""
         import re
@@ -379,35 +410,35 @@ Keep it real. No corporate speak. Just be helpful."""
             action = action_match.group(1)
 
             if action in ("send_email", "preview_email"):
-                to_match = re.search(r'"to"\s*:\s*"([^"]+)"', text)
-                subj_match = re.search(r'"subject"\s*:\s*"([^"]+)"', text)
-                body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)', text)
-                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+                to_val = self._extract_json_value(text, "to")
+                subj_val = self._extract_json_value(text, "subject")
+                body_val = self._extract_json_value(text, "body")
+                resp_val = self._extract_json_value(text, "response")
 
-                if to_match and subj_match:
+                if to_val and subj_val:
                     return {
                         "action": action,
                         "data": {
-                            "to": to_match.group(1),
-                            "subject": subj_match.group(1),
-                            "body": body_match.group(1) if body_match else subj_match.group(1)
+                            "to": to_val,
+                            "subject": subj_val,
+                            "body": body_val or subj_val
                         },
-                        "response": resp_match.group(1) if resp_match else ""
+                        "response": resp_val or ""
                     }
 
             elif action in ("read_email", "reply_email"):
                 num_match = re.search(r'"email_num"\s*:\s*(\d+)', text)
-                body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)', text)
-                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+                body_val = self._extract_json_value(text, "body")
+                resp_val = self._extract_json_value(text, "response")
                 data = {}
                 if num_match:
                     data["email_num"] = int(num_match.group(1))
-                if body_match and action == "reply_email":
-                    data["body"] = body_match.group(1)
+                if body_val and action == "reply_email":
+                    data["body"] = body_val
                 return {
                     "action": action,
                     "data": data,
-                    "response": resp_match.group(1) if resp_match else ""
+                    "response": resp_val or ""
                 }
 
             elif action == "save_contact":
