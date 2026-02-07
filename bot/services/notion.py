@@ -350,6 +350,25 @@ class NotionTaskService:
         """Delete a task by archiving it in Notion."""
         return self.client.pages.update(page_id=page_id, archived=True)
 
+    def restore_task(self, page_id: str) -> dict:
+        """Restore an archived task by unarchiving it in Notion."""
+        try:
+            result = self.client.pages.update(page_id=page_id, archived=False)
+            # Also uncheck Done if it was marked complete
+            done_prop = self._get_property_name("Done")
+            status_prop = self._get_property_name("Status")
+            props = {}
+            if done_prop:
+                props[done_prop] = {"checkbox": False}
+            if status_prop:
+                props[status_prop] = {"select": {"name": "To Do"}}
+            if props:
+                self.client.pages.update(page_id=page_id, properties=props)
+            return result
+        except Exception as e:
+            logger.error(f"Failed to restore task: {type(e).__name__}: {e}")
+            raise
+
     def update_task_title(self, page_id: str, new_title: str) -> dict:
         """Update a task's title."""
         title_prop = self._get_property_name("Task") or self._get_property_name("Name") or "Name"

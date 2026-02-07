@@ -23,6 +23,7 @@ from bot.handlers.tasks import (
     cmd_week,
     cmd_overdue,
     cmd_analyze,
+    cmd_undo,
     handle_message
 )
 from bot.handlers.reminders import cmd_remind, setup_reminder_job
@@ -96,6 +97,7 @@ def main():
     application.add_handler(CommandHandler("overdue", cmd_overdue))
     application.add_handler(CommandHandler("remind", cmd_remind))
     application.add_handler(CommandHandler("analyze", cmd_analyze))
+    application.add_handler(CommandHandler("undo", cmd_undo))
 
     # Accounting handlers
     application.add_handler(CommandHandler("reconcile", cmd_reconcile))

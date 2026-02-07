@@ -297,6 +297,7 @@ ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
 - "done": data: {{"task_num": N}}
 - "delete": data: {{"task_num": N}}
+- "undo": data: {{}} - Undo the last delete or done action (restores the task)
 - "list": data: {{"filter": "all/today/business/personal"}}{caps_text}{acct_actions}
 - "answer": Just chat - use this most of the time
 
@@ -307,6 +308,7 @@ SMART BEHAVIORS:
 - If they seem stressed, be extra supportive
 - If task is vague, maybe ask what specifically they need to do
 - Celebrate wins when they complete stuff!
+- "undo", "bring it back", "wrong task", "that was a mistake", "restore" -> use "undo" action
 - For emails/messages: if no recipient specified, ASK who to send to
 - When asked to send an email, DRAFT the full email content yourself based on context. Use "preview_email" action with a complete subject and body you wrote. Be creative and natural with the email text.
 - The user will then review your draft. If they say to change something ("make it shorter", "change the subject", "add a greeting"), generate a NEW "preview_email" with the updated content.

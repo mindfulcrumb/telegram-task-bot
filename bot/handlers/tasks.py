@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # Pending email drafts keyed by chat_id
 _pending_emails = {}
 
+# Undo buffer: stores last action per chat_id for recovery
+# Format: {chat_id: {"action": "delete"|"done", "task_id": "...", "title": "..."}}
+_undo_buffer = {}
+
 
 def is_authorized(user_id: int) -> bool:
     """Check if user is authorized to use the bot."""
@@ -210,6 +214,9 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             if 1 <= task_num <= len(tasks):
                 task = tasks[task_num - 1]
                 notion_service.mark_complete(task["id"])
+                _undo_buffer[update.effective_chat.id] = {
+                    "action": "done", "task_id": task["id"], "title": task["title"]
+                }
                 await update.message.reply_text(response or f'✅ Done: "{task["title"]}"')
             else:
                 await update.message.reply_text(f"Task #{task_num} not found.")
@@ -219,9 +226,24 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             if 1 <= task_num <= len(tasks):
                 task = tasks[task_num - 1]
                 notion_service.delete_task(task["id"])
+                _undo_buffer[update.effective_chat.id] = {
+                    "action": "delete", "task_id": task["id"], "title": task["title"]
+                }
                 await update.message.reply_text(response or f'🗑️ Deleted: "{task["title"]}"')
             else:
                 await update.message.reply_text(f"Task #{task_num} not found.")
+
+        elif action == "undo":
+            last_action = _undo_buffer.pop(update.effective_chat.id, None)
+            if last_action:
+                try:
+                    notion_service.restore_task(last_action["task_id"])
+                    action_word = "Undeleted" if last_action["action"] == "delete" else "Unmarked"
+                    await update.message.reply_text(response or f'\u21a9\ufe0f {action_word}: "{last_action["title"]}" is back!')
+                except Exception:
+                    await update.message.reply_text("Couldn't undo that action.")
+            else:
+                await update.message.reply_text(response or "Nothing to undo.")
 
         elif action == "list":
             filter_type = data.get("filter", "all")
@@ -506,9 +528,14 @@ async def handle_delete(update: Update, task_num: int):
             return
 
         task = tasks[task_num - 1]
-        notion_service.mark_complete(task["id"])  # Archive = delete
+        notion_service.delete_task(task["id"])
 
-        await update.message.reply_text(f'Deleted: "{task["title"]}"')
+        # Save to undo buffer
+        _undo_buffer[update.effective_chat.id] = {
+            "action": "delete", "task_id": task["id"], "title": task["title"]
+        }
+
+        await update.message.reply_text(f'Deleted: "{task["title"]}"\n_Say /undo to recover_')
 
     except Exception as e:
         await update.message.reply_text("Error occurred")
@@ -526,10 +553,37 @@ async def handle_done(update: Update, task_num: int):
         task = tasks[task_num - 1]
         notion_service.mark_complete(task["id"])
 
-        await update.message.reply_text(f'Done: "{task["title"]}"')
+        # Save to undo buffer
+        _undo_buffer[update.effective_chat.id] = {
+            "action": "done", "task_id": task["id"], "title": task["title"]
+        }
+
+        await update.message.reply_text(f'Done: "{task["title"]}"\n_Say /undo to recover_')
 
     except Exception as e:
         await update.message.reply_text("Error occurred")
+
+
+async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Undo the last delete or done action."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized to use this bot.")
+        return
+
+    chat_id = update.effective_chat.id
+    last_action = _undo_buffer.pop(chat_id, None)
+
+    if not last_action:
+        await update.message.reply_text("Nothing to undo.")
+        return
+
+    try:
+        notion_service.restore_task(last_action["task_id"])
+        action_word = "Undeleted" if last_action["action"] == "delete" else "Unmarked"
+        await update.message.reply_text(f'\u21a9\ufe0f {action_word}: "{last_action["title"]}" is back!')
+    except Exception as e:
+        logger.error(f"Undo failed: {type(e).__name__}: {e}")
+        await update.message.reply_text("Couldn't undo that action. The task may have been permanently removed.")
 
 
 async def handle_list(update: Update, category: str = None):
