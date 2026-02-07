@@ -9,7 +9,7 @@ encoding_fix.configure_safe_logging()
 import sys
 import os
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import config
 from bot.handlers.tasks import (
     cmd_start,
