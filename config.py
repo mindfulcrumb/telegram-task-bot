@@ -51,11 +51,13 @@ ANTHROPIC_API_KEY = clean_env_value(os.getenv("ANTHROPIC_API_KEY"))
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
 
-# Email Configuration (Gmail SMTP)
-# Create a Gmail, enable 2FA, then create an App Password at:
-# https://myaccount.google.com/apppasswords
+# Email Configuration (SMTP)
+# For Gmail: enable 2FA, create App Password at https://myaccount.google.com/apppasswords
+# For Agentmail: use smtp.agentmail.to with your API key as password
 SMTP_EMAIL = clean_env_value(os.getenv("SMTP_EMAIL"))
 SMTP_PASSWORD = clean_env_value(os.getenv("SMTP_PASSWORD"))
+SMTP_HOST = clean_env_value(os.getenv("SMTP_HOST")) or "smtp.gmail.com"
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # WhatsApp via Twilio
 # Get credentials at: https://console.twilio.com
