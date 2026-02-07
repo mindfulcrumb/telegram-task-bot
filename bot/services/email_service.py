@@ -20,10 +20,9 @@ def send_via_agentmail(to_email: str, subject: str, body: str) -> tuple[bool, st
 
         client.inboxes.messages.send(
             inbox_id=inbox_email,
-            to=[to_email],
+            to=to_email,
             subject=subject,
             text=body,
-            html=f"<p>{body}</p>"
         )
 
         return True, f"Email sent to {to_email}"
