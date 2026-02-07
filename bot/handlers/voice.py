@@ -106,15 +106,20 @@ async def _process_transcribed_text(update: Update, context: ContextTypes.DEFAUL
 
 
 async def _transcribe(file_path: str) -> str:
-    """Transcribe audio file using Whisper via Groq (no content filtering)."""
-    from groq import Groq
-
-    client = Groq(api_key=config.GROQ_API_KEY)
+    """Transcribe audio file using Whisper via Groq API (no content filtering)."""
+    import httpx
 
     with open(file_path, "rb") as audio_file:
-        response = client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=audio_file
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+            files={"file": ("voice.ogg", audio_file, "audio/ogg")},
+            data={"model": "whisper-large-v3"},
+            timeout=30.0
         )
 
-    return response.text
+    if response.status_code != 200:
+        logger.error(f"Groq API error {response.status_code}: {response.text[:200]}")
+        raise Exception(f"Transcription failed: {response.status_code}")
+
+    return response.json().get("text", "")
