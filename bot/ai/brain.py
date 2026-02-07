@@ -232,8 +232,9 @@ RIGHT NOW:
 THEIR TASKS:
 {task_list}{caps_note}
 
-RESPOND WITH JSON:
+CRITICAL: You MUST respond with ONLY a JSON object - no text before or after it. No preamble, no explanation, just the JSON:
 {{"action": "TYPE", "data": {{}}, "response": "your message"}}
+For emails, keep the body field SHORT (2-3 sentences max). Put your friendly message in "response", the actual email text in "body".
 
 ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
@@ -275,7 +276,7 @@ Keep it real. No corporate speak. Just be helpful."""
             response_text, error = call_anthropic_chat(
                 system_prompt,
                 self.conversation_history,
-                max_tokens=600  # Enough room for email/contact JSON actions
+                max_tokens=1024
             )
 
             if error:
@@ -290,33 +291,8 @@ Keep it real. No corporate speak. Just be helpful."""
             })
 
             # Parse JSON response
-            try:
-                text = response_text.strip()
-                start = text.find("{")
-                end = text.rfind("}") + 1
-
-                if start >= 0 and end > start:
-                    json_str = text[start:end]
-                    result = json.loads(json_str)
-
-                    return {
-                        "action": result.get("action", "answer"),
-                        "data": result.get("data", {}),
-                        "response": result.get("response", "")
-                    }
-                else:
-                    return {
-                        "action": "answer",
-                        "data": {},
-                        "response": to_ascii(response_text)[:400]
-                    }
-
-            except json.JSONDecodeError:
-                return {
-                    "action": "answer",
-                    "data": {},
-                    "response": to_ascii(response_text)[:400]
-                }
+            result = self._parse_ai_response(response_text)
+            return result
 
         except Exception as e:
             return {
@@ -324,6 +300,82 @@ Keep it real. No corporate speak. Just be helpful."""
                 "data": {},
                 "response": f"Oops, something went wrong on my end"
             }
+
+    def _parse_ai_response(self, response_text):
+        """Parse AI response JSON with recovery for truncated/malformed output."""
+        import re
+
+        text = response_text.strip()
+
+        # Try 1: Standard JSON extraction
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                json_str = text[start:end]
+                result = json.loads(json_str)
+                return {
+                    "action": result.get("action", "answer"),
+                    "data": result.get("data", {}),
+                    "response": result.get("response", "")
+                }
+            except json.JSONDecodeError:
+                pass
+
+        # Try 2: Recovery for truncated JSON - extract fields with regex
+        action_match = re.search(r'"action"\s*:\s*"([^"]+)"', text)
+        if action_match:
+            action = action_match.group(1)
+
+            if action == "send_email":
+                to_match = re.search(r'"to"\s*:\s*"([^"]+)"', text)
+                subj_match = re.search(r'"subject"\s*:\s*"([^"]+)"', text)
+                body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+
+                if to_match and subj_match:
+                    return {
+                        "action": "send_email",
+                        "data": {
+                            "to": to_match.group(1),
+                            "subject": subj_match.group(1),
+                            "body": body_match.group(1) if body_match else subj_match.group(1)
+                        },
+                        "response": resp_match.group(1) if resp_match else ""
+                    }
+
+            elif action == "save_contact":
+                name_match = re.search(r'"name"\s*:\s*"([^"]+)"', text)
+                email_match = re.search(r'"email"\s*:\s*"([^"]+)"', text)
+                phone_match = re.search(r'"phone"\s*:\s*"([^"]*)"', text)
+                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+
+                if name_match:
+                    return {
+                        "action": "save_contact",
+                        "data": {
+                            "name": name_match.group(1),
+                            "email": email_match.group(1) if email_match else "",
+                            "phone": phone_match.group(1) if phone_match else ""
+                        },
+                        "response": resp_match.group(1) if resp_match else ""
+                    }
+
+            # Generic recovery for other actions
+            data = {}
+            resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+            return {
+                "action": action,
+                "data": data,
+                "response": resp_match.group(1) if resp_match else ""
+            }
+
+        # Fallback: treat as plain text answer
+        return {
+            "action": "answer",
+            "data": {},
+            "response": to_ascii(text)[:400]
+        }
 
     def clear_history(self):
         """Clear conversation history."""
