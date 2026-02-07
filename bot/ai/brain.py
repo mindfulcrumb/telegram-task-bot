@@ -275,7 +275,7 @@ Keep it real. No corporate speak. Just be helpful."""
             response_text, error = call_anthropic_chat(
                 system_prompt,
                 self.conversation_history,
-                max_tokens=250  # Shorter responses
+                max_tokens=600  # Enough room for email/contact JSON actions
             )
 
             if error:
