@@ -82,7 +82,7 @@ async def cmd_reconcile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
 
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if session and session.get("result"):
         result = session["result"]
         pending = session.get("pending_review", [])
@@ -121,7 +121,7 @@ async def cmd_acct_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
 
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session or not session.get("result"):
         await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
         return
@@ -134,7 +134,7 @@ async def cmd_acct_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
 
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session or not session.get("pending_review"):
         await update.message.reply_text("Nenhuma transacao para saltar.")
         return
@@ -190,10 +190,9 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
             still_unknown = uncategorized
             ai_done = []
 
-        # Save session
+        # Save session to memory AND SQLite (persists across bot restarts)
         session_id = str(uuid.uuid4())[:8]
-        acct_db.save_session(session_id, document.file_name, len(all_txns),
-                             len(categorized) + len(ai_done), len(still_unknown))
+        acct_db.save_full_session(session_id, document.file_name, result)
 
         context.user_data["acct_session"] = {
             "id": session_id,
@@ -243,7 +242,7 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _send_next_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session:
         return
 
@@ -300,7 +299,7 @@ async def _handle_category_callback(update: Update, context: ContextTypes.DEFAUL
     _, txn_idx_str, category = parts
     txn_idx = int(txn_idx_str)
 
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session:
         await query.edit_message_text("Sessao expirada. Envia um novo PDF.")
         return
@@ -319,9 +318,18 @@ async def _handle_category_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(
             f"Categorizada: {txn.description}\n  -> {display}\n  Regra guardada."
         )
+        # Persist category change to SQLite
+        acct_db.update_transaction_category(
+            session["id"], txn.date, txn.description, txn.value,
+            txn.category or category, txn.note or "",
+        )
 
     session["current_index"] = txn_idx + 1
     session["reviewed_count"] = session.get("reviewed_count", 0) + 1
+    # Persist review progress
+    acct_db.update_session_review_state(
+        session["id"], session["current_index"], session["reviewed_count"]
+    )
     await _send_next_review(update, context)
 
 
@@ -329,7 +337,7 @@ async def _handle_export_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     fmt = data.split(":")[1]
 
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session or not session.get("result"):
         await query.edit_message_text("Sessao expirada. Envia um novo PDF.")
         return
@@ -374,7 +382,7 @@ async def _handle_export_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_accounting_export(update: Update, context: ContextTypes.DEFAULT_TYPE, fmt: str):
     """Export current session in the given format. Called from AI brain or text handler."""
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session or not session.get("result"):
         await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
         return
@@ -411,7 +419,7 @@ async def handle_accounting_export(update: Update, context: ContextTypes.DEFAULT
 
 async def handle_accounting_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current accounting session status. Called from AI brain."""
-    session = context.user_data.get("acct_session")
+    session = _try_restore_session(context)
     if not session or not session.get("result"):
         await update.message.reply_text("Nenhuma sessao ativa. Envia um PDF primeiro.")
         return
@@ -442,10 +450,25 @@ async def handle_accounting_status(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text(text)
 
 
+def _try_restore_session(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    """Try to restore an active session from SQLite if not in memory."""
+    session = context.user_data.get("acct_session")
+    if session and session.get("result"):
+        return session
+
+    # Try SQLite
+    restored = acct_db.load_latest_session()
+    if restored:
+        context.user_data["acct_session"] = restored
+        logger.info(f"Restored accounting session {restored['id']} from SQLite")
+        return restored
+    return None
+
+
 def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     """Get accounting session context string for the AI brain. Returns None if no active session."""
-    session = context.user_data.get("acct_session")
-    if not session or not session.get("result"):
+    session = _try_restore_session(context)
+    if not session:
         return None
 
     result = session["result"]
