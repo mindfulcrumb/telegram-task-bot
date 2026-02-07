@@ -174,7 +174,7 @@ class AIBrain:
             caps.append("whatsapp")
         return caps
 
-    def _get_system_prompt(self, tasks):
+    def _get_system_prompt(self, tasks, acct_context=None):
         """Build system prompt with personality and context."""
         task_list = self._build_task_context(tasks)
         time_ctx = self._get_time_context()
@@ -198,6 +198,9 @@ class AIBrain:
         if "email" in capabilities:
             caps_text += '\n- "preview_email": data: {"to": "email@example.com", "subject": "...", "body": "..."} - ALWAYS use this first to show draft'
             caps_text += '\n- "confirm_email": data: {} - Use when user confirms the previewed email (says yes, send it, looks good, etc.)'
+            caps_text += '\n- "check_inbox": data: {} - Show recent received emails'
+            caps_text += '\n- "read_email": data: {"email_num": N} - Read full content of email #N from inbox'
+            caps_text += '\n- "reply_email": data: {"email_num": N, "body": "reply text"} - Reply to email #N'
         if "whatsapp" in capabilities:
             caps_text += '\n- "send_whatsapp": data: {"to": "+1234567890", "message": "..."}'
         if capabilities:
@@ -214,6 +217,33 @@ class AIBrain:
                 f"\n\nSAVED CONTACTS:\n{contacts}"
             )
 
+        # Build accounting context section
+        acct_section = ""
+        acct_actions = ""
+        if acct_context:
+            acct_section = f"""
+
+ACCOUNTING SESSION:
+{acct_context}
+The user recently uploaded a bank reconciliation PDF. Messages may relate to this accounting session.
+"""
+            acct_actions = """
+- "accounting_export": data: {"format": "excel/csv/pdf"} - Export the current reconciliation session
+- "accounting_status": data: {} - Show status of the current accounting session
+- "accounting_skip": data: {} - Skip the current transaction in review"""
+
+        # Build clarification note when accounting is active
+        acct_behavior = ""
+        if acct_context:
+            acct_behavior = """
+- IMPORTANT: There is an active accounting/reconciliation session. If the user's message seems related to accounting (export, status, categories, transactions, PDF, reconciliation, skip), use the accounting actions.
+- If the user says "export", "send me the file", "gerar ficheiro", "exportar" -> use "accounting_export" with the format they want (default to "excel" if not specified)
+- If the user says "status", "how many left", "quantas faltam" -> use "accounting_status"
+- If the user says "skip", "next", "saltar" -> use "accounting_skip"
+- If the user's message is clearly a task (e.g., "buy groceries tomorrow") -> still add it as a task
+- If you're NOT SURE if the message is about accounting or something else, use "answer" action and ASK the user: "Are you referring to the reconciliation session, or do you want me to do something else (create a task, send an email, etc.)?"
+"""
+
         return f"""You're a chill, helpful assistant managing tasks via Telegram. Talk like a supportive friend, not a robot.
 
 VIBE:
@@ -229,7 +259,7 @@ RIGHT NOW:
 - It's {time_ctx['time_of_day']} on {time_ctx['today']}
 - Today's date for due dates: {time_ctx['date_iso']}
 - Status: {situation_str}
-
+{acct_section}
 THEIR TASKS:
 {task_list}{caps_note}
 
@@ -241,7 +271,7 @@ ACTIONS:
 - "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
 - "done": data: {{"task_num": N}}
 - "delete": data: {{"task_num": N}}
-- "list": data: {{"filter": "all/today/business/personal"}}{caps_text}
+- "list": data: {{"filter": "all/today/business/personal"}}{caps_text}{acct_actions}
 - "answer": Just chat - use this most of the time
 
 SMART BEHAVIORS:
@@ -258,7 +288,10 @@ SMART BEHAVIORS:
 - For MULTIPLE recipients, put all emails comma-separated in the "to" field: "to": "will@x.com, john@x.com"
 - When user says "email Will" and Will is in contacts, use their saved email
 - When user provides a new contact detail (like "Will's email is will@x.com"), save it with save_contact
-
+- When user says "check my email", "any new emails?", "inbox" -> use "check_inbox"
+- When user says "read email 2", "open email 1", "what does email 3 say" -> use "read_email" with the number
+- When user says "reply to email 1: sounds good" -> use "reply_email" with the number and draft the reply body based on their message
+{acct_behavior}
 Keep it real. No corporate speak. Just be helpful."""
 
     async def process(self, user_input, tasks=None):
@@ -347,6 +380,21 @@ Keep it real. No corporate speak. Just be helpful."""
                         },
                         "response": resp_match.group(1) if resp_match else ""
                     }
+
+            elif action in ("read_email", "reply_email"):
+                num_match = re.search(r'"email_num"\s*:\s*(\d+)', text)
+                body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+                data = {}
+                if num_match:
+                    data["email_num"] = int(num_match.group(1))
+                if body_match and action == "reply_email":
+                    data["body"] = body_match.group(1)
+                return {
+                    "action": action,
+                    "data": data,
+                    "response": resp_match.group(1) if resp_match else ""
+                }
 
             elif action == "save_contact":
                 name_match = re.search(r'"name"\s*:\s*"([^"]+)"', text)

@@ -311,6 +311,41 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 else:
                     await update.message.reply_text(f"Couldn't send email: {'; '.join(failed)}")
 
+        elif action == "check_inbox":
+            from bot.services.email_inbox import email_inbox
+            from bot.handlers.emails import format_inbox
+            messages = email_inbox.get_recent(10)
+            formatted = format_inbox(messages)
+            reply_text = response + "\n\n" + formatted if response else formatted
+            await update.message.reply_text(reply_text)
+
+        elif action == "read_email":
+            from bot.services.email_inbox import email_inbox
+            from bot.handlers.emails import format_full_email
+            email_num = data.get("email_num", 1)
+            msg_data = email_inbox.get_message_by_num(email_num)
+            if msg_data:
+                formatted = format_full_email(msg_data)
+                reply_text = response + "\n\n" + formatted if response else formatted
+                await update.message.reply_text(reply_text)
+            else:
+                await update.message.reply_text(
+                    response or f"Email #{email_num} not found. Say 'check my email' first."
+                )
+
+        elif action == "reply_email":
+            from bot.services.email_inbox import email_inbox
+            email_num = data.get("email_num", 1)
+            reply_body = data.get("body", "")
+            if not reply_body:
+                await update.message.reply_text(response or "What should the reply say?")
+            else:
+                success, msg = email_inbox.reply_by_num(email_num, reply_body)
+                if success:
+                    await update.message.reply_text(response or f"Reply sent to email #{email_num}!")
+                else:
+                    await update.message.reply_text(f"Couldn't reply: {msg}")
+
         elif action == "send_whatsapp":
             from bot.services.whatsapp_service import send_whatsapp
             to_number = data.get("to", "")

@@ -122,6 +122,13 @@ def main():
         setup_reminder_job(application)
         logger.info("Reminder job set up (will use dynamic chat registration)")
 
+    # Set up email inbox check job - polls for new emails
+    if getattr(config, 'AGENTMAIL_API_KEY', '') and getattr(config, 'AGENTMAIL_INBOX', ''):
+        from bot.handlers.emails import setup_email_check_job
+        primary_chat = config.ALLOWED_USER_IDS[0] if config.ALLOWED_USER_IDS else None
+        setup_email_check_job(application, primary_chat)
+        logger.info("Email check job set up")
+
     logger.info("Bot is ready! Starting polling...")
 
     # Start the bot
