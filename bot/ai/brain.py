@@ -1,7 +1,8 @@
-"""AI Brain - Claude-powered intelligence for the task bot."""
+"""AI Brain - Claude-powered agent with native tool use."""
 import json
 import logging
 from datetime import datetime, date
+
 import config
 
 logger = logging.getLogger(__name__)
@@ -17,8 +18,8 @@ def to_ascii(text):
         return ""
 
 
-def call_anthropic_chat(system_prompt, messages, max_tokens=500):
-    """Call Anthropic API with conversation history."""
+def _call_api(system_prompt, messages, tools=None, max_tokens=2048):
+    """Call Anthropic API with tool support."""
     import anthropic
 
     api_key = config.ANTHROPIC_API_KEY
@@ -28,40 +29,42 @@ def call_anthropic_chat(system_prompt, messages, max_tokens=500):
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        response = client.messages.create(
-            model=getattr(config, 'CLAUDE_MODEL', 'claude-3-haiku-20240307'),
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-            timeout=30.0
-        )
+        kwargs = {
+            "model": getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": messages,
+            "timeout": 60.0,
+        }
+        if tools:
+            kwargs["tools"] = tools
 
-        if response.content:
-            return response.content[0].text, None
-        return None, "No response"
+        return client.messages.create(**kwargs), None
 
     except anthropic.AuthenticationError:
         return None, "Invalid API key"
     except anthropic.RateLimitError:
         return None, "Rate limit exceeded"
     except anthropic.APIError as e:
-        return None, f"API error: {to_ascii(str(e))[:50]}"
+        return None, f"API error: {to_ascii(str(e))[:80]}"
     except Exception as e:
         return None, f"Error: {to_ascii(type(e).__name__)}"
 
 
-def call_anthropic(prompt_text):
-    """Simple single-turn API call (legacy)."""
-    result, error = call_anthropic_chat("", [{"role": "user", "content": prompt_text}])
-    return result if result else (error or "No response")
+# Keep legacy call for weekly_summary and other simple prompts
+def call_anthropic_chat(system_prompt, messages, max_tokens=500):
+    """Simple API call returning text only (for summaries, analysis)."""
+    response, error = _call_api(system_prompt, messages, max_tokens=max_tokens)
+    if error:
+        return None, error
+    if response and response.content:
+        text = "".join(b.text for b in response.content if hasattr(b, "text"))
+        return text or None, None
+    return None, "No response"
 
 
 class AIBrain:
-    """AI Brain for conversational task management."""
-
-    def __init__(self):
-        self.conversation_history = []
-        self.max_history = 10
+    """AI Brain with agent loop and native tool use."""
 
     def _get_time_context(self):
         """Get current time context."""
@@ -80,7 +83,7 @@ class AIBrain:
         return {
             "time_of_day": time_of_day,
             "today": now.strftime("%A, %B %d"),
-            "date_iso": now.strftime("%Y-%m-%d")
+            "date_iso": now.strftime("%Y-%m-%d"),
         }
 
     def _analyze_tasks(self, tasks):
@@ -97,65 +100,44 @@ class AIBrain:
         for t in tasks:
             if t.get("priority") == "High":
                 high_priority += 1
-
-            # Prefer ISO date (YYYY-MM-DD) if available, fall back to due_date
             due = t.get("due_date_iso") or t.get("due_date")
             if due:
                 try:
-                    if isinstance(due, str):
-                        # Try ISO format first (YYYY-MM-DD)
-                        if len(due) >= 10 and due[4] == '-':
-                            due_str = due[:10]
-                            if due_str < today_str:
-                                overdue += 1
-                            elif due_str == today_str:
-                                due_today += 1
-                            continue
-                        # Fall back to parsing other formats
-                        due_date = datetime.fromisoformat(due.replace("Z", "")).date()
-                    else:
-                        due_date = due
-
+                    if isinstance(due, str) and len(due) >= 10 and due[4] == "-":
+                        due_str = due[:10]
+                        if due_str < today_str:
+                            overdue += 1
+                        elif due_str == today_str:
+                            due_today += 1
+                        continue
+                    due_date = datetime.fromisoformat(due.replace("Z", "")).date() if isinstance(due, str) else due
                     if due_date < today:
                         overdue += 1
                     elif due_date == today:
                         due_today += 1
-                except Exception as e:
-                    logger.warning(f"Could not parse due date '{due}': {e}")
+                except Exception:
+                    pass
 
-        return {
-            "total": len(tasks),
-            "overdue": overdue,
-            "today": due_today,
-            "high_priority": high_priority
-        }
+        return {"total": len(tasks), "overdue": overdue, "today": due_today, "high_priority": high_priority}
 
     def _build_task_context(self, tasks):
         """Build task list for context."""
         if not tasks:
-            return "You have no tasks right now - fresh slate!"
+            return "No tasks right now."
 
         lines = []
         today = date.today()
-
         for i, t in enumerate(tasks, 1):
-            title = to_ascii(t.get("title", "Task")) or "Task"
+            title = t.get("title", "Task")
             cat = t.get("category", "Personal")
             pri = t.get("priority", "Medium")
             due = t.get("due_date", "")
-
-            # Format due date naturally
             due_str = ""
             if due:
                 try:
-                    if isinstance(due, str):
-                        due_date = datetime.fromisoformat(due.replace("Z", "")).date()
-                    else:
-                        due_date = due
-
+                    due_date = datetime.fromisoformat(due.replace("Z", "")).date() if isinstance(due, str) else due
                     if due_date < today:
-                        days_overdue = (today - due_date).days
-                        due_str = f" - OVERDUE by {days_overdue}d!"
+                        due_str = f" - OVERDUE by {(today - due_date).days}d!"
                     elif due_date == today:
                         due_str = " - due TODAY"
                     elif (due_date - today).days == 1:
@@ -164,110 +146,38 @@ class AIBrain:
                         due_str = f" - due {due_date.strftime('%A')}"
                     else:
                         due_str = f" - due {due_date.strftime('%b %d')}"
-                except Exception as e:
-                    logger.warning(f"Could not format due date '{due}': {e}")
+                except Exception:
                     due_str = f" - due {due}"
-
             pri_marker = "!" if pri == "High" else ""
             lines.append(f"{i}. {pri_marker}{title} [{cat}]{due_str}")
-
         return "\n".join(lines)
 
-    def _get_contacts_context(self):
-        """Get contacts for context."""
-        from bot.services.contacts_store import contacts_store
-        return contacts_store.format_for_prompt()
-
-    def _get_capabilities(self):
-        """Check what capabilities are available."""
-        from bot.services.email_service import is_email_configured
-        from bot.services.whatsapp_service import is_whatsapp_configured
-
-        caps = []
-        if is_email_configured():
-            caps.append("email")
-        if is_whatsapp_configured():
-            caps.append("whatsapp")
-        return caps
-
     def _get_system_prompt(self, tasks, acct_context=None):
-        """Build system prompt with personality and context."""
-        task_list = self._build_task_context(tasks)
+        """Build system prompt — personality and context only, NO action definitions."""
         time_ctx = self._get_time_context()
         stats = self._analyze_tasks(tasks)
-        contacts = self._get_contacts_context()
-        capabilities = self._get_capabilities()
+        task_list = self._build_task_context(tasks)
 
-        # Build situation awareness
+        from bot.services.contacts_store import contacts_store
+        contacts = contacts_store.format_for_prompt()
+
         situation = []
         if stats["overdue"] > 0:
-            situation.append(f"{stats['overdue']} overdue task(s)")
+            situation.append(f"{stats['overdue']} overdue")
         if stats["today"] > 0:
             situation.append(f"{stats['today']} due today")
         if stats["high_priority"] > 0:
             situation.append(f"{stats['high_priority']} high priority")
-
         situation_str = ", ".join(situation) if situation else "all clear"
 
-        # Build capabilities section
-        caps_text = ""
-        if "email" in capabilities:
-            caps_text += '\n- "preview_email": data: {"to": "email@example.com", "subject": "...", "body": "..."} - ALWAYS use this first to show draft'
-            caps_text += '\n- "confirm_email": data: {} - Use when user confirms the previewed email (says yes, send it, looks good, etc.)'
-            caps_text += '\n- "check_inbox": data: {} - Show recent received emails'
-            caps_text += '\n- "read_email": data: {"email_num": N} - Read full content of email #N from inbox'
-            caps_text += '\n- "reply_email": data: {"email_num": N, "body": "reply text"} - Reply to email #N'
-        if "whatsapp" in capabilities:
-            caps_text += '\n- "send_whatsapp": data: {"to": "+1234567890", "message": "..."}'
-        if capabilities:
-            caps_text += '\n- "save_contact": data: {"name": "Will", "email": "will@example.com", "phone": "+1234567890"}'
-
-        caps_note = ""
-        if capabilities:
-            caps_note = (
-                f"\n\nYOU CAN ALSO:"
-                f"\n- Send emails and WhatsApp messages when asked"
-                f"\n- Use saved contacts by name (e.g., 'email will' -> looks up will's email)"
-                f"\n- Save new contacts when you learn someone's email or phone"
-                f"\n- IMPORTANT: When sending an email to someone NEW (not in contacts), also use save_contact to remember them for next time"
-                f"\n\nSAVED CONTACTS:\n{contacts}"
-            )
-
-        # Build accounting context section
         acct_section = ""
-        acct_actions = ""
         if acct_context:
             acct_section = f"""
 
-ACCOUNTING SESSION:
+ACCOUNTING SESSION ACTIVE:
 {acct_context}
-The user recently uploaded a bank reconciliation PDF. Messages may relate to this accounting session.
-"""
-            acct_actions = """
-- "accounting_export": data: {"format": "excel/csv/pdf"} - Export the current reconciliation session
-- "accounting_status": data: {} - Show status of the current accounting session
-- "accounting_skip": data: {} - Skip the current transaction in review
-- "accounting_update": data: {"transactions": [{"description": "partial match text", "category": "category_key", "note": "optional note"}]} - Update category/note for one or more transactions. Use the description field to match (partial text is fine). Can update multiple at once."""
-
-        # Build clarification note when accounting is active
-        acct_behavior = ""
-        if acct_context:
-            acct_behavior = """
-- IMPORTANT: There is an active accounting/reconciliation session. If the user's message seems related to accounting (export, status, categories, transactions, PDF, reconciliation, skip, update, change, rename), use the accounting actions.
-- If the user says "export", "send me the file", "gerar ficheiro", "exportar" -> use "accounting_export" with the format they want (default to "excel" if not specified)
-- If the user says "status", "how many left", "quantas faltam" -> use "accounting_status"
-- If the user says "skip", "next", "saltar" -> use "accounting_skip"
-- If the user wants to CHANGE, UPDATE, RENAME, or SET a category or note on any transaction(s), use "accounting_update". Look at the TRANSACTION LIST above to find matching transactions by their description text. Examples:
-  - "change Easypark to parking" -> accounting_update with description "Easypark", category "estacionamento"
-  - "that Uber one is transport" -> accounting_update with description "Uber", category "transportes"
-  - "mark all the Galp ones as fuel" -> accounting_update with description "Galp", category "combustivel"
-  - "add note 'client dinner' to the restaurant transaction" -> accounting_update with matching description and note
-  - "change #5 to software" -> accounting_update with the description from transaction #5 in the list
-  - User can reference transactions by number (#1, #5), by name/description, or by amount
-- You can update MULTIPLE transactions at once by putting multiple items in the "transactions" array
-- Valid category keys: fornecedor, transportes, alimentacao, software, combustivel, viagens, material_escritorio, marketing, servicos_profissionais, saude, aluguer, suprimentos, transferencia, receita_vendas, estacionamento, telecomunicacoes, seguros, impostos, formacao, entretenimento, limpeza, manutencao, honorarios, outros
-- If the user's message is clearly a task (e.g., "buy groceries tomorrow") -> still add it as a task
-- If you're NOT SURE if the message is about accounting or something else, use "answer" action and ASK the user: "Are you referring to the reconciliation session, or do you want me to do something else (create a task, send an email, etc.)?"
+The user has a bank reconciliation session open. If their message relates to accounting (export, status, categories, transactions, skip), use the accounting tools.
+Valid category keys: fornecedor, transportes, alimentacao, software, combustivel, viagens, material_escritorio, marketing, servicos_profissionais, saude, aluguer, suprimentos, transferencia, receita_vendas, estacionamento, telecomunicacoes, seguros, impostos, formacao, entretenimento, limpeza, manutencao, honorarios, outros
 """
 
         return f"""You're a chill, helpful assistant managing tasks via Telegram. Talk like a supportive friend, not a robot.
@@ -275,254 +185,125 @@ The user recently uploaded a bank reconciliation PDF. Messages may relate to thi
 VIBE:
 - Be conversational and natural - like texting a friend
 - Keep responses SHORT (1-3 sentences max for simple stuff)
-- Don't dump walls of text - break it up naturally
 - Use casual language, contractions, occasional emoji if it fits
-- When asked "what should I focus on" - just pick 1-2 things and explain briefly WHY, don't list everything
+- When asked "what should I focus on" - pick 1-2 things and explain briefly WHY
 - Be encouraging but not cheesy
-- Ask follow-up questions when it makes sense
+- Celebrate wins when they complete stuff!
 
 RIGHT NOW:
 - It's {time_ctx['time_of_day']} on {time_ctx['today']}
-- Today's date for due dates: {time_ctx['date_iso']}
+- Today's date: {time_ctx['date_iso']}
 - Status: {situation_str}
+
+TASKS:
+{task_list}
+
+SAVED CONTACTS:
+{contacts}
 {acct_section}
-THEIR TASKS:
-{task_list}{caps_note}
+TOOL USE GUIDELINES:
+- Use lookup_contact BEFORE sending emails/WhatsApp to find the right address
+- When sending an email, draft the full body yourself based on what the user wants to say
+- "tomorrow", "next week", "friday" -> convert to YYYY-MM-DD dates
+- Infer category (Personal/Business) and priority from context
+- When user says "undo", "bring it back", "that was a mistake" -> use undo_last_action
+- After sending an email to someone new, use save_contact to remember them
+- You can chain multiple tools in one turn (e.g., look up contact then send email)
 
-CRITICAL: You MUST respond with ONLY a JSON object - no text before or after it. No preamble, no explanation, just the JSON:
-{{"action": "TYPE", "data": {{}}, "response": "your message"}}
-For emails, write a proper email body in the "body" field based on the user's context. Put your friendly chat message in "response".
-
-ACTIONS:
-- "add_task": data: {{"title": "...", "category": "Personal/Business", "priority": "Low/Medium/High", "due_date": "YYYY-MM-DD or null"}}
-- "done": data: {{"task_nums": [N]}} - Mark task(s) as done. Use array even for single task. E.g. "done 1 and 3" -> {{"task_nums": [1, 3]}}
-- "delete": data: {{"task_nums": [N]}} - Delete task(s). Use array even for single task. E.g. "delete 2 4 5" -> {{"task_nums": [2, 4, 5]}}
-- "undo": data: {{}} - Undo the last delete or done action (restores all affected tasks)
-- "list": data: {{"filter": "all/today/business/personal"}}{caps_text}{acct_actions}
-- "answer": Just chat - use this most of the time
-
-SMART BEHAVIORS:
-- "tomorrow", "next week", "friday" -> convert to actual dates
-- Guess category from context (work stuff = Business, life stuff = Personal)
-- Suggest priority based on urgency/importance
-- If they seem stressed, be extra supportive
-- If task is vague, maybe ask what specifically they need to do
-- Celebrate wins when they complete stuff!
-- "undo", "bring it back", "wrong task", "that was a mistake", "restore" -> use "undo" action
-- For emails/messages: if no recipient specified, ASK who to send to
-- When asked to send an email, DRAFT the full email content yourself based on context. Use "preview_email" action with a complete subject and body you wrote. Be creative and natural with the email text.
-- The user will then review your draft. If they say to change something ("make it shorter", "change the subject", "add a greeting"), generate a NEW "preview_email" with the updated content.
-- When user confirms the email (says yes, send it, looks good, go ahead, etc.), use "confirm_email" action with empty data - the system remembers the draft.
-- For MULTIPLE recipients, put all emails comma-separated in the "to" field: "to": "will@x.com, john@x.com"
-- When user says "email Will" and Will is in contacts, use their saved email
-- When user provides a new contact detail (like "Will's email is will@x.com"), save it with save_contact
-- When user says "check my email", "any new emails?", "inbox" -> use "check_inbox"
-- When user says "read email 2", "open email 1", "what does email 3 say" -> use "read_email" with the number
-- When user says "reply to email 1: sounds good" -> use "reply_email" with the number and draft the reply body based on their message
-{acct_behavior}
 Keep it real. No corporate speak. Just be helpful."""
 
-    async def process(self, user_input, tasks=None, acct_context=None):
-        """Process user input and return action."""
+    async def process(self, user_input, chat_id, tasks=None, context=None, update=None, acct_context=None):
+        """Agent loop: call Claude with tools, execute tools, repeat until text response."""
+        from bot.ai.tools import get_tool_definitions, get_accounting_tools, execute_tool
+        from bot.ai import memory
+
         if not config.ANTHROPIC_API_KEY:
-            return {"action": "fallback", "data": {}, "response": None}
+            return None  # Signal fallback to rule-based
 
         try:
-            self.conversation_history.append({
-                "role": "user",
-                "content": to_ascii(user_input) or "hello"
-            })
-
-            if len(self.conversation_history) > self.max_history * 2:
-                self.conversation_history = self.conversation_history[-self.max_history * 2:]
+            # Load conversation history + append new user message
+            messages = memory.get_history(chat_id)
+            messages.append({"role": "user", "content": user_input})
 
             system_prompt = self._get_system_prompt(tasks or [], acct_context=acct_context)
 
-            response_text, error = call_anthropic_chat(
-                system_prompt,
-                self.conversation_history,
-                max_tokens=2048
-            )
+            # Build tool list (add accounting tools if session active)
+            tools = get_tool_definitions()
+            if acct_context:
+                tools.extend(get_accounting_tools())
 
-            if error:
-                return {"action": "answer", "data": {}, "response": f"Hmm, hit a snag: {error}"}
+            max_turns = getattr(config, "AGENT_MAX_TURNS", 5)
+            response = None
 
-            if not response_text:
-                return {"action": "fallback", "data": {}, "response": None}
+            for turn in range(max_turns):
+                response, error = _call_api(system_prompt, messages, tools=tools)
 
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": response_text
-            })
+                if error:
+                    logger.error(f"Agent API error on turn {turn}: {error}")
+                    # Save what we have and return error message
+                    memory.save_turn(chat_id, "user", user_input)
+                    return f"Hmm, hit a snag: {error}"
 
-            # Parse JSON response
-            result = self._parse_ai_response(response_text)
-            return result
+                if not response or not response.content:
+                    memory.save_turn(chat_id, "user", user_input)
+                    return None
+
+                # Serialize the assistant's response for message history
+                assistant_content = []
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        assistant_content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+
+                messages.append({"role": "assistant", "content": assistant_content})
+
+                # Check for tool calls
+                tool_calls = [b for b in response.content if b.type == "tool_use"]
+                if not tool_calls:
+                    break  # Agent is done — has a text response
+
+                # Execute each tool call
+                tool_results = []
+                for call in tool_calls:
+                    logger.info(f"Agent tool call: {call.name}({json.dumps(call.input)[:200]})")
+                    result = await execute_tool(
+                        call.name, call.input, chat_id,
+                        context=context, update=update
+                    )
+                    logger.info(f"Agent tool result: {call.name} -> {json.dumps(result)[:200]}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": json.dumps(result),
+                    })
+
+                messages.append({"role": "user", "content": tool_results})
+
+            # Extract final text from response
+            text_parts = []
+            if response and response.content:
+                for block in response.content:
+                    if hasattr(block, "text") and block.text:
+                        text_parts.append(block.text)
+
+            final_text = "\n".join(text_parts) if text_parts else None
+
+            # Save conversation to persistent memory
+            memory.save_turn(chat_id, "user", user_input)
+            if final_text:
+                memory.save_turn(chat_id, "assistant", final_text)
+
+            return final_text
 
         except Exception as e:
-            return {
-                "action": "answer",
-                "data": {},
-                "response": f"Oops, something went wrong on my end"
-            }
-
-    @staticmethod
-    def _extract_json_value(text, key):
-        """Extract a JSON string value for a given key, handling escapes and truncation."""
-        import re
-        # Find "key": " pattern
-        pattern = f'"{key}"\\s*:\\s*"'
-        match = re.search(pattern, text)
-        if not match:
-            return None
-        start = match.end()
-        result = []
-        i = start
-        while i < len(text):
-            ch = text[i]
-            if ch == '\\' and i + 1 < len(text):
-                next_ch = text[i + 1]
-                if next_ch == 'n':
-                    result.append('\n')
-                elif next_ch == 't':
-                    result.append('\t')
-                else:
-                    result.append(next_ch)
-                i += 2
-            elif ch == '"':
-                break
-            else:
-                result.append(ch)
-                i += 1
-        return ''.join(result)
-
-    def _parse_ai_response(self, response_text):
-        """Parse AI response JSON with recovery for truncated/malformed output."""
-        import re
-
-        text = response_text.strip()
-
-        # Try 1: Standard JSON extraction
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                json_str = text[start:end]
-                result = json.loads(json_str)
-                return {
-                    "action": result.get("action", "answer"),
-                    "data": result.get("data", {}),
-                    "response": result.get("response", "")
-                }
-            except json.JSONDecodeError:
-                pass
-
-        # Try 2: Recovery for truncated JSON - extract fields with regex
-        action_match = re.search(r'"action"\s*:\s*"([^"]+)"', text)
-        if action_match:
-            action = action_match.group(1)
-
-            if action in ("send_email", "preview_email"):
-                to_val = self._extract_json_value(text, "to")
-                subj_val = self._extract_json_value(text, "subject")
-                body_val = self._extract_json_value(text, "body")
-                resp_val = self._extract_json_value(text, "response")
-
-                if to_val and subj_val:
-                    return {
-                        "action": action,
-                        "data": {
-                            "to": to_val,
-                            "subject": subj_val,
-                            "body": body_val or subj_val
-                        },
-                        "response": resp_val or ""
-                    }
-
-            elif action in ("read_email", "reply_email"):
-                num_match = re.search(r'"email_num"\s*:\s*(\d+)', text)
-                body_val = self._extract_json_value(text, "body")
-                resp_val = self._extract_json_value(text, "response")
-                data = {}
-                if num_match:
-                    data["email_num"] = int(num_match.group(1))
-                if body_val and action == "reply_email":
-                    data["body"] = body_val
-                return {
-                    "action": action,
-                    "data": data,
-                    "response": resp_val or ""
-                }
-
-            elif action == "save_contact":
-                name_match = re.search(r'"name"\s*:\s*"([^"]+)"', text)
-                email_match = re.search(r'"email"\s*:\s*"([^"]+)"', text)
-                phone_match = re.search(r'"phone"\s*:\s*"([^"]*)"', text)
-                resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
-
-                if name_match:
-                    return {
-                        "action": "save_contact",
-                        "data": {
-                            "name": name_match.group(1),
-                            "email": email_match.group(1) if email_match else "",
-                            "phone": phone_match.group(1) if phone_match else ""
-                        },
-                        "response": resp_match.group(1) if resp_match else ""
-                    }
-
-            elif action == "accounting_update":
-                # Try to extract the transactions array from truncated JSON
-                resp_match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-                # Find the transactions array - grab everything between [ and ]
-                txn_array_match = re.search(r'"transactions"\s*:\s*(\[.*?\])', text, re.DOTALL)
-                txn_data = []
-                if txn_array_match:
-                    try:
-                        txn_data = json.loads(txn_array_match.group(1))
-                    except json.JSONDecodeError:
-                        pass
-                return {
-                    "action": "accounting_update",
-                    "data": {"transactions": txn_data},
-                    "response": resp_match.group(1) if resp_match else ""
-                }
-
-            # Recovery for delete/done with task_nums array
-            if action in ("delete", "done"):
-                nums_match = re.search(r'"task_nums"\s*:\s*\[([^\]]*)\]', text)
-                num_match = re.search(r'"task_num"\s*:\s*(\d+)', text)
-                resp_val = self._extract_json_value(text, "response")
-                task_nums = []
-                if nums_match:
-                    task_nums = [int(n) for n in re.findall(r'\d+', nums_match.group(1))]
-                elif num_match:
-                    task_nums = [int(num_match.group(1))]
-                return {
-                    "action": action,
-                    "data": {"task_nums": task_nums} if task_nums else {},
-                    "response": resp_val or ""
-                }
-
-            # Generic recovery for other actions
-            data = {}
-            resp_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
-            return {
-                "action": action,
-                "data": data,
-                "response": resp_match.group(1) if resp_match else ""
-            }
-
-        # Fallback: treat as plain text answer
-        return {
-            "action": "answer",
-            "data": {},
-            "response": to_ascii(text)[:400]
-        }
-
-    def clear_history(self):
-        """Clear conversation history."""
-        self.conversation_history = []
+            logger.error(f"Agent loop failed: {type(e).__name__}: {e}")
+            return "Something went wrong processing that. Try again or use a /command."
 
     async def weekly_summary(self, tasks):
         """Generate brief, actionable task insights."""
@@ -549,7 +330,7 @@ Keep it conversational and SHORT - like you're texting a friend. No bullet point
             result, error = call_anthropic_chat("", [{"role": "user", "content": prompt}], max_tokens=200)
             return result if result else (error or "Couldn't analyze right now")
 
-        except Exception as e:
+        except Exception:
             return "Had trouble analyzing - try again in a sec"
 
 

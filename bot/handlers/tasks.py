@@ -9,13 +9,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Pending email drafts keyed by chat_id
-_pending_emails = {}
-
-# Undo buffer: stores last action(s) per chat_id for recovery
-# Format: {chat_id: [{"action": "delete"|"done", "task_id": "...", "title": "..."}, ...]}
-_undo_buffer = {}
-
 
 def is_authorized(user_id: int) -> bool:
     """Check if user is authorized to use the bot."""
@@ -137,353 +130,33 @@ def detect_intent(text: str) -> dict:
     return {"action": "unclear", "text": text}
 
 
-def _auto_save_email_contact(to_email: str, ai_data: dict):
-    """Auto-save a contact after a successful email send, if not already known."""
-    try:
-        from bot.services.contacts_store import contacts_store
-        logger.info(f"Auto-save contact check for: {to_email}")
-        all_contacts = contacts_store.get_all()
-        for c in all_contacts.values():
-            if c.get("email", "").lower() == to_email.lower():
-                logger.info(f"Contact already known: {to_email}")
-                return  # Already known
-
-        name = ai_data.get("recipient_name", "")
-        if not name:
-            local_part = to_email.split("@")[0]
-            name = local_part.replace(".", " ").replace("_", " ").replace("-", " ").title()
-
-        if name:
-            logger.info(f"Saving new contact: {name} -> {to_email}")
-            success = contacts_store.add_or_update_contact(name=name, email=to_email, source="auto_email")
-            if success:
-                logger.info(f"Contact saved successfully: {name}")
-            else:
-                logger.error(f"contacts_store.add_or_update_contact returned False for {name}")
-        else:
-            logger.warning(f"Could not derive name from email: {to_email}")
-    except Exception as e:
-        logger.error(f"Failed to auto-save contact for {to_email}: {type(e).__name__}: {e}")
-
-
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
-    """Process message with AI brain. Returns True if handled, False to fallback."""
+    """Process message with AI agent. Returns True if handled, False to fallback."""
     try:
         from bot.ai.brain import ai_brain
         from bot.handlers.accounting import get_session_context
         tasks = notion_service.get_tasks()
         acct_context = get_session_context(context)
-        result = await ai_brain.process(text, tasks, acct_context=acct_context)
 
-        if result["action"] == "fallback":
-            return False  # Use rule-based fallback
+        response_text = await ai_brain.process(
+            user_input=text,
+            chat_id=update.effective_chat.id,
+            tasks=tasks,
+            context=context,
+            update=update,
+            acct_context=acct_context,
+        )
 
-        action = result["action"]
-        data = result.get("data", {})
-        response = result.get("response", "")
+        if response_text is None:
+            return False  # Fallback to rule-based
 
-        if action == "add_task":
-            # Create task from AI-parsed data
-            from datetime import datetime, timedelta
-            due_date = None
-            if data.get("due_date"):
-                try:
-                    due_date = datetime.fromisoformat(data["due_date"]).date()
-                except (ValueError, TypeError):
-                    pass
-
-            reminder_time = None
-            if data.get("reminder_minutes"):
-                reminder_time = datetime.now() + timedelta(minutes=data["reminder_minutes"])
-
-            notion_service.add_task(
-                title=data.get("title", text),
-                category=data.get("category", "Personal"),
-                due_date=due_date,
-                priority=data.get("priority", "Medium"),
-                reminder_time=reminder_time
-            )
-
-            if reminder_time:
-                from bot.handlers.reminders import schedule_reminder
-                schedule_reminder(
-                    context.job_queue, update.effective_chat.id,
-                    reminder_time, {"title": data.get("title"), "priority": data.get("priority")}
-                )
-
-            await update.message.reply_text(response or f"✅ Added: {data.get('title')}")
-
-        elif action == "done":
-            # Support both task_nums (array) and legacy task_num (single)
-            task_nums = data.get("task_nums") or [data.get("task_num", 1)]
-            if isinstance(task_nums, int):
-                task_nums = [task_nums]
-            completed = []
-            undo_entries = []
-            for num in sorted(set(task_nums), reverse=True):
-                if 1 <= num <= len(tasks):
-                    task = tasks[num - 1]
-                    notion_service.mark_complete(task["id"])
-                    completed.append(task["title"])
-                    undo_entries.append({"action": "done", "task_id": task["id"], "title": task["title"]})
-            if undo_entries:
-                _undo_buffer[update.effective_chat.id] = undo_entries
-            if completed:
-                default = "✅ Done: " + ", ".join(f'"{t}"' for t in reversed(completed))
-                await update.message.reply_text(response or default)
-            else:
-                await update.message.reply_text(f"Task(s) not found.")
-
-        elif action == "delete":
-            task_nums = data.get("task_nums") or [data.get("task_num", 1)]
-            if isinstance(task_nums, int):
-                task_nums = [task_nums]
-            deleted = []
-            undo_entries = []
-            for num in sorted(set(task_nums), reverse=True):
-                if 1 <= num <= len(tasks):
-                    task = tasks[num - 1]
-                    notion_service.delete_task(task["id"])
-                    deleted.append(task["title"])
-                    undo_entries.append({"action": "delete", "task_id": task["id"], "title": task["title"]})
-            if undo_entries:
-                _undo_buffer[update.effective_chat.id] = undo_entries
-            if deleted:
-                default = "🗑️ Deleted: " + ", ".join(f'"{t}"' for t in reversed(deleted))
-                await update.message.reply_text(response or default)
-            else:
-                await update.message.reply_text(f"Task(s) not found.")
-
-        elif action == "undo":
-            entries = _undo_buffer.pop(update.effective_chat.id, None)
-            if entries:
-                restored = []
-                for entry in entries:
-                    try:
-                        notion_service.restore_task(entry["task_id"])
-                        word = "Undeleted" if entry["action"] == "delete" else "Unmarked"
-                        restored.append(f'{word}: "{entry["title"]}"')
-                    except Exception:
-                        pass
-                if restored:
-                    default = "\u21a9\ufe0f " + "\n\u21a9\ufe0f ".join(restored)
-                    await update.message.reply_text(response or default)
-                else:
-                    await update.message.reply_text("Couldn't undo that action.")
-            else:
-                await update.message.reply_text(response or "Nothing to undo.")
-
-        elif action == "list":
-            filter_type = data.get("filter", "all")
-            if filter_type == "today":
-                await handle_today(update)
-            elif filter_type == "business":
-                await handle_list(update, "Business")
-            elif filter_type == "personal":
-                await handle_list(update, "Personal")
-            else:
-                await handle_list(update, None)
-
-        elif action == "summary":
-            from bot.ai.brain import to_ascii
-            summary = await ai_brain.weekly_summary(tasks)
-            safe_summary = to_ascii(summary) if summary else "Analysis unavailable"
-            await update.message.reply_text("TASK ANALYSIS\n\n" + safe_summary)
-
-        elif action == "preview_email":
-            to_email = data.get("to", "")
-            subject = data.get("subject", "")
-            body = data.get("body", "")
-
-            if not to_email or not subject or not body:
-                await update.message.reply_text(response or "Need email address, subject, and message to send.")
-            else:
-                chat_id = update.effective_chat.id
-                _pending_emails[chat_id] = {"to": to_email, "subject": subject, "body": body}
-                preview = (
-                    f"📧 Email Draft:\n\n"
-                    f"To: {to_email}\n"
-                    f"Subject: {subject}\n\n"
-                    f"{body}\n\n"
-                    f"---\n"
-                    f"{response or 'Send it? (yes/no, or tell me what to change)'}"
-                )
-                await update.message.reply_text(preview)
-
-        elif action == "confirm_email":
-            chat_id = update.effective_chat.id
-            pending = _pending_emails.pop(chat_id, None)
-            if not pending:
-                await update.message.reply_text("No email draft to send. Tell me what to email!")
-            else:
-                from bot.services.email_service import send_email
-                to_raw = pending["to"]
-                recipients = [e.strip() for e in to_raw.replace(";", ",").split(",") if e.strip()]
-                sent = []
-                failed = []
-                for rcpt in recipients:
-                    success, msg = send_email(rcpt, pending["subject"], pending["body"])
-                    if success:
-                        sent.append(rcpt)
-                        _auto_save_email_contact(rcpt, pending)
-                    else:
-                        failed.append(f"{rcpt}: {msg}")
-                if sent and not failed:
-                    await update.message.reply_text(response or f"✉️ Email sent to {', '.join(sent)}!")
-                elif sent and failed:
-                    await update.message.reply_text(f"✉️ Sent to {', '.join(sent)}\n❌ Failed: {'; '.join(failed)}")
-                else:
-                    _pending_emails[chat_id] = pending  # Restore draft on failure
-                    await update.message.reply_text(f"Couldn't send email: {'; '.join(failed)}")
-
-        elif action == "send_email":
-            # Fallback if AI skips preview (shouldn't happen but just in case)
-            from bot.services.email_service import send_email
-            to_raw = data.get("to", "")
-            subject = data.get("subject", "")
-            body = data.get("body", "")
-
-            if not to_raw or not subject or not body:
-                await update.message.reply_text(response or "Need email address, subject, and message to send.")
-            else:
-                recipients = [e.strip() for e in to_raw.replace(";", ",").split(",") if e.strip()]
-                sent = []
-                failed = []
-                for rcpt in recipients:
-                    success, msg = send_email(rcpt, subject, body)
-                    if success:
-                        sent.append(rcpt)
-                        _auto_save_email_contact(rcpt, data)
-                    else:
-                        failed.append(f"{rcpt}: {msg}")
-                if sent and not failed:
-                    await update.message.reply_text(response or f"✉️ Email sent to {', '.join(sent)}!")
-                elif sent and failed:
-                    await update.message.reply_text(f"✉️ Sent to {', '.join(sent)}\n❌ Failed: {'; '.join(failed)}")
-                else:
-                    await update.message.reply_text(f"Couldn't send email: {'; '.join(failed)}")
-
-        elif action == "check_inbox":
-            from bot.services.email_inbox import email_inbox
-            from bot.handlers.emails import format_inbox
-            messages = email_inbox.get_recent(10)
-            formatted = format_inbox(messages)
-            reply_text = response + "\n\n" + formatted if response else formatted
-            await update.message.reply_text(reply_text)
-
-        elif action == "read_email":
-            from bot.services.email_inbox import email_inbox
-            from bot.handlers.emails import format_full_email
-            email_num = data.get("email_num", 1)
-            msg_data = email_inbox.get_message_by_num(email_num)
-            if msg_data:
-                formatted = format_full_email(msg_data)
-                reply_text = response + "\n\n" + formatted if response else formatted
-                await update.message.reply_text(reply_text)
-            else:
-                await update.message.reply_text(
-                    response or f"Email #{email_num} not found. Say 'check my email' first."
-                )
-
-        elif action == "reply_email":
-            from bot.services.email_inbox import email_inbox
-            email_num = data.get("email_num", 1)
-            reply_body = data.get("body", "")
-            if not reply_body:
-                await update.message.reply_text(response or "What should the reply say?")
-            else:
-                success, msg = email_inbox.reply_by_num(email_num, reply_body)
-                if success:
-                    await update.message.reply_text(response or f"Reply sent to email #{email_num}!")
-                else:
-                    await update.message.reply_text(f"Couldn't reply: {msg}")
-
-        elif action == "send_whatsapp":
-            from bot.services.whatsapp_service import send_whatsapp
-            to_number = data.get("to", "")
-            message = data.get("message", "")
-
-            if not to_number or not message:
-                await update.message.reply_text(response or "Need phone number and message to send.")
-            else:
-                success, msg = send_whatsapp(to_number, message)
-                if success:
-                    await update.message.reply_text(response or f"📱 WhatsApp sent to {to_number}!")
-                else:
-                    await update.message.reply_text(f"Couldn't send WhatsApp: {msg}")
-
-        elif action == "save_contact":
-            from bot.services.contacts_store import contacts_store
-            contact_name = data.get("name", "")
-            contact_email = data.get("email", "")
-            contact_phone = data.get("phone", "")
-
-            if not contact_name:
-                await update.message.reply_text(response or "Need a name to save a contact.")
-            elif not contact_email and not contact_phone:
-                await update.message.reply_text(response or "Need an email or phone number to save.")
-            else:
-                success = contacts_store.add_or_update_contact(
-                    name=contact_name, email=contact_email,
-                    phone=contact_phone, source="manual"
-                )
-                if success:
-                    await update.message.reply_text(
-                        response or f"Contact saved: {contact_name} ({contact_email or contact_phone})"
-                    )
-                else:
-                    await update.message.reply_text(f"Couldn't save contact for {contact_name}.")
-
-        elif action == "accounting_export":
-            from bot.handlers.accounting import handle_accounting_export
-            fmt = data.get("format", "excel")
-            if fmt not in ("excel", "csv", "pdf"):
-                fmt = "excel"
-            if response:
-                await update.message.reply_text(response)
-            await handle_accounting_export(update, context, fmt)
-
-        elif action == "accounting_status":
-            from bot.handlers.accounting import handle_accounting_status
-            await handle_accounting_status(update, context)
-
-        elif action == "accounting_update":
-            from bot.handlers.accounting import handle_accounting_update
-            txn_updates = data.get("transactions", [])
-            if not txn_updates:
-                await update.message.reply_text(response or "No transactions to update.")
-            else:
-                updated = await handle_accounting_update(update, context, txn_updates)
-                if updated:
-                    update_summary = "\n".join(f"  - {u}" for u in updated)
-                    msg = response or f"Updated {len(updated)} transaction(s):\n{update_summary}"
-                    await update.message.reply_text(msg)
-                else:
-                    await update.message.reply_text(
-                        response or "Couldn't find matching transactions. Check the description and try again."
-                    )
-
-        elif action == "accounting_skip":
-            from bot.handlers.accounting import _send_next_review
-            session = context.user_data.get("acct_session")
-            if session:
-                session["current_index"] = session.get("current_index", 0) + 1
-                await _send_next_review(update, context)
-            else:
-                await update.message.reply_text(response or "No active accounting session.")
-
-        elif action == "answer":
-            await update.message.reply_text(response or data.get("text", "I'm here to help!"))
-
-        else:
-            return False  # Unknown action, fallback
-
+        await update.message.reply_text(response_text)
         return True
 
     except Exception as e:
-        logger.error(f"AI message handling failed: {type(e).__name__}: {e}")
+        logger.error(f"AI agent failed: {type(e).__name__}: {e}")
         try:
-            await update.message.reply_text("Something went wrong processing that. Try again or use a /command instead.")
+            await update.message.reply_text("Something went wrong. Try again or use a /command.")
         except Exception:
             pass
         return False
@@ -548,13 +221,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_delete(update: Update, task_nums: list):
     """Delete/remove one or more tasks."""
+    from bot.ai.tools import _undo_buffer
     try:
         tasks = notion_service.get_tasks()
         deleted = []
         not_found = []
         undo_entries = []
 
-        # Process in reverse order so indices stay valid
         for num in sorted(set(task_nums), reverse=True):
             if num < 1 or num > len(tasks):
                 not_found.append(num)
@@ -564,11 +237,9 @@ async def handle_delete(update: Update, task_nums: list):
             deleted.append(task["title"])
             undo_entries.append({"action": "delete", "task_id": task["id"], "title": task["title"]})
 
-        # Save all to undo buffer
         if undo_entries:
             _undo_buffer[update.effective_chat.id] = undo_entries
 
-        # Build response
         parts = []
         if deleted:
             names = ", ".join(f'"{t}"' for t in reversed(deleted))
@@ -589,6 +260,7 @@ async def handle_delete(update: Update, task_nums: list):
 
 async def handle_done(update: Update, task_nums: list):
     """Mark one or more tasks as done."""
+    from bot.ai.tools import _undo_buffer
     try:
         tasks = notion_service.get_tasks()
         completed = []
@@ -629,6 +301,8 @@ async def handle_done(update: Update, task_nums: list):
 
 async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Undo the last delete or done action."""
+    from bot.ai.tools import _undo_buffer
+
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized to use this bot.")
         return

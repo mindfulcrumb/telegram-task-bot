@@ -61,8 +61,12 @@ GROQ_API_KEY = clean_env_value(os.getenv("GROQ_API_KEY"))
 # AI Mode: Set to "smart" to use Claude for all input processing
 AI_MODE = clean_env_value(os.getenv("AI_MODE") or "basic").lower()
 
-# Claude model for conversational AI (default: haiku for speed/cost)
-CLAUDE_MODEL = clean_env_value(os.getenv("CLAUDE_MODEL")) or "claude-3-haiku-20240307"
+# Claude model for conversational AI (default: sonnet for reliable tool use)
+CLAUDE_MODEL = clean_env_value(os.getenv("CLAUDE_MODEL")) or "claude-sonnet-4-5-20250929"
+
+# Agent settings
+AGENT_MAX_TURNS = int(os.getenv("AGENT_MAX_TURNS", "5"))
+CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "20"))
 
 # Claude model for AI categorization (default: sonnet for accuracy)
 CLAUDE_CATEGORIZER_MODEL = clean_env_value(os.getenv("CLAUDE_CATEGORIZER_MODEL")) or "claude-sonnet-4-5-20250929"
