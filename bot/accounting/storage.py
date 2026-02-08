@@ -55,6 +55,48 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE INDEX IF NOT EXISTS idx_rules_pattern ON category_rules(pattern);
 CREATE INDEX IF NOT EXISTS idx_transactions_session ON transactions(session_id);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT DEFAULT '',
+    vendor_name TEXT NOT NULL,
+    vendor_nif TEXT DEFAULT '',
+    invoice_number TEXT DEFAULT '',
+    invoice_date TEXT DEFAULT '',
+    due_date TEXT DEFAULT '',
+    subtotal REAL DEFAULT 0.0,
+    total_iva REAL DEFAULT 0.0,
+    total REAL DEFAULT 0.0,
+    category TEXT DEFAULT '',
+    note TEXT DEFAULT '',
+    confidence TEXT DEFAULT 'unknown',
+    source_type TEXT DEFAULT 'pdf',
+    source_filename TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS invoice_line_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    quantity REAL DEFAULT 1.0,
+    unit_price REAL DEFAULT 0.0,
+    iva_rate REAL DEFAULT 0.0,
+    iva_amount REAL DEFAULT 0.0,
+    total REAL DEFAULT 0.0,
+    line_index INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS invoice_iva_breakdown (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+    rate REAL DEFAULT 0.0,
+    base_amount REAL DEFAULT 0.0,
+    iva_amount REAL DEFAULT 0.0
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_session ON invoices(session_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_line_items(invoice_id);
 """
 
 # Extra columns added after initial schema
@@ -320,3 +362,142 @@ def update_session_review_state(session_id: str, current_index: int, reviewed_co
         (current_index, reviewed_count, session_id),
     )
     conn.commit()
+
+
+# --- Invoice storage ---
+
+
+def save_invoice(invoice) -> int:
+    """Save an invoice with line items and IVA breakdown. Returns the DB id."""
+    from bot.accounting.invoice_models import Invoice
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """INSERT INTO invoices
+           (session_id, vendor_name, vendor_nif, invoice_number, invoice_date,
+            due_date, subtotal, total_iva, total, category, note, confidence,
+            source_type, source_filename)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (invoice.session_id, invoice.vendor_name, invoice.vendor_nif,
+         invoice.invoice_number, invoice.invoice_date, invoice.due_date,
+         invoice.subtotal, invoice.total_iva, invoice.total,
+         invoice.category or "", invoice.note or "", invoice.confidence,
+         invoice.source_type, invoice.source_filename),
+    )
+    invoice_id = cursor.lastrowid
+
+    for item in invoice.line_items:
+        conn.execute(
+            """INSERT INTO invoice_line_items
+               (invoice_id, description, quantity, unit_price, iva_rate, iva_amount, total, line_index)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (invoice_id, item.description, item.quantity, item.unit_price,
+             item.iva_rate, item.iva_amount, item.total, item.line_index),
+        )
+
+    for b in invoice.iva_breakdown:
+        conn.execute(
+            """INSERT INTO invoice_iva_breakdown (invoice_id, rate, base_amount, iva_amount)
+               VALUES (?, ?, ?, ?)""",
+            (invoice_id, b.rate, b.base_amount, b.iva_amount),
+        )
+
+    conn.commit()
+    logger.info(f"Saved invoice #{invoice_id}: {invoice.vendor_name} / {invoice.total:.2f} EUR")
+    return invoice_id
+
+
+def load_invoice(invoice_id: int):
+    """Load a single invoice by ID with line items and IVA breakdown."""
+    from bot.accounting.invoice_models import Invoice, InvoiceLineItem, IVABreakdown
+    conn = get_connection()
+
+    row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+    if not row:
+        return None
+
+    items = conn.execute(
+        "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY line_index",
+        (invoice_id,),
+    ).fetchall()
+
+    iva_rows = conn.execute(
+        "SELECT * FROM invoice_iva_breakdown WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchall()
+
+    return Invoice(
+        vendor_name=row["vendor_name"],
+        vendor_nif=row["vendor_nif"],
+        invoice_number=row["invoice_number"],
+        invoice_date=row["invoice_date"],
+        due_date=row["due_date"] or "",
+        subtotal=row["subtotal"],
+        total_iva=row["total_iva"],
+        total=row["total"],
+        category=row["category"] or None,
+        note=row["note"] or None,
+        confidence=row["confidence"] or "unknown",
+        source_type=row["source_type"] or "pdf",
+        source_filename=row["source_filename"] or "",
+        session_id=row["session_id"] or "",
+        id=row["id"],
+        line_items=[
+            InvoiceLineItem(
+                description=i["description"], quantity=i["quantity"],
+                unit_price=i["unit_price"], iva_rate=i["iva_rate"],
+                iva_amount=i["iva_amount"], total=i["total"],
+                line_index=i["line_index"],
+            )
+            for i in items
+        ],
+        iva_breakdown=[
+            IVABreakdown(rate=b["rate"], base_amount=b["base_amount"], iva_amount=b["iva_amount"])
+            for b in iva_rows
+        ],
+    )
+
+
+def load_recent_invoices(limit: int = 20) -> list:
+    """Load recent invoices (without line items for listing)."""
+    from bot.accounting.invoice_models import Invoice
+    conn = get_connection()
+
+    rows = conn.execute(
+        "SELECT * FROM invoices ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+
+    return [
+        Invoice(
+            vendor_name=r["vendor_name"], vendor_nif=r["vendor_nif"],
+            invoice_number=r["invoice_number"], invoice_date=r["invoice_date"],
+            due_date=r["due_date"] or "", subtotal=r["subtotal"],
+            total_iva=r["total_iva"], total=r["total"],
+            category=r["category"] or None, note=r["note"] or None,
+            confidence=r["confidence"] or "unknown",
+            source_type=r["source_type"] or "pdf",
+            source_filename=r["source_filename"] or "",
+            session_id=r["session_id"] or "", id=r["id"],
+        )
+        for r in rows
+    ]
+
+
+def update_invoice_field(invoice_id: int, field: str, value):
+    """Update a single field on an invoice."""
+    allowed = {"category", "note", "vendor_name", "vendor_nif", "invoice_number",
+               "invoice_date", "due_date", "total", "subtotal", "total_iva", "confidence"}
+    if field not in allowed:
+        logger.warning(f"Attempted to update disallowed invoice field: {field}")
+        return
+    conn = get_connection()
+    conn.execute(f"UPDATE invoices SET {field} = ? WHERE id = ?", (value, invoice_id))
+    conn.commit()
+
+
+def delete_invoice(invoice_id: int):
+    """Delete an invoice and its line items (cascade)."""
+    conn = get_connection()
+    conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+    conn.commit()
+    logger.info(f"Deleted invoice #{invoice_id}")

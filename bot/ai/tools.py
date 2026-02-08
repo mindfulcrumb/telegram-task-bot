@@ -1,7 +1,9 @@
 """Tool definitions and executor for the agent loop."""
 import json
 import logging
+import tempfile
 from datetime import datetime, date
+from pathlib import Path
 
 import config
 
@@ -254,6 +256,68 @@ def get_accounting_tools() -> list:
     ]
 
 
+def get_invoice_tools() -> list:
+    """Return invoice-specific tools (added when invoice data exists)."""
+    return [
+        {
+            "name": "get_invoice_status",
+            "description": "Show details of the most recently scanned invoice.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "list_invoices",
+            "description": "List all stored invoices with their totals and categories.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max invoices to show (default 10)"}
+                }
+            }
+        },
+        {
+            "name": "update_invoice",
+            "description": "Update fields on an invoice (category, vendor name, total, date, note, etc).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "invoice_id": {"type": "integer", "description": "Invoice DB id (from list_invoices or get_invoice_status)"},
+                    "updates": {
+                        "type": "object",
+                        "description": "Fields to update. Keys: category, note, vendor_name, invoice_number, invoice_date, total, subtotal, total_iva",
+                    }
+                },
+                "required": ["invoice_id", "updates"]
+            }
+        },
+        {
+            "name": "delete_invoice",
+            "description": "Delete an invoice by its ID.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "invoice_id": {"type": "integer", "description": "Invoice DB id to delete"}
+                },
+                "required": ["invoice_id"]
+            }
+        },
+        {
+            "name": "export_invoices",
+            "description": "Export all stored invoices as Excel or CSV file.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["excel", "csv"],
+                        "description": "Export format"
+                    }
+                },
+                "required": ["format"]
+            }
+        },
+    ]
+
+
 # ── Tool Executor ────────────────────────────────────────────────────────────
 
 async def execute_tool(name: str, args: dict, chat_id: int, context=None, update=None) -> dict:
@@ -293,6 +357,16 @@ async def execute_tool(name: str, args: dict, chat_id: int, context=None, update
             return await _exec_update_transactions(args, context, update)
         elif name == "skip_transaction":
             return await _exec_skip_transaction(context, update)
+        elif name == "get_invoice_status":
+            return await _exec_invoice_status(context, update)
+        elif name == "list_invoices":
+            return await _exec_list_invoices(args)
+        elif name == "update_invoice":
+            return await _exec_update_invoice(args, context)
+        elif name == "delete_invoice":
+            return await _exec_delete_invoice(args)
+        elif name == "export_invoices":
+            return await _exec_export_invoices(args, context, update)
         else:
             return {"error": f"Unknown tool: {name}"}
     except Exception as e:
@@ -568,3 +642,127 @@ async def _exec_skip_transaction(context, update) -> dict:
         await _send_next_review(update, context)
         return {"success": True}
     return {"error": "No active accounting session."}
+
+
+# ── Invoice Tool Implementations ─────────────────────────────────────────────
+
+
+async def _exec_invoice_status(context, update) -> dict:
+    session = context.user_data.get("invoice_session")
+    if not session:
+        return {"error": "No active invoice session. Upload a PDF or photo first."}
+
+    invoice = session["invoice"]
+    result = {
+        "id": invoice.id,
+        "vendor": invoice.vendor_name,
+        "nif": invoice.vendor_nif,
+        "number": invoice.invoice_number,
+        "date": invoice.invoice_date,
+        "subtotal": invoice.subtotal,
+        "total_iva": invoice.total_iva,
+        "total": invoice.total,
+        "category": invoice.category or "uncategorized",
+        "note": invoice.note or "",
+        "confidence": invoice.confidence,
+        "line_items_count": len(invoice.line_items),
+    }
+    if invoice.iva_breakdown:
+        result["iva_breakdown"] = [
+            {"rate": b.rate, "base": b.base_amount, "iva": b.iva_amount}
+            for b in invoice.iva_breakdown
+        ]
+    if invoice.line_items:
+        result["line_items"] = [
+            {"description": item.description, "qty": item.quantity,
+             "unit_price": item.unit_price, "iva_rate": item.iva_rate, "total": item.total}
+            for item in invoice.line_items
+        ]
+    return result
+
+
+async def _exec_list_invoices(args: dict) -> dict:
+    from bot.accounting import storage as acct_db
+    limit = args.get("limit", 10)
+    invoices = acct_db.load_recent_invoices(limit)
+    if not invoices:
+        return {"invoices": [], "message": "No invoices stored yet."}
+    return {
+        "invoices": [
+            {"id": inv.id, "vendor": inv.vendor_name, "number": inv.invoice_number,
+             "date": inv.invoice_date, "total": inv.total,
+             "category": inv.category or "uncategorized"}
+            for inv in invoices
+        ],
+        "count": len(invoices),
+    }
+
+
+async def _exec_update_invoice(args: dict, context) -> dict:
+    from bot.accounting import storage as acct_db
+    invoice_id = args["invoice_id"]
+    updates = args.get("updates", {})
+
+    allowed = {"category", "note", "vendor_name", "vendor_nif", "invoice_number",
+               "invoice_date", "total", "subtotal", "total_iva"}
+    applied = {}
+    for field, value in updates.items():
+        if field in allowed:
+            acct_db.update_invoice_field(invoice_id, field, value)
+            applied[field] = value
+            # If updating category, also set confidence to 'user'
+            if field == "category":
+                acct_db.update_invoice_field(invoice_id, "confidence", "user")
+
+    # Update in-memory session if it's the current invoice
+    session = context.user_data.get("invoice_session")
+    if session and session["invoice"].id == invoice_id:
+        for field, value in applied.items():
+            setattr(session["invoice"], field, value)
+        if "category" in applied:
+            session["invoice"].confidence = "user"
+
+    return {"updated": applied} if applied else {"error": "No valid fields to update."}
+
+
+async def _exec_delete_invoice(args: dict) -> dict:
+    from bot.accounting import storage as acct_db
+    invoice_id = args["invoice_id"]
+    acct_db.delete_invoice(invoice_id)
+    return {"success": True, "deleted_id": invoice_id}
+
+
+async def _exec_export_invoices(args: dict, context, update) -> dict:
+    from bot.accounting.invoice_export import export_invoices_excel, export_invoices_csv
+    from bot.accounting import storage as acct_db
+
+    fmt = args.get("format", "excel")
+    invoices = acct_db.load_recent_invoices(100)
+    if not invoices:
+        return {"error": "No invoices to export."}
+
+    # Load full invoice data with line items for export
+    full_invoices = []
+    for inv in invoices:
+        full = acct_db.load_invoice(inv.id)
+        if full:
+            full_invoices.append(full)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            if fmt == "csv":
+                out = Path(tmp_dir) / "faturas_export.csv"
+                export_invoices_csv(full_invoices, out)
+            else:
+                out = Path(tmp_dir) / "faturas_export.xlsx"
+                export_invoices_excel(full_invoices, out)
+
+            with open(out, "rb") as f:
+                await update.effective_chat.send_document(
+                    document=f, filename=out.name,
+                    caption=f"Export de {len(full_invoices)} faturas",
+                )
+        return {"success": True, "format": fmt, "count": len(full_invoices)}
+    except Exception as e:
+        logger.error(f"Invoice export error: {e}", exc_info=True)
+        return {"error": f"Export failed: {str(e)[:100]}"}

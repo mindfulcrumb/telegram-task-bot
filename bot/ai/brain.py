@@ -174,9 +174,11 @@ class AIBrain:
         if acct_context:
             acct_section = f"""
 
-ACCOUNTING SESSION ACTIVE:
+ACCOUNTING/INVOICE DATA ACTIVE:
 {acct_context}
-The user has a bank reconciliation session open. If their message relates to accounting (export, status, categories, transactions, skip), use the accounting tools.
+The user has accounting data loaded. If their message relates to accounting, invoices, categories, transactions, or exports, use the appropriate tools.
+For reconciliation: use export_accounting, get_accounting_status, update_transactions, skip_transaction.
+For invoices: use get_invoice_status, list_invoices, update_invoice, delete_invoice, export_invoices.
 Valid category keys: fornecedor, transportes, alimentacao, software, combustivel, viagens, material_escritorio, marketing, servicos_profissionais, saude, aluguer, suprimentos, transferencia, receita_vendas, estacionamento, telecomunicacoes, seguros, impostos, formacao, entretenimento, limpeza, manutencao, honorarios, outros
 """
 
@@ -214,7 +216,7 @@ Keep it real. No corporate speak. Just be helpful."""
 
     async def process(self, user_input, chat_id, tasks=None, context=None, update=None, acct_context=None):
         """Agent loop: call Claude with tools, execute tools, repeat until text response."""
-        from bot.ai.tools import get_tool_definitions, get_accounting_tools, execute_tool
+        from bot.ai.tools import get_tool_definitions, get_accounting_tools, get_invoice_tools, execute_tool
         from bot.ai import memory
 
         if not config.ANTHROPIC_API_KEY:
@@ -227,10 +229,11 @@ Keep it real. No corporate speak. Just be helpful."""
 
             system_prompt = self._get_system_prompt(tasks or [], acct_context=acct_context)
 
-            # Build tool list (add accounting tools if session active)
+            # Build tool list (add accounting/invoice tools if session active)
             tools = get_tool_definitions()
             if acct_context:
                 tools.extend(get_accounting_tools())
+                tools.extend(get_invoice_tools())
 
             max_turns = getattr(config, "AGENT_MAX_TURNS", 5)
             response = None

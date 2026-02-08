@@ -35,6 +35,7 @@ from bot.handlers.accounting import (
     cmd_acct_export,
     cmd_acct_skip,
     handle_pdf_upload,
+    handle_photo_upload,
     handle_acct_callback,
 )
 from bot.accounting import storage as acct_db
@@ -105,8 +106,11 @@ def main():
     application.add_handler(CommandHandler("acct_export", cmd_acct_export))
     application.add_handler(CommandHandler("acct_skip", cmd_acct_skip))
 
-    # PDF document handler (for accounting reconciliation)
+    # PDF document handler (for accounting reconciliation + invoices)
     application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf_upload))
+
+    # Photo handler (for invoice scanning)
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo_upload))
 
     # Inline keyboard callback handler (for accounting category selection)
     application.add_handler(CallbackQueryHandler(handle_acct_callback))

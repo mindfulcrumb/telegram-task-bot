@@ -1,6 +1,6 @@
-"""Telegram handlers for accounting reconciliation.
+"""Telegram handlers for accounting reconciliation and invoice scanning.
 
-Adds PDF upload, auto-categorization, interactive review, and export
+Adds PDF upload, photo upload, auto-categorization, interactive review, and export
 to the existing task bot.
 """
 
@@ -10,6 +10,7 @@ import os
 import uuid
 import logging
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -143,20 +144,40 @@ async def cmd_acct_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_next_review(update, context)
 
 
+# --- PDF Type Detection ---
+
+
+def _detect_pdf_type(pdf_path: str) -> str:
+    """Detect if PDF is a bank reconciliation or an invoice."""
+    import pdfplumber
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if not pdf.pages:
+                return "invoice"
+            text = (pdf.pages[0].extract_text() or "").lower()
+            reconciliation_markers = [
+                "reconcilia", "saldo do extrato", "toconline",
+                "movimentos a debito no banco", "movimentos a credito no banco",
+            ]
+            if any(marker in text for marker in reconciliation_markers):
+                return "reconciliation"
+    except Exception:
+        pass
+    return "invoice"
+
+
 # --- Document Upload ---
 
 
 async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle uploaded PDF documents for reconciliation."""
+    """Handle uploaded PDF documents - detect type and route accordingly."""
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Acesso nao autorizado.")
         return
 
     document = update.message.document
     if not document.file_name.lower().endswith(".pdf"):
-        return  # Not a PDF, let other handlers deal with it
-
-    await update.message.reply_text("A processar o PDF de reconciliacao... Um momento.")
+        return
 
     tmp_path = None
     try:
@@ -165,77 +186,160 @@ async def handle_pdf_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await file.download_to_drive(tmp.name)
             tmp_path = tmp.name
 
-        result = parse_reconciliation_pdf(tmp_path)
+        pdf_type = _detect_pdf_type(tmp_path)
 
-        if not result.all_transactions:
-            await update.message.reply_text(
-                "Nao encontrei transacoes neste PDF. "
-                "Verifica se e um relatorio de reconciliacao do TOConline."
-            )
-            return
-
-        # Categorize with rules
-        all_txns = result.all_transactions
-        categorized, uncategorized = categorize_batch(all_txns)
-
-        # AI categorization for unknowns
-        if uncategorized and config.ANTHROPIC_API_KEY:
-            await update.message.reply_text(
-                f"A pedir ajuda a IA para {len(uncategorized)} transacoes..."
-            )
-            categorize_with_ai(uncategorized)
-            still_unknown = [t for t in uncategorized if t.confidence == "unknown"]
-            ai_done = [t for t in uncategorized if t.confidence == "ai"]
+        if pdf_type == "reconciliation":
+            await _handle_reconciliation_pdf(update, context, tmp_path, document.file_name)
         else:
-            still_unknown = uncategorized
-            ai_done = []
-
-        # Save session to memory AND SQLite (persists across bot restarts)
-        session_id = str(uuid.uuid4())[:8]
-        acct_db.save_full_session(session_id, document.file_name, result)
-
-        context.user_data["acct_session"] = {
-            "id": session_id,
-            "filename": document.file_name,
-            "result": result,
-            "pending_review": still_unknown,
-            "current_index": 0,
-            "reviewed_count": 0,
-        }
-
-        summary = (
-            f"PDF processado: {document.file_name}\n\n"
-            f"Total transacoes: {len(all_txns)}\n"
-            f"  Debitos banco: {len(result.debit_transactions)}\n"
-            f"  Creditos banco: {len(result.credit_transactions)}\n"
-            f"  Debitos empresa: {len(result.company_debits)}\n"
-            f"  Creditos empresa: {len(result.company_credits)}\n\n"
-            f"Auto-categorizadas (regras): {len(categorized)}\n"
-            f"Categorizadas por IA: {len(ai_done)}\n"
-            f"Precisam revisao manual: {len(still_unknown)}"
-        )
-        if result.bank_balance is not None:
-            summary += f"\n\nSaldo bancario: {result.bank_balance:.2f} EUR"
-        if result.difference is not None:
-            summary += f"\nDiferenca: {result.difference:.2f} EUR"
-
-        await update.message.reply_text(summary)
-
-        if still_unknown:
-            await update.message.reply_text(
-                "Vou mostrar-te as transacoes nao categorizadas. Escolhe a categoria:"
-            )
-            await _send_next_review(update, context)
-        else:
-            await update.message.reply_text(
-                "Todas as transacoes foram categorizadas!\n"
-                "Usa /acct_export para gerar o ficheiro.",
-                reply_markup=_export_keyboard(),
-            )
+            await _handle_invoice_pdf(update, context, tmp_path, document.file_name)
 
     except Exception as e:
         logger.error(f"Error processing PDF: {e}", exc_info=True)
         await update.message.reply_text(f"Erro ao processar o PDF: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+async def _handle_reconciliation_pdf(update, context, tmp_path, filename):
+    """Process a bank reconciliation PDF (TOConline format)."""
+    await update.message.reply_text("A processar o PDF de reconciliacao... Um momento.")
+
+    result = parse_reconciliation_pdf(tmp_path)
+
+    if not result.all_transactions:
+        await update.message.reply_text(
+            "Nao encontrei transacoes neste PDF. "
+            "Verifica se e um relatorio de reconciliacao do TOConline."
+        )
+        return
+
+    all_txns = result.all_transactions
+    categorized, uncategorized = categorize_batch(all_txns)
+
+    if uncategorized and config.ANTHROPIC_API_KEY:
+        await update.message.reply_text(
+            f"A pedir ajuda a IA para {len(uncategorized)} transacoes..."
+        )
+        categorize_with_ai(uncategorized)
+        still_unknown = [t for t in uncategorized if t.confidence == "unknown"]
+        ai_done = [t for t in uncategorized if t.confidence == "ai"]
+    else:
+        still_unknown = uncategorized
+        ai_done = []
+
+    session_id = str(uuid.uuid4())[:8]
+    acct_db.save_full_session(session_id, filename, result)
+
+    context.user_data["acct_session"] = {
+        "id": session_id,
+        "filename": filename,
+        "result": result,
+        "pending_review": still_unknown,
+        "current_index": 0,
+        "reviewed_count": 0,
+    }
+
+    summary = (
+        f"PDF processado: {filename}\n\n"
+        f"Total transacoes: {len(all_txns)}\n"
+        f"  Debitos banco: {len(result.debit_transactions)}\n"
+        f"  Creditos banco: {len(result.credit_transactions)}\n"
+        f"  Debitos empresa: {len(result.company_debits)}\n"
+        f"  Creditos empresa: {len(result.company_credits)}\n\n"
+        f"Auto-categorizadas (regras): {len(categorized)}\n"
+        f"Categorizadas por IA: {len(ai_done)}\n"
+        f"Precisam revisao manual: {len(still_unknown)}"
+    )
+    if result.bank_balance is not None:
+        summary += f"\n\nSaldo bancario: {result.bank_balance:.2f} EUR"
+    if result.difference is not None:
+        summary += f"\nDiferenca: {result.difference:.2f} EUR"
+
+    await update.message.reply_text(summary)
+
+    if still_unknown:
+        await update.message.reply_text(
+            "Vou mostrar-te as transacoes nao categorizadas. Escolhe a categoria:"
+        )
+        await _send_next_review(update, context)
+    else:
+        await update.message.reply_text(
+            "Todas as transacoes foram categorizadas!\n"
+            "Usa /acct_export para gerar o ficheiro.",
+            reply_markup=_export_keyboard(),
+        )
+
+
+async def _handle_invoice_pdf(update, context, tmp_path, filename):
+    """Process an invoice PDF using Claude vision."""
+    await update.message.reply_text("A processar a fatura... Analisando com IA.")
+
+    from bot.accounting.invoice_parser import parse_invoice_pdf
+
+    invoice = parse_invoice_pdf(tmp_path)
+    invoice.source_type = "pdf"
+    invoice.source_filename = filename
+    invoice.session_id = str(uuid.uuid4())[:8]
+
+    _auto_categorize_invoice(invoice)
+
+    invoice.id = acct_db.save_invoice(invoice)
+
+    context.user_data["invoice_session"] = {
+        "invoice": invoice,
+        "id": invoice.session_id,
+    }
+
+    summary = _format_invoice_summary(invoice)
+    await update.message.reply_text(summary)
+
+
+# --- Photo Upload (Invoices) ---
+
+
+async def handle_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle uploaded photos - assumed to be invoices."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Acesso nao autorizado.")
+        return
+
+    photo = update.message.photo[-1]  # highest resolution
+
+    await update.message.reply_text("A processar a foto da fatura... Analisando com IA.")
+
+    tmp_path = None
+    try:
+        file = await context.bot.get_file(photo.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            await file.download_to_drive(tmp.name)
+            tmp_path = tmp.name
+
+        from bot.accounting.invoice_parser import parse_invoice_image
+
+        invoice = parse_invoice_image(tmp_path)
+        invoice.source_type = "photo"
+        invoice.source_filename = f"photo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        invoice.session_id = str(uuid.uuid4())[:8]
+
+        _auto_categorize_invoice(invoice)
+
+        invoice.id = acct_db.save_invoice(invoice)
+
+        context.user_data["invoice_session"] = {
+            "invoice": invoice,
+            "id": invoice.session_id,
+        }
+
+        summary = _format_invoice_summary(invoice)
+        await update.message.reply_text(summary)
+
+    except Exception as e:
+        logger.error(f"Error processing photo invoice: {e}", exc_info=True)
+        await update.message.reply_text(f"Erro ao processar a foto: {str(e)}")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -524,8 +628,142 @@ def _try_restore_session(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
     return None
 
 
+# --- Invoice Helpers ---
+
+
+def _auto_categorize_invoice(invoice):
+    """Try to categorize invoice using vendor name against existing rules."""
+    rules = acct_db.get_all_rules()
+    vendor_lower = invoice.vendor_name.lower()
+
+    for rule in rules:
+        pattern_lower = rule.pattern.lower()
+        matched = False
+        if rule.match_type == "contains" and pattern_lower in vendor_lower:
+            matched = True
+        elif rule.match_type == "exact" and pattern_lower == vendor_lower:
+            matched = True
+
+        if matched:
+            invoice.category = rule.category
+            invoice.note = rule.note_template
+            invoice.confidence = "rule"
+            if rule.id is not None:
+                acct_db.increment_rule_match(rule.id)
+            return
+
+    # AI categorization fallback
+    if config.ANTHROPIC_API_KEY:
+        _ai_categorize_invoice(invoice)
+
+
+def _ai_categorize_invoice(invoice):
+    """Use Claude to suggest a category for an invoice."""
+    import json
+    from anthropic import Anthropic
+
+    categories = get_categories()
+    cat_list = "\n".join(f"- {key}: {display}" for key, display in categories.items())
+
+    items_text = "\n".join(
+        f"  - {item.description} ({item.total:.2f} EUR)"
+        for item in invoice.line_items
+    ) if invoice.line_items else "  (no line items)"
+
+    prompt = f"""Categorize this invoice from a Portuguese business.
+
+Vendor: {invoice.vendor_name}
+NIF: {invoice.vendor_nif}
+Total: {invoice.total:.2f} EUR
+Items:
+{items_text}
+
+Available categories:
+{cat_list}
+
+Return ONLY a JSON object: {{"category": "key", "note": "brief note in Portuguese (max 50 chars)"}}"""
+
+    try:
+        client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=getattr(config, "CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        if "```" in text:
+            json_part = text.split("```")[1]
+            if json_part.startswith("json"):
+                json_part = json_part[4:]
+            text = json_part.strip()
+
+        result = json.loads(text)
+        invoice.category = result.get("category", "outros")
+        invoice.note = result.get("note", "")
+        invoice.confidence = "ai"
+        logger.info(f"AI categorized invoice: {invoice.vendor_name} -> {invoice.category}")
+    except Exception as e:
+        logger.error(f"AI invoice categorization failed: {e}")
+
+
+def _format_invoice_summary(invoice) -> str:
+    """Format invoice data for Telegram display."""
+    categories = get_categories()
+    cat_display = categories.get(invoice.category, "Sem Categoria") if invoice.category else "Sem Categoria"
+    confidence_map = {"rule": "Auto (regra)", "ai": "IA", "user": "Manual", "unknown": "Nao categorizado"}
+
+    text = (
+        f"Fatura processada!\n\n"
+        f"Fornecedor: {invoice.vendor_name}\n"
+        f"NIF: {invoice.vendor_nif}\n"
+        f"Fatura N.: {invoice.invoice_number}\n"
+        f"Data: {invoice.invoice_date}\n\n"
+    )
+
+    if invoice.line_items:
+        text += f"Itens ({len(invoice.line_items)}):\n"
+        for item in invoice.line_items:
+            text += f"  - {item.description}: {item.total:.2f} EUR (IVA {item.iva_rate}%)\n"
+        text += "\n"
+
+    text += f"Subtotal: {invoice.subtotal:.2f} EUR\n"
+    text += f"IVA: {invoice.total_iva:.2f} EUR\n"
+
+    if invoice.iva_breakdown:
+        for b in invoice.iva_breakdown:
+            text += f"  IVA {b.rate}%: {b.iva_amount:.2f} EUR (base: {b.base_amount:.2f})\n"
+
+    text += (
+        f"Total: {invoice.total:.2f} EUR\n\n"
+        f"Categoria: {cat_display} [{confidence_map.get(invoice.confidence, invoice.confidence)}]\n"
+        f"ID: #{invoice.id}\n\n"
+        "Podes dizer-me para alterar a categoria, corrigir valores, ou exportar."
+    )
+    return text
+
+
+# --- Session Context for AI Brain ---
+
+
 def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
-    """Get accounting session context string for the AI brain. Returns None if no active session."""
+    """Get accounting/invoice session context for the AI brain."""
+    parts = []
+
+    # Reconciliation context
+    recon_ctx = _get_reconciliation_context(context)
+    if recon_ctx:
+        parts.append(recon_ctx)
+
+    # Invoice context
+    inv_ctx = _get_invoice_context(context)
+    if inv_ctx:
+        parts.append(inv_ctx)
+
+    return "\n\n".join(parts) if parts else None
+
+
+def _get_reconciliation_context(context) -> str | None:
+    """Build reconciliation context string."""
     session = _try_restore_session(context)
     if not session:
         return None
@@ -537,7 +775,7 @@ def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     remaining = max(0, len(pending) - current_idx)
 
     text = (
-        f"ACTIVE ACCOUNTING SESSION:\n"
+        f"ACTIVE RECONCILIATION SESSION:\n"
         f"- File: {session.get('filename', '?')}\n"
         f"- Total transactions: {len(result.all_transactions)}\n"
         f"- Categorized: {len(result.categorized)}\n"
@@ -549,7 +787,6 @@ def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     if result.difference is not None:
         text += f"\n- Difference: {result.difference:.2f} EUR"
 
-    # Include actual transaction data so AI can see and modify them
     categories = get_categories()
     all_txns = result.all_transactions
     text += f"\n\nTRANSACTION LIST ({len(all_txns)} total):\n"
@@ -561,5 +798,49 @@ def get_session_context(context: ContextTypes.DEFAULT_TYPE) -> str | None:
             f"{'Debito' if txn.type == 'debit' else 'Credito'} | "
             f"Cat: {cat_display}{note_str} | [{txn.confidence}]\n"
         )
+
+    return text
+
+
+def _get_invoice_context(context) -> str | None:
+    """Build invoice context string for the AI brain."""
+    session = context.user_data.get("invoice_session")
+    if not session:
+        return None
+
+    invoice = session["invoice"]
+    categories = get_categories()
+    cat_display = categories.get(invoice.category, invoice.category) if invoice.category else "SEM CATEGORIA"
+
+    text = (
+        f"ACTIVE INVOICE:\n"
+        f"- Vendor: {invoice.vendor_name}\n"
+        f"- NIF: {invoice.vendor_nif}\n"
+        f"- Invoice #: {invoice.invoice_number}\n"
+        f"- Date: {invoice.invoice_date}\n"
+        f"- Subtotal: {invoice.subtotal:.2f} EUR\n"
+        f"- IVA Total: {invoice.total_iva:.2f} EUR\n"
+        f"- Total: {invoice.total:.2f} EUR\n"
+        f"- Category: {cat_display}\n"
+        f"- DB ID: {invoice.id}\n"
+    )
+
+    if invoice.line_items:
+        text += "\nLINE ITEMS:\n"
+        for item in invoice.line_items:
+            text += f"  - {item.description}: {item.quantity}x {item.unit_price:.2f} + IVA {item.iva_rate}% = {item.total:.2f} EUR\n"
+
+    if invoice.iva_breakdown:
+        text += "\nIVA BREAKDOWN:\n"
+        for b in invoice.iva_breakdown:
+            text += f"  - {b.rate}%: base {b.base_amount:.2f} | IVA {b.iva_amount:.2f} EUR\n"
+
+    # Also list recent invoices
+    recent = acct_db.load_recent_invoices(5)
+    if recent:
+        text += f"\nRECENT INVOICES ({len(recent)}):\n"
+        for inv in recent:
+            cat = categories.get(inv.category, inv.category) if inv.category else "?"
+            text += f"  ID#{inv.id}: {inv.vendor_name} | {inv.invoice_date} | {inv.total:.2f} EUR | {cat}\n"
 
     return text
