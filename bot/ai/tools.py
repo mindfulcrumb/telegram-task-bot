@@ -196,6 +196,34 @@ def get_tool_definitions() -> list:
         },
     ])
 
+    # ── GitHub tools (only if configured) ────────────────────────────
+    if config.GITHUB_TOKEN:
+        tools.extend([
+            {
+                "name": "create_github_issue",
+                "description": "Create a GitHub issue on one of the user's repos. Use this when the user wants to file a bug, request a feature, or create a coding task on a project.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {"type": "string", "description": "Repository name (e.g., 'telegram-task-bot', 'terracota-closing_data', 'protocol')"},
+                        "title": {"type": "string", "description": "Issue title"},
+                        "body": {"type": "string", "description": "Issue description/body in markdown"},
+                        "labels": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Labels to apply (e.g., ['bug'], ['enhancement'], ['claude']). Optional."
+                        }
+                    },
+                    "required": ["repo", "title"]
+                }
+            },
+            {
+                "name": "list_github_repos",
+                "description": "List the user's GitHub repositories. Use this to see what repos are available before creating issues.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+        ])
+
     # ── Accounting tools (only if session active — added dynamically) ─
     # These are added at call time by brain.py if an accounting session is active
 
@@ -367,6 +395,10 @@ async def execute_tool(name: str, args: dict, chat_id: int, context=None, update
             return await _exec_delete_invoice(args)
         elif name == "export_invoices":
             return await _exec_export_invoices(args, context, update)
+        elif name == "create_github_issue":
+            return await _exec_create_github_issue(args)
+        elif name == "list_github_repos":
+            return await _exec_list_github_repos()
         else:
             return {"error": f"Unknown tool: {name}"}
     except Exception as e:
@@ -766,3 +798,92 @@ async def _exec_export_invoices(args: dict, context, update) -> dict:
     except Exception as e:
         logger.error(f"Invoice export error: {e}", exc_info=True)
         return {"error": f"Export failed: {str(e)[:100]}"}
+
+
+# ── GitHub Tool Implementations ──────────────────────────────────────────────
+
+
+async def _exec_create_github_issue(args: dict) -> dict:
+    import urllib.request
+    import urllib.error
+
+    token = config.GITHUB_TOKEN
+    owner = config.GITHUB_OWNER
+    if not token or not owner:
+        return {"error": "GitHub not configured. Set GITHUB_TOKEN and GITHUB_OWNER env vars."}
+
+    repo = args["repo"]
+    title = args["title"]
+    body = args.get("body", "")
+    labels = args.get("labels", [])
+
+    payload = {"title": title, "body": body}
+    if labels:
+        payload["labels"] = labels
+
+    data = json.dumps(payload).encode("utf-8")
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues"
+
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+        "User-Agent": "telegram-task-bot",
+    })
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            return {
+                "success": True,
+                "issue_number": result["number"],
+                "url": result["html_url"],
+                "title": result["title"],
+                "repo": f"{owner}/{repo}",
+            }
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode()[:200] if e.fp else ""
+        if e.code == 404:
+            return {"error": f"Repo '{owner}/{repo}' not found. Check the repo name."}
+        elif e.code == 401:
+            return {"error": "GitHub token is invalid or expired."}
+        elif e.code == 422:
+            return {"error": f"GitHub rejected the request: {body_text}"}
+        return {"error": f"GitHub API error {e.code}: {body_text}"}
+    except Exception as e:
+        return {"error": f"Failed to create issue: {str(e)[:100]}"}
+
+
+async def _exec_list_github_repos() -> dict:
+    import urllib.request
+    import urllib.error
+
+    token = config.GITHUB_TOKEN
+    owner = config.GITHUB_OWNER
+    if not token or not owner:
+        return {"error": "GitHub not configured. Set GITHUB_TOKEN and GITHUB_OWNER env vars."}
+
+    url = f"https://api.github.com/users/{owner}/repos?sort=updated&per_page=20"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "telegram-task-bot",
+    })
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            repos = json.loads(resp.read().decode())
+            return {
+                "repos": [
+                    {"name": r["name"], "description": r.get("description") or "", "private": r["private"]}
+                    for r in repos
+                ],
+                "count": len(repos),
+                "owner": owner,
+            }
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"error": "GitHub token is invalid or expired."}
+        return {"error": f"GitHub API error {e.code}"}
+    except Exception as e:
+        return {"error": f"Failed to list repos: {str(e)[:100]}"}

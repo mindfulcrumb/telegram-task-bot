@@ -211,6 +211,9 @@ TOOL USE GUIDELINES:
 - When user says "undo", "bring it back", "that was a mistake" -> use undo_last_action
 - After sending an email to someone new, use save_contact to remember them
 - You can chain multiple tools in one turn (e.g., look up contact then send email)
+- GitHub: you can create issues on any of the user's repos and list available repos
+- When creating issues, write a clear title and detailed body with context
+- Known repos: telegram-task-bot, terracota-closing_data, protocol, mindfulcrumb-store
 
 Keep it real. No corporate speak. Just be helpful."""
 

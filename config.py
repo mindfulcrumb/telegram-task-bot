@@ -68,6 +68,11 @@ CLAUDE_MODEL = clean_env_value(os.getenv("CLAUDE_MODEL")) or "claude-sonnet-4-5-
 AGENT_MAX_TURNS = int(os.getenv("AGENT_MAX_TURNS", "5"))
 CONVERSATION_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "20"))
 
+# GitHub Integration (for creating issues on your repos via Telegram)
+# Personal access token with 'repo' scope: https://github.com/settings/tokens
+GITHUB_TOKEN = clean_env_value(os.getenv("GITHUB_TOKEN"))
+GITHUB_OWNER = clean_env_value(os.getenv("GITHUB_OWNER")) or "mindfulcrumb"
+
 # Claude model for AI categorization (default: sonnet for accuracy)
 CLAUDE_CATEGORIZER_MODEL = clean_env_value(os.getenv("CLAUDE_CATEGORIZER_MODEL")) or "claude-sonnet-4-5-20250929"
 
