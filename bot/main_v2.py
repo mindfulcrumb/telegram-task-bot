@@ -1,8 +1,10 @@
-"""Main entry point — webhook mode, multi-user, PostgreSQL."""
+"""Main entry point — webhook or polling mode, multi-user, PostgreSQL."""
 import sys
 import os
 import logging
 import secrets
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -12,8 +14,19 @@ from telegram.ext import (
 logger = logging.getLogger(__name__)
 
 
+class _HealthCheck(BaseHTTPRequestHandler):
+    """Minimal health check so Railway doesn't kill polling mode."""
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, *args):
+        pass
+
+
 def main():
-    """Start the bot in webhook mode."""
+    """Start the bot."""
     # Logging
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -37,9 +50,13 @@ def main():
         logger.warning("ANTHROPIC_API_KEY not set — AI features disabled")
 
     # Initialize PostgreSQL
-    from bot.db.database import initialize as init_db
-    init_db()
-    logger.info("PostgreSQL initialized")
+    try:
+        from bot.db.database import initialize as init_db
+        init_db()
+        logger.info("PostgreSQL initialized")
+    except Exception as e:
+        logger.error(f"PostgreSQL init failed: {e}")
+        return
 
     # Build app
     application = Application.builder().token(bot_token).build()
@@ -85,13 +102,6 @@ def main():
     application.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
 
-    # Voice (keep from original)
-    try:
-        from bot.handlers.voice import handle_voice
-        application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-    except ImportError:
-        logger.info("Voice handler not available — skipping")
-
     # Free text → AI brain (must be last)
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_message
@@ -99,16 +109,13 @@ def main():
 
     # --- Start ---
 
-    # Generate webhook secret for security
-    webhook_secret = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
-    webhook_path = f"/webhook/{secrets.token_urlsafe(16)}"
-
-    # Railway provides RAILWAY_PUBLIC_DOMAIN and PORT
     railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
     port = int(os.environ.get("PORT", "8443"))
 
     if railway_domain:
-        # Webhook mode (production on Railway)
+        # Webhook mode (production on Railway with public domain)
+        webhook_secret = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
+        webhook_path = f"/webhook/{secrets.token_urlsafe(16)}"
         webhook_url = f"https://{railway_domain}{webhook_path}"
         logger.info(f"Starting webhook mode on port {port}")
         logger.info(f"Webhook URL: {webhook_url}")
@@ -122,10 +129,17 @@ def main():
             allowed_updates=["message", "callback_query", "pre_checkout_query"],
         )
     else:
-        # Polling mode (local development)
-        logger.info("No RAILWAY_PUBLIC_DOMAIN — starting in polling mode (dev)")
+        # Polling mode — start health check server if PORT is set
+        # so Railway doesn't kill us for not binding to a port
+        if os.environ.get("PORT"):
+            health = HTTPServer(("0.0.0.0", port), _HealthCheck)
+            threading.Thread(target=health.serve_forever, daemon=True).start()
+            logger.info(f"Health check server on port {port}")
+
+        logger.info("Starting in polling mode")
         application.run_polling(
             allowed_updates=["message", "callback_query", "pre_checkout_query"],
+            drop_pending_updates=True,
         )
 
 
