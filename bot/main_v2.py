@@ -177,6 +177,11 @@ def _register_full_handlers(application):
     application.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
 
+    # Admin
+    from bot.handlers.admin import cmd_migrate_notion, cmd_diagnostics
+    application.add_handler(CommandHandler("migrate", cmd_migrate_notion))
+    application.add_handler(CommandHandler("diagnostics", cmd_diagnostics))
+
     # Free text → AI brain (must be last)
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_message
