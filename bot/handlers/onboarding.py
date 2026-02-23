@@ -50,7 +50,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await update.message.reply_text(
         "Here's what I can do:\n\n"
-        "Just chat with me naturally, or use commands:\n\n"
+        "Just chat with me naturally, send a voice note, or use commands:\n\n"
+        "*Tasks*\n"
         "/add <task> — Add a task\n"
         "/list — Show all tasks\n"
         "/today — Today's tasks\n"
@@ -59,14 +60,17 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/done <number> — Complete a task\n"
         "/delete <number> — Delete a task\n"
         "/edit <number> <new title> — Edit a task\n"
-        "/remind <number> <time> — Set a reminder\n"
         "/undo — Undo last action\n"
-        "/clear — Clear chat history\n"
+        "/streak — Your completion streak\n\n"
+        "*Account*\n"
         "/settings — Your preferences\n"
         "/account — Subscription info\n"
         "/upgrade — Get Pro features\n"
-        "/deleteaccount — Delete all your data\n"
-        "/help — This message"
+        "/clear — Clear chat history\n"
+        "/deleteaccount — Delete all your data\n\n"
+        "*Pro features:* morning briefings, evening check-ins, "
+        "smart nudges, weekly insights, unlimited everything",
+        parse_mode="Markdown"
     )
 
 

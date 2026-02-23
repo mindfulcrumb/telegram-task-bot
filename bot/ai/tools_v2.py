@@ -134,7 +134,19 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             task_nums = args.get("task_numbers", [])
             completed, not_found = task_service.complete_tasks(user_id, task_nums)
             _undo_buffer[user_id] = [{"action": "done", "task_id": t["id"], "title": t["title"]} for t in completed]
-            result = {"completed": [t["title"] for t in completed]}
+            # Update streak on completion
+            if completed:
+                try:
+                    from bot.services import coaching_service
+                    streak = coaching_service.update_streak(user_id)
+                    result = {
+                        "completed": [t["title"] for t in completed],
+                        "streak": streak.get("current_streak", 0),
+                    }
+                except Exception:
+                    result = {"completed": [t["title"] for t in completed]}
+            else:
+                result = {"completed": []}
             if not_found:
                 result["not_found"] = not_found
             return result

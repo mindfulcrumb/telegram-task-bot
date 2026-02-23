@@ -97,6 +97,17 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if completed:
         titles = ", ".join(t["title"] for t in completed)
         parts.append(f"Done: {titles}")
+        # Update streak
+        try:
+            from bot.services import coaching_service
+            streak = coaching_service.update_streak(user["id"])
+            s = streak.get("current_streak", 0)
+            if s > 1:
+                parts.append(f"\U0001f525 {s}-day streak!")
+            elif s == 1:
+                parts.append("\U0001f525 Streak started!")
+        except Exception:
+            pass
     if not_found:
         parts.append(f"Not found: {', '.join(str(n) for n in not_found)}")
     await update.message.reply_text("\n".join(parts) or "Nothing to complete.")
@@ -194,6 +205,26 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Business: {biz} | Personal: {personal}"
     )
     await update.message.reply_text(text)
+
+
+async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show user's current streak."""
+    user = await _get_user(update, context)
+    from bot.services import coaching_service
+    streak = coaching_service.get_streak(user["id"])
+    current = streak.get("current_streak", 0)
+    longest = streak.get("longest_streak", 0)
+    last = streak.get("last_completion_date")
+
+    if current == 0:
+        text = "No active streak yet. Complete a task to start one!"
+    else:
+        text = (
+            f"\U0001f525 **Current streak: {current} day{'s' if current != 1 else ''}**\n"
+            f"\U0001f3c6 Best ever: {longest} day{'s' if longest != 1 else ''}\n"
+            f"Last completed: {last.strftime('%b %d') if last else 'never'}"
+        )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):

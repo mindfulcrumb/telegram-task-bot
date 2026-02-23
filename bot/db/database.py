@@ -101,10 +101,45 @@ def initialize():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
 
+            -- Check-ins: evening accountability
+            CREATE TABLE IF NOT EXISTS check_ins (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                task_id INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                check_in_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                completed BOOLEAN,
+                asked_at TIMESTAMPTZ DEFAULT NOW(),
+                responded_at TIMESTAMPTZ,
+                UNIQUE(user_id, task_id, check_in_date)
+            );
+
+            -- Streaks: gamification
+            CREATE TABLE IF NOT EXISTS streaks (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                current_streak INT DEFAULT 0,
+                longest_streak INT DEFAULT 0,
+                last_completion_date DATE
+            );
+
+            -- Nudge dedup (replaces in-memory dict)
+            CREATE TABLE IF NOT EXISTS nudge_log (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                task_id INT NOT NULL,
+                nudge_type TEXT NOT NULL,
+                nudged_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Add check-in hour to users
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS check_in_hour INT DEFAULT 20;
+
             CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON tasks(user_id, due_date) WHERE status = 'active';
             CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, id);
             CREATE INDEX IF NOT EXISTS idx_usage_user_date ON usage(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_check_ins_user_date ON check_ins(user_id, check_in_date);
+            CREATE INDEX IF NOT EXISTS idx_nudge_log_user_date ON nudge_log(user_id, nudged_at);
         """)
     logger.info("PostgreSQL schema initialized")
 

@@ -152,7 +152,7 @@ def _register_full_handlers(application):
     from bot.handlers.tasks_v2 import (
         cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
         cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
-        cmd_analyze, handle_message,
+        cmd_analyze, cmd_streak, handle_message,
     )
     application.add_handler(CommandHandler("add", cmd_add))
     application.add_handler(CommandHandler("list", cmd_list))
@@ -165,6 +165,7 @@ def _register_full_handlers(application):
     application.add_handler(CommandHandler("undo", cmd_undo))
     application.add_handler(CommandHandler("clear", cmd_clear))
     application.add_handler(CommandHandler("analyze", cmd_analyze))
+    application.add_handler(CommandHandler("streak", cmd_streak))
 
     # Payments
     from bot.handlers.payments import (
@@ -182,10 +183,20 @@ def _register_full_handlers(application):
     application.add_handler(CommandHandler("migrate", cmd_migrate_notion))
     application.add_handler(CommandHandler("diagnostics", cmd_diagnostics))
 
+    # Voice (before text catch-all)
+    from bot.handlers.voice_v2 import handle_voice, is_voice_configured
+    if is_voice_configured():
+        application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+        logger.info("Voice handler registered (Groq Whisper)")
+
     # Free text → AI brain (must be last)
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_message
     ))
+
+    # Proactive coaching jobs
+    from bot.handlers.proactive_v2 import setup_proactive_jobs
+    setup_proactive_jobs(application)
 
 
 if __name__ == "__main__":

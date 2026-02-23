@@ -71,9 +71,11 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
 
         await update.message.reply_text(
             "You're now on Pro! Here's what you unlocked:\n\n"
-            "- Unlimited tasks\n"
-            "- Unlimited AI messages\n"
-            "- Daily briefings\n"
+            "- Unlimited tasks & AI messages\n"
+            "- Morning briefings (AI-personalized)\n"
+            "- Evening accountability check-ins\n"
+            "- Smart nudges for overdue tasks\n"
+            "- Weekly performance insights\n"
             "- Unlimited reminders\n\n"
             "Thanks for supporting us!"
         )

@@ -10,12 +10,16 @@ LIMITS = {
         "max_tasks": 25,
         "max_ai_messages_per_day": 20,
         "daily_briefing": False,
+        "check_ins": False,
+        "weekly_insights": False,
         "max_reminders": 3,
     },
     "pro": {
         "max_tasks": None,  # unlimited
         "max_ai_messages_per_day": None,
         "daily_briefing": True,
+        "check_ins": True,
+        "weekly_insights": True,
         "max_reminders": None,
     },
 }
