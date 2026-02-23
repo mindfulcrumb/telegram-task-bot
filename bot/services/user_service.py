@@ -1,0 +1,97 @@
+"""User management service — PostgreSQL-backed."""
+import logging
+from datetime import datetime
+
+from bot.db.database import get_cursor
+
+logger = logging.getLogger(__name__)
+
+
+def get_or_create_user(telegram_user_id: int, username: str = None, first_name: str = None) -> dict:
+    """Get existing user or create a new one. Returns user dict."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM users WHERE telegram_user_id = %s",
+            (telegram_user_id,)
+        )
+        user = cur.fetchone()
+
+        if user:
+            # Update last_active and profile info if changed
+            cur.execute(
+                """UPDATE users SET last_active = NOW(),
+                   telegram_username = COALESCE(%s, telegram_username),
+                   first_name = COALESCE(%s, first_name)
+                   WHERE telegram_user_id = %s""",
+                (username, first_name, telegram_user_id)
+            )
+            return dict(user)
+
+        # Create new user
+        cur.execute(
+            """INSERT INTO users (telegram_user_id, telegram_username, first_name)
+               VALUES (%s, %s, %s) RETURNING *""",
+            (telegram_user_id, username, first_name)
+        )
+        new_user = dict(cur.fetchone())
+        logger.info(f"New user created: {telegram_user_id} ({first_name})")
+        return new_user
+
+
+def get_user(telegram_user_id: int) -> dict | None:
+    """Get user by Telegram user ID."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM users WHERE telegram_user_id = %s",
+            (telegram_user_id,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    """Get user by internal DB id."""
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_tier(user_id: int, tier: str, stripe_customer_id: str = None):
+    """Update user's subscription tier."""
+    with get_cursor() as cur:
+        if stripe_customer_id:
+            cur.execute(
+                "UPDATE users SET tier = %s, stripe_customer_id = %s WHERE id = %s",
+                (tier, stripe_customer_id, user_id)
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET tier = %s WHERE id = %s",
+                (tier, user_id)
+            )
+
+
+def update_settings(user_id: int, timezone: str = None, briefing_hour: int = None):
+    """Update user preferences."""
+    with get_cursor() as cur:
+        if timezone is not None:
+            cur.execute("UPDATE users SET timezone = %s WHERE id = %s", (timezone, user_id))
+        if briefing_hour is not None:
+            cur.execute("UPDATE users SET briefing_hour = %s WHERE id = %s", (briefing_hour, user_id))
+
+
+def get_all_active_users() -> list:
+    """Get all users for proactive features (briefings, nudges)."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM users WHERE last_active > NOW() - INTERVAL '30 days' ORDER BY id"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def delete_user(user_id: int):
+    """Delete a user and all their data (GDPR compliance)."""
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        logger.info(f"User {user_id} deleted (GDPR request)")

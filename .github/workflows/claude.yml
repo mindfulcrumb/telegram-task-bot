@@ -1,0 +1,39 @@
+name: Claude Code
+
+on:
+  # Trigger when you comment @claude on issues or PRs
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+  # Trigger when you create or assign an issue
+  issues:
+    types: [opened, assigned]
+
+  # Trigger on new PRs (auto-review)
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude:
+    # Only run if @claude is mentioned, or if issue is assigned to claude
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' && github.event.action == 'assigned') ||
+      (github.event_name == 'pull_request')
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--max-turns 20"
