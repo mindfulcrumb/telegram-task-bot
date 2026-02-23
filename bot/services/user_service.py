@@ -1,10 +1,20 @@
 """User management service — PostgreSQL-backed."""
 import logging
+import os
 from datetime import datetime
 
 from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
+
+
+def _is_admin_id(telegram_user_id: int) -> bool:
+    """Check if this Telegram user ID is the configured admin."""
+    admin_ids = os.environ.get("ADMIN_USER_IDS", "")
+    if not admin_ids:
+        # Fall back to old ALLOWED_USER_IDS for backwards compat
+        admin_ids = os.environ.get("ALLOWED_USER_IDS", "")
+    return str(telegram_user_id) in [x.strip() for x in admin_ids.split(",") if x.strip()]
 
 
 def get_or_create_user(telegram_user_id: int, username: str = None, first_name: str = None) -> dict:
@@ -27,14 +37,17 @@ def get_or_create_user(telegram_user_id: int, username: str = None, first_name: 
             )
             return dict(user)
 
-        # Create new user
+        # Create new user — admin gets Pro tier automatically
+        is_admin = _is_admin_id(telegram_user_id)
+        tier = "pro" if is_admin else "free"
+
         cur.execute(
-            """INSERT INTO users (telegram_user_id, telegram_username, first_name)
-               VALUES (%s, %s, %s) RETURNING *""",
-            (telegram_user_id, username, first_name)
+            """INSERT INTO users (telegram_user_id, telegram_username, first_name, is_admin, tier)
+               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+            (telegram_user_id, username, first_name, is_admin, tier)
         )
         new_user = dict(cur.fetchone())
-        logger.info(f"New user created: {telegram_user_id} ({first_name})")
+        logger.info(f"New user created: {telegram_user_id} ({first_name}) admin={is_admin}")
         return new_user
 
 

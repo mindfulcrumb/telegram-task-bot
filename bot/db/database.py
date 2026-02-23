@@ -67,6 +67,7 @@ def initialize():
                 timezone TEXT DEFAULT 'UTC',
                 briefing_hour INT DEFAULT 8,
                 tier TEXT DEFAULT 'free',
+                is_admin BOOLEAN DEFAULT FALSE,
                 stripe_customer_id TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 last_active TIMESTAMPTZ DEFAULT NOW()
