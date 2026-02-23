@@ -46,7 +46,7 @@ def _call_api(system_prompt, messages, tools=None, max_tokens=2048):
     except anthropic.RateLimitError:
         return None, "Rate limit exceeded"
     except anthropic.APIError as e:
-        return None, f"API error: {to_ascii(str(e))[:80]}"
+        return None, f"API error: {to_ascii(str(e))[:200]}"
     except Exception as e:
         return None, f"Error: {to_ascii(type(e).__name__)}"
 
@@ -246,12 +246,14 @@ Keep it real. No corporate speak. Just be helpful."""
 
                 if error:
                     logger.error(f"Agent API error on turn {turn}: {error}")
-                    # Save what we have and return error message
+                    error_msg = f"Hmm, hit a snag: {error}"
                     memory.save_turn(chat_id, "user", user_input)
-                    return f"Hmm, hit a snag: {error}"
+                    memory.save_turn(chat_id, "assistant", error_msg)
+                    return error_msg
 
                 if not response or not response.content:
                     memory.save_turn(chat_id, "user", user_input)
+                    memory.save_turn(chat_id, "assistant", "Something went wrong processing that.")
                     return None
 
                 # Serialize the assistant's response for message history

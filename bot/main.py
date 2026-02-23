@@ -70,6 +70,12 @@ def main():
 
     logger.info("Starting Task Bot + Accounting Assistant...")
 
+    # Repair any corrupted conversation history (fixes cascading API errors)
+    from bot.ai import memory
+    repaired = memory.repair_history()
+    if repaired:
+        logger.info(f"Repaired {repaired} corrupted conversation history rows")
+
     # Initialize accounting database
     acct_db.initialize()
 

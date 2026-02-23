@@ -79,3 +79,42 @@ def prune_old(days: int = 7):
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     conn.execute("DELETE FROM conversations WHERE created_at < ?", (cutoff,))
     conn.commit()
+
+
+def repair_history():
+    """Fix corrupted history — remove consecutive same-role messages.
+
+    This repairs the cascading failure where error paths saved user turns
+    without matching assistant turns, breaking the alternating role requirement.
+    """
+    conn = _get_conn()
+    chat_ids = [row[0] for row in conn.execute(
+        "SELECT DISTINCT chat_id FROM conversations"
+    ).fetchall()]
+
+    fixed = 0
+    for chat_id in chat_ids:
+        rows = conn.execute(
+            "SELECT id, role FROM conversations WHERE chat_id = ? ORDER BY id ASC",
+            (chat_id,)
+        ).fetchall()
+
+        ids_to_delete = []
+        prev_role = None
+        for row in rows:
+            if row["role"] == prev_role:
+                ids_to_delete.append(row["id"])
+            prev_role = row["role"]
+
+        if ids_to_delete:
+            conn.execute(
+                f"DELETE FROM conversations WHERE id IN ({','.join('?' * len(ids_to_delete))})",
+                ids_to_delete
+            )
+            fixed += len(ids_to_delete)
+            logger.info(f"Repaired {len(ids_to_delete)} corrupted rows for chat {chat_id}")
+
+    if fixed:
+        conn.commit()
+        logger.info(f"History repair complete: removed {fixed} corrupted rows")
+    return fixed
