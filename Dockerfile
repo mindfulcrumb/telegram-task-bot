@@ -19,8 +19,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Expose webhook port (Railway sets PORT env var)
-EXPOSE ${PORT:-8443}
-
 # Run the v2 multi-user bot
 CMD ["python", "-m", "bot.main_v2"]
