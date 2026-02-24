@@ -22,18 +22,25 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_new = user.get("last_active") is None or user["created_at"] == user["last_active"]
 
     if is_new:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Add my first task", switch_inline_query_current_chat="add ")],
+            [
+                InlineKeyboardButton("See all commands", callback_data="show_help"),
+                InlineKeyboardButton("Connect calendar", callback_data="show_calendar"),
+            ],
+            [InlineKeyboardButton("What can you do?", callback_data="show_capabilities")],
+        ])
         await update.message.reply_text(
             f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
-            "I'm here to help you stay on top of things — "
-            "just tell me what's on your mind and I'll organize it for you.\n\n"
+            "I'm here to bring a little calm to the chaos — "
+            "tell me what's on your mind and I'll help you stay on top of it.\n\n"
             "You can talk to me naturally, send a voice note, or use commands. "
             "Whatever feels easiest.\n\n"
-            "Try saying something like:\n"
+            "Try something like:\n"
             '  "Buy groceries tomorrow"\n'
-            '  "What\'s on my plate this week?"\n'
-            '  "Remind me about the dentist at 3pm"\n\n'
-            "I'll learn how you work and help you focus on what matters. "
-            "Type /help to see everything I can do."
+            '  "Remind me about the dentist at 3pm"\n'
+            '  "What should I focus on today?"',
+            reply_markup=keyboard,
         )
     else:
         from bot.services import task_service
@@ -161,6 +168,56 @@ async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "This will permanently delete your account, all tasks, "
             "conversation history, and usage data.\n\n"
             "Send /deleteaccount again to confirm."
+        )
+
+
+async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button callbacks from onboarding."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "show_help":
+        await query.message.reply_text(
+            "Just talk to me, send a voice note, or use commands:\n\n"
+            "*Manage tasks*\n"
+            "/add — Add a task\n"
+            "/list — All your tasks\n"
+            "/today — Due today\n"
+            "/done — Mark complete\n"
+            "/streak — Completion streak\n\n"
+            "*Your account*\n"
+            "/calendar — Connect Google Calendar\n"
+            "/settings — Timezone & preferences\n"
+            "/upgrade — Unlock Zoe Pro\n\n"
+            "Type /help for the full list.",
+            parse_mode="Markdown"
+        )
+    elif query.data == "show_calendar":
+        await query.message.reply_text(
+            "Connect your Google Calendar so I can see your schedule.\n\n"
+            "1. Open Google Calendar on desktop\n"
+            "2. Settings (gear icon) > your calendar name\n"
+            "3. Scroll to 'Secret address in iCal format'\n"
+            "4. Copy the URL and send it to me:\n\n"
+            "/calendar https://calendar.google.com/calendar/ical/..."
+        )
+    elif query.data == "show_capabilities":
+        await query.message.reply_text(
+            "Here's what I can do for you:\n\n"
+            "- Manage your tasks naturally (just tell me what to do)\n"
+            "- Set reminders ('remind me at 3pm')\n"
+            "- Handle recurring tasks ('every Monday submit report')\n"
+            "- Reschedule things ('move dentist to Friday')\n"
+            "- Understand voice messages\n"
+            "- Connect to your Google Calendar\n"
+            "- Track your completion streaks\n\n"
+            "*With Zoe Pro:*\n"
+            "- Personalized morning briefings\n"
+            "- Evening accountability check-ins\n"
+            "- Smart nudges when things slip\n"
+            "- Weekly performance insights\n\n"
+            "Just start talking to me — I'll figure out the rest.",
+            parse_mode="Markdown"
         )
 
 

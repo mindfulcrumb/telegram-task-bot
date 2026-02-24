@@ -8,7 +8,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import Update, BotCommand
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     PreCheckoutQueryHandler, ContextTypes, filters,
 )
 
@@ -164,7 +164,7 @@ def _register_full_handlers(application):
     # Onboarding
     from bot.handlers.onboarding import (
         cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-        cmd_calendar,
+        cmd_calendar, handle_onboarding_callback,
     )
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
@@ -172,6 +172,7 @@ def _register_full_handlers(application):
     application.add_handler(CommandHandler("account", cmd_account))
     application.add_handler(CommandHandler("calendar", cmd_calendar))
     application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
+    application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
 
     # Tasks
     from bot.handlers.tasks_v2 import (
