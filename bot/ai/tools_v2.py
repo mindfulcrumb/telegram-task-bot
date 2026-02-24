@@ -192,6 +192,100 @@ def get_tool_definitions() -> list:
                 "required": ["exercise_name"]
             }
         },
+        # --- Biohacking tools ---
+        {
+            "name": "manage_peptide_protocol",
+            "description": "Add, pause, resume, or end a peptide protocol. Use when user mentions starting/stopping a peptide, adjusting dose, or managing their protocol stack.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["add", "pause", "resume", "end"], "description": "Action to take on the protocol"},
+                    "peptide_name": {"type": "string", "description": "Name of the peptide (e.g., 'BPC-157', 'TB-500', 'Ipamorelin')"},
+                    "dose_amount": {"type": "number", "description": "Dose amount per administration"},
+                    "dose_unit": {"type": "string", "description": "Unit (mcg, mg, IU). Default: mcg"},
+                    "frequency": {"type": "string", "description": "How often (e.g., '2x daily', '3x weekly', 'daily')"},
+                    "route": {"type": "string", "description": "Administration route (subcutaneous, intramuscular, nasal, oral). Default: subcutaneous"},
+                    "cycle_start": {"type": "string", "description": "Cycle start date YYYY-MM-DD (default: today)"},
+                    "cycle_end": {"type": "string", "description": "Cycle end date YYYY-MM-DD"},
+                    "notes": {"type": "string", "description": "Additional notes about the protocol"}
+                },
+                "required": ["action", "peptide_name"]
+            }
+        },
+        {
+            "name": "log_peptide_dose",
+            "description": "Record a peptide dose administration. Use when user says 'took my BPC', 'just pinned', 'did my dose', etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "peptide_name": {"type": "string", "description": "Name of the peptide"},
+                    "dose_amount": {"type": "number", "description": "Amount administered (optional, uses protocol default)"},
+                    "injection_site": {"type": "string", "description": "Where it was administered (e.g., 'abdomen', 'deltoid', 'glute')"},
+                    "notes": {"type": "string", "description": "Any notes (side effects, how it felt)"}
+                },
+                "required": ["peptide_name"]
+            }
+        },
+        {
+            "name": "manage_supplement",
+            "description": "Add or remove a supplement from the stack. Use when user mentions starting/stopping a supplement.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["add", "remove"], "description": "Add or remove the supplement"},
+                    "supplement_name": {"type": "string", "description": "Name of the supplement (e.g., 'Creatine', 'Vitamin D3', 'Magnesium')"},
+                    "dose_amount": {"type": "number", "description": "Dose amount"},
+                    "dose_unit": {"type": "string", "description": "Unit (mg, g, IU, mcg)"},
+                    "frequency": {"type": "string", "description": "How often (daily, twice daily, etc.)"},
+                    "timing": {"type": "string", "description": "When to take it (morning, evening, with meals, before bed, pre-workout, post-workout)"}
+                },
+                "required": ["action", "supplement_name"]
+            }
+        },
+        {
+            "name": "log_supplement_taken",
+            "description": "Mark supplements as taken. Use when user says 'took my supplements', 'had my creatine', etc. Use supplement_name='all' to mark entire stack as taken.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "supplement_name": {"type": "string", "description": "Name of specific supplement, or 'all' for entire stack"}
+                },
+                "required": ["supplement_name"]
+            }
+        },
+        {
+            "name": "log_bloodwork",
+            "description": "Log bloodwork results with individual biomarkers. Use when user shares lab results, blood test numbers, or specific biomarker values.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "test_date": {"type": "string", "description": "Date of the blood test YYYY-MM-DD"},
+                    "lab_name": {"type": "string", "description": "Name of the lab (optional)"},
+                    "markers": {
+                        "type": "array",
+                        "description": "Individual biomarkers from the panel",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "marker_name": {"type": "string", "description": "Biomarker name (e.g., 'Total Testosterone', 'Vitamin D', 'hsCRP')"},
+                                "value": {"type": "number", "description": "The measured value"},
+                                "unit": {"type": "string", "description": "Unit of measurement (ng/dL, ng/mL, mg/L, etc.)"},
+                                "reference_low": {"type": "number", "description": "Low end of reference range"},
+                                "reference_high": {"type": "number", "description": "High end of reference range"}
+                            },
+                            "required": ["marker_name", "value"]
+                        }
+                    },
+                    "notes": {"type": "string", "description": "Notes about the panel"}
+                },
+                "required": ["test_date", "markers"]
+            }
+        },
+        {
+            "name": "get_biohacking_context",
+            "description": "Get full biohacking summary: active peptide protocols with adherence, supplement stack, latest bloodwork with flagged markers. Call this before giving biohacking advice.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
     ]
 
 
@@ -487,6 +581,212 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     "rpe": h.get("rpe"),
                 })
             return {"exercise": args["exercise_name"], "history": entries, "count": len(entries)}
+
+        # --- Biohacking tools ---
+        elif name == "manage_peptide_protocol":
+            from bot.services import biohacking_service
+            action = args["action"]
+            peptide_name = args["peptide_name"]
+
+            if action == "add":
+                cycle_start = None
+                cycle_end = None
+                if args.get("cycle_start"):
+                    try:
+                        cycle_start = datetime.fromisoformat(args["cycle_start"]).date()
+                    except (ValueError, TypeError):
+                        cycle_start = datetime.now().date()
+                if args.get("cycle_end"):
+                    try:
+                        cycle_end = datetime.fromisoformat(args["cycle_end"]).date()
+                    except (ValueError, TypeError):
+                        pass
+                protocol = biohacking_service.add_protocol(
+                    user_id=user_id,
+                    peptide_name=peptide_name,
+                    dose_amount=args.get("dose_amount"),
+                    dose_unit=args.get("dose_unit", "mcg"),
+                    frequency=args.get("frequency"),
+                    route=args.get("route", "subcutaneous"),
+                    cycle_start=cycle_start,
+                    cycle_end=cycle_end,
+                    notes=args.get("notes"),
+                )
+                result = {
+                    "success": True,
+                    "action": "added",
+                    "protocol_id": protocol["id"],
+                    "peptide": peptide_name,
+                }
+                if cycle_start and cycle_end:
+                    total = (cycle_end - cycle_start).days
+                    result["cycle_length_days"] = total
+                return result
+
+            elif action in ("pause", "resume", "end"):
+                protocol = biohacking_service.get_protocol_by_name(user_id, peptide_name)
+                if not protocol:
+                    return {"error": f"No active protocol found for {peptide_name}"}
+                new_status = {"pause": "paused", "resume": "active", "end": "completed"}[action]
+                biohacking_service.update_protocol_status(protocol["id"], new_status)
+                return {"success": True, "action": action, "peptide": peptide_name, "new_status": new_status}
+
+        elif name == "log_peptide_dose":
+            from bot.services import biohacking_service
+            peptide_name = args["peptide_name"]
+            protocol = biohacking_service.get_protocol_by_name(user_id, peptide_name)
+            if not protocol:
+                return {"error": f"No active protocol found for '{peptide_name}'. Add one first with manage_peptide_protocol."}
+            dose = biohacking_service.log_dose(
+                user_id=user_id,
+                protocol_id=protocol["id"],
+                dose_amount=args.get("dose_amount") or protocol.get("dose_amount"),
+                site=args.get("injection_site"),
+                notes=args.get("notes"),
+            )
+            # Get cycle progress
+            result = {
+                "success": True,
+                "peptide": peptide_name,
+                "dose_amount": dose.get("dose_amount"),
+                "dose_unit": protocol.get("dose_unit", "mcg"),
+            }
+            if protocol.get("cycle_start") and protocol.get("cycle_end"):
+                today = datetime.now().date()
+                elapsed = (today - protocol["cycle_start"]).days
+                total = (protocol["cycle_end"] - protocol["cycle_start"]).days
+                result["cycle_day"] = elapsed
+                result["cycle_total"] = total
+                result["days_remaining"] = max(0, (protocol["cycle_end"] - today).days)
+            # Recent dose count
+            doses = biohacking_service.get_dose_history(user_id, protocol["id"], days=7)
+            result["doses_last_7d"] = len(doses)
+            return result
+
+        elif name == "manage_supplement":
+            from bot.services import biohacking_service
+            action = args["action"]
+            supp_name = args["supplement_name"]
+
+            if action == "add":
+                supp = biohacking_service.add_supplement(
+                    user_id=user_id,
+                    supplement_name=supp_name,
+                    dose_amount=args.get("dose_amount"),
+                    dose_unit=args.get("dose_unit"),
+                    frequency=args.get("frequency", "daily"),
+                    timing=args.get("timing"),
+                )
+                return {
+                    "success": True,
+                    "action": "added",
+                    "supplement": supp_name,
+                    "supplement_id": supp["id"],
+                }
+            elif action == "remove":
+                supp = biohacking_service.get_supplement_by_name(user_id, supp_name)
+                if not supp:
+                    return {"error": f"No active supplement found for '{supp_name}'"}
+                biohacking_service.update_supplement_status(supp["id"], "removed")
+                return {"success": True, "action": "removed", "supplement": supp_name}
+
+        elif name == "log_supplement_taken":
+            from bot.services import biohacking_service
+            supp_name = args["supplement_name"]
+
+            if supp_name.lower() == "all":
+                logged = biohacking_service.log_all_supplements_taken(user_id)
+                return {"success": True, "logged": logged, "count": len(logged)}
+            else:
+                supp = biohacking_service.get_supplement_by_name(user_id, supp_name)
+                if not supp:
+                    return {"error": f"No active supplement found for '{supp_name}'. Add it first."}
+                biohacking_service.log_supplement_taken(user_id, supp["id"])
+                return {"success": True, "supplement": supp_name}
+
+        elif name == "log_bloodwork":
+            from bot.services import biohacking_service
+            try:
+                test_date = datetime.fromisoformat(args["test_date"]).date()
+            except (ValueError, TypeError):
+                test_date = datetime.now().date()
+            panel = biohacking_service.log_bloodwork(
+                user_id=user_id,
+                test_date=test_date,
+                lab_name=args.get("lab_name"),
+                notes=args.get("notes"),
+                markers=args.get("markers", []),
+            )
+            # Get flagged markers
+            flagged = biohacking_service.get_flagged_biomarkers(user_id)
+            result = {
+                "success": True,
+                "panel_id": panel["id"],
+                "test_date": test_date.isoformat(),
+                "marker_count": panel["marker_count"],
+            }
+            if flagged:
+                result["flagged_markers"] = [
+                    {"marker": f["marker_name"], "value": f["value"], "unit": f.get("unit"), "flag": f["flag"]}
+                    for f in flagged
+                ]
+            return result
+
+        elif name == "get_biohacking_context":
+            from bot.services import biohacking_service
+            summary = biohacking_service.get_biohacking_summary(user_id)
+            result = {}
+
+            # Protocols
+            protocols = []
+            for p in summary["protocols"]:
+                entry = {
+                    "peptide": p["peptide_name"],
+                    "dose": f"{p.get('dose_amount')} {p.get('dose_unit', 'mcg')}",
+                    "frequency": p.get("frequency"),
+                    "route": p.get("route"),
+                    "status": p.get("status"),
+                }
+                if p.get("cycle_day") is not None:
+                    entry["cycle_progress"] = f"Day {p['cycle_day']} of {p['cycle_total']}"
+                    entry["days_remaining"] = p["days_remaining"]
+                entry["doses_last_7d"] = p.get("doses_last_7d", 0)
+                protocols.append(entry)
+            result["active_protocols"] = protocols
+
+            # Supplements
+            supps = []
+            for s in summary["supplements"]:
+                entry = {"name": s["supplement_name"]}
+                if s.get("dose_amount") and s.get("dose_unit"):
+                    entry["dose"] = f"{s['dose_amount']}{s['dose_unit']}"
+                if s.get("timing"):
+                    entry["timing"] = s["timing"]
+                supps.append(entry)
+            result["supplement_stack"] = supps
+            result["supplement_adherence_7d"] = summary["supplement_adherence"]["overall_rate"]
+
+            # Bloodwork
+            bw = summary["latest_bloodwork"]
+            if bw:
+                result["latest_bloodwork"] = {
+                    "date": bw["test_date"].isoformat() if bw.get("test_date") else None,
+                    "lab": bw.get("lab_name"),
+                    "markers": [
+                        {
+                            "name": m["marker_name"],
+                            "value": m["value"],
+                            "unit": m.get("unit"),
+                            "flag": m.get("flag"),
+                        }
+                        for m in bw.get("markers", [])
+                    ],
+                }
+            result["flagged_biomarkers"] = [
+                {"marker": f["marker_name"], "value": f["value"], "unit": f.get("unit"), "flag": f["flag"]}
+                for f in summary["flagged_biomarkers"]
+            ]
+            return result
 
         else:
             return {"error": f"Unknown tool: {name}"}

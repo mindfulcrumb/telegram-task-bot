@@ -29,10 +29,11 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "- Unlimited tasks & AI conversations\n"
             "- AI fitness coaching & workout programming\n"
             "- Pattern balance analysis & PR tracking\n"
+            "- Peptide protocol tracking & dose reminders\n"
+            "- Supplement stack management & adherence\n"
+            "- Bloodwork intelligence & biomarker trends\n"
             "- Personalized morning briefings\n"
-            "- Evening accountability check-ins\n"
-            "- Smart reminders & nudges\n"
-            "- Weekly performance & fitness reports\n\n"
+            "- Smart reminders & weekly reports\n\n"
             "Stay tuned."
         )
         return
@@ -40,7 +41,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="Zoe Pro",
-        description="AI fitness coaching, workout programming, unlimited tasks & conversations, morning briefings, and weekly reports.",
+        description="AI fitness coaching, peptide tracking, bloodwork intelligence, unlimited tasks & conversations, morning briefings, and weekly reports.",
         payload=f"pro_upgrade_{user['id']}",
         provider_token=STRIPE_PROVIDER_TOKEN,
         currency=PRO_CURRENCY,
@@ -83,13 +84,13 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
             "Welcome to Zoe Pro! Here's what you unlocked:\n\n"
             "- Unlimited tasks & AI conversations\n"
             "- AI fitness coaching & workout programming\n"
-            "- Pattern balance analysis & PR tracking\n"
+            "- Peptide protocol tracking & dose intelligence\n"
+            "- Supplement stack management & adherence\n"
+            "- Bloodwork intelligence & biomarker trends\n"
             "- Personalized morning briefings\n"
-            "- Evening accountability check-ins\n"
-            "- Smart reminders & nudges\n"
-            "- Weekly performance & fitness reports\n\n"
+            "- Smart reminders & weekly reports\n\n"
             "I'll start learning your patterns and coaching you proactively. "
-            "Thanks for trusting me with your training and your day."
+            "Thanks for trusting me with your training and your protocols."
         )
 
 

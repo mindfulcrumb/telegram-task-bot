@@ -59,17 +59,16 @@ async def _post_init(application):
     """Set bot commands so users see the menu in Telegram."""
     try:
         commands = [
-            BotCommand("add", "Add a new task"),
-            BotCommand("list", "Show all tasks"),
+            BotCommand("workout", "Log a workout"),
+            BotCommand("gains", "Streak, PRs & patterns"),
+            BotCommand("protocols", "Peptide protocols"),
+            BotCommand("supplements", "Supplement stack"),
+            BotCommand("dose", "Log a peptide dose"),
+            BotCommand("add", "Add a task"),
             BotCommand("today", "Today's tasks"),
             BotCommand("done", "Complete a task"),
-            BotCommand("workout", "Log a workout"),
-            BotCommand("gains", "Workout streak & PRs"),
-            BotCommand("metrics", "Body metrics"),
-            BotCommand("streak", "Your completion streak"),
-            BotCommand("settings", "Your preferences"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
-            BotCommand("help", "Show all commands"),
+            BotCommand("help", "All commands"),
         ]
         await application.bot.set_my_commands(commands)
         logger.info(f"Bot menu commands set ({len(commands)} commands)")
@@ -273,12 +272,13 @@ def _register_full_handlers(application):
     except Exception as e:
         logger.error(f"Failed to register onboarding handlers: {type(e).__name__}: {e}")
 
-    # Tasks + Fitness
+    # Tasks + Fitness + Biohacking
     try:
         from bot.handlers.tasks_v2 import (
             cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
             cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
             cmd_analyze, cmd_streak, cmd_workout, cmd_metrics, cmd_gains,
+            cmd_protocols, cmd_supplements, cmd_bloodwork, cmd_dose,
             handle_message,
         )
         application.add_handler(CommandHandler("add", cmd_add))
@@ -296,8 +296,12 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("workout", cmd_workout))
         application.add_handler(CommandHandler("metrics", cmd_metrics))
         application.add_handler(CommandHandler("gains", cmd_gains))
+        application.add_handler(CommandHandler("protocols", cmd_protocols))
+        application.add_handler(CommandHandler("supplements", cmd_supplements))
+        application.add_handler(CommandHandler("bloodwork", cmd_bloodwork))
+        application.add_handler(CommandHandler("dose", cmd_dose))
         _text_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-        logger.info("Task + fitness handlers registered")
+        logger.info("Task + fitness + biohacking handlers registered")
     except Exception as e:
         logger.error(f"Failed to register task handlers: {type(e).__name__}: {e}")
 

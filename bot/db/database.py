@@ -207,6 +207,83 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_workouts_user ON workouts(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id);
             CREATE INDEX IF NOT EXISTS idx_body_metrics_user ON body_metrics(user_id, metric_type, recorded_at);
+
+            -- Peptide protocols
+            CREATE TABLE IF NOT EXISTS peptide_protocols (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                peptide_name TEXT NOT NULL,
+                dose_amount REAL,
+                dose_unit TEXT DEFAULT 'mcg',
+                frequency TEXT,
+                route TEXT DEFAULT 'subcutaneous',
+                cycle_start DATE,
+                cycle_end DATE,
+                status TEXT DEFAULT 'active',
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Peptide dose log
+            CREATE TABLE IF NOT EXISTS peptide_logs (
+                id SERIAL PRIMARY KEY,
+                protocol_id INT NOT NULL REFERENCES peptide_protocols(id) ON DELETE CASCADE,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                administered_at TIMESTAMPTZ DEFAULT NOW(),
+                dose_amount REAL,
+                site TEXT,
+                notes TEXT
+            );
+
+            -- Supplement stack
+            CREATE TABLE IF NOT EXISTS supplements (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                supplement_name TEXT NOT NULL,
+                dose_amount REAL,
+                dose_unit TEXT,
+                frequency TEXT DEFAULT 'daily',
+                timing TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Supplement logs
+            CREATE TABLE IF NOT EXISTS supplement_logs (
+                id SERIAL PRIMARY KEY,
+                supplement_id INT NOT NULL REFERENCES supplements(id) ON DELETE CASCADE,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                taken_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Bloodwork panels
+            CREATE TABLE IF NOT EXISTS bloodwork (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                test_date DATE NOT NULL,
+                lab_name TEXT,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Individual biomarkers within a bloodwork panel
+            CREATE TABLE IF NOT EXISTS biomarkers (
+                id SERIAL PRIMARY KEY,
+                bloodwork_id INT NOT NULL REFERENCES bloodwork(id) ON DELETE CASCADE,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                marker_name TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT,
+                reference_low REAL,
+                reference_high REAL,
+                flag TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_peptide_protocols_user ON peptide_protocols(user_id, status);
+            CREATE INDEX IF NOT EXISTS idx_peptide_logs_user ON peptide_logs(user_id, administered_at);
+            CREATE INDEX IF NOT EXISTS idx_supplements_user ON supplements(user_id, status);
+            CREATE INDEX IF NOT EXISTS idx_bloodwork_user ON bloodwork(user_id, test_date);
+            CREATE INDEX IF NOT EXISTS idx_biomarkers_user ON biomarkers(user_id, marker_name);
         """)
     logger.info("PostgreSQL schema initialized")
 

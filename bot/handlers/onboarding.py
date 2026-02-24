@@ -23,23 +23,23 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_new:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Add my first task", switch_inline_query_current_chat="add ")],
+            [InlineKeyboardButton("What can you do?", callback_data="show_capabilities")],
             [
                 InlineKeyboardButton("See all commands", callback_data="show_help"),
                 InlineKeyboardButton("Connect calendar", callback_data="show_calendar"),
             ],
-            [InlineKeyboardButton("What can you do?", callback_data="show_capabilities")],
         ])
         await update.message.reply_text(
             f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
-            "I'm here to bring a little calm to the chaos — "
-            "tell me what's on your mind and I'll help you stay on top of it.\n\n"
-            "You can talk to me naturally, send a voice note, or use commands. "
+            "I'm your AI performance coach — I manage your tasks, "
+            "program your training, track your protocols, and keep everything moving.\n\n"
+            "Talk to me naturally, send a voice note, or use commands. "
             "Whatever feels easiest.\n\n"
             "Try something like:\n"
+            '  "I did bench 4x8 at 75kg, rows 4x10"\n'
+            '  "What should I train today?"\n'
             '  "Buy groceries tomorrow"\n'
-            '  "Remind me about the dentist at 3pm"\n'
-            '  "What should I focus on today?"',
+            '  "I weigh 82kg"',
             reply_markup=keyboard,
         )
 
@@ -71,7 +71,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await update.message.reply_text(
-        "I'm Zoe — your AI coach for tasks, training, and performance.\n\n"
+        "I'm Zoe — your AI performance coach.\n\n"
         "Talk to me naturally, send a voice note, or use commands:\n\n"
         "*Tasks*\n"
         "/add — Add a task\n"
@@ -83,16 +83,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/workout — Log a workout\n"
         "/gains — Streak, PRs & pattern balance\n"
         "/metrics — Body metrics\n\n"
+        "*Biohacking*\n"
+        "/protocols — Active peptide protocols\n"
+        "/supplements — Supplement stack\n"
+        "/bloodwork — Latest bloodwork\n"
+        "/dose — Log a peptide dose\n\n"
         "Just tell me naturally:\n"
         '  "Did bench 4x8 at 75kg, rows 4x10"\n'
-        '  "I weigh 81kg today"\n'
-        '  "What should I train today?"\n\n'
+        '  "Took my BPC-157"\n'
+        '  "What should I train today?"\n'
+        '  "My testosterone came back at 650"\n\n'
         "*Account*\n"
         "/settings — Timezone & preferences\n"
         "/upgrade — Unlock Zoe Pro\n"
         "/support — Get help\n\n"
-        "*Zoe Pro* — AI fitness coaching, morning briefings, "
-        "workout insights, weekly reports, unlimited everything",
+        "*Zoe Pro* — AI fitness coaching, peptide tracking, "
+        "bloodwork intelligence, morning briefings, unlimited everything",
         parse_mode="Markdown"
     )
 
@@ -214,14 +220,17 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
     if query.data == "show_help":
         await query.message.reply_text(
             "Just talk to me, send a voice note, or use commands:\n\n"
-            "*Manage tasks*\n"
+            "*Tasks*\n"
             "/add — Add a task\n"
             "/list — All your tasks\n"
             "/today — Due today\n"
-            "/done — Mark complete\n"
-            "/streak — Completion streak\n\n"
-            "*Your account*\n"
-            "/calendar — Connect Google Calendar\n"
+            "/done — Mark complete\n\n"
+            "*Fitness & Biohacking*\n"
+            "/workout — Log a workout\n"
+            "/gains — Streak, PRs & patterns\n"
+            "/protocols — Peptide protocols\n"
+            "/supplements — Supplement stack\n\n"
+            "*Account*\n"
             "/settings — Timezone & preferences\n"
             "/upgrade — Unlock Zoe Pro\n\n"
             "Type /help for the full list.",
@@ -238,19 +247,26 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
         )
     elif query.data == "show_capabilities":
         await query.message.reply_text(
-            "Here's what I can do for you:\n\n"
-            "- Manage your tasks naturally (just tell me what to do)\n"
-            "- Set reminders ('remind me at 3pm')\n"
-            "- Handle recurring tasks ('every Monday submit report')\n"
-            "- Reschedule things ('move dentist to Friday')\n"
-            "- Understand voice messages\n"
-            "- Connect to your Google Calendar\n"
-            "- Track your completion streaks\n\n"
+            "Here's what I can do:\n\n"
+            "*Tasks & Productivity*\n"
+            "- Manage tasks naturally (just tell me)\n"
+            "- Set reminders, recurring tasks, scheduling\n"
+            "- Voice messages, Google Calendar sync\n\n"
+            "*Fitness & Training*\n"
+            "- Log workouts with sets/reps/weight\n"
+            "- Track movement pattern balance (push/pull/squat/hinge)\n"
+            "- Progressive overload, PR detection, workout streaks\n"
+            "- Program your training based on your history\n\n"
+            "*Biohacking (Pro)*\n"
+            "- Peptide protocol tracking & dose reminders\n"
+            "- Supplement stack management & adherence\n"
+            "- Bloodwork logging with biomarker trends\n"
+            "- Connect it all: recovery + protocols + bloodwork\n\n"
             "*With Zoe Pro:*\n"
-            "- Personalized morning briefings\n"
-            "- Evening accountability check-ins\n"
-            "- Smart nudges when things slip\n"
-            "- Weekly performance insights\n\n"
+            "- AI workout programming & fitness coaching\n"
+            "- Peptide, supplement & bloodwork intelligence\n"
+            "- Morning briefings & weekly reports\n"
+            "- Unlimited everything\n\n"
             "Just start talking to me — I'll figure out the rest.",
             parse_mode="Markdown"
         )

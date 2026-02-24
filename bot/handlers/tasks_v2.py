@@ -321,6 +321,116 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /protocols command — show active peptide protocols."""
+    user = await _get_user(update, context)
+    from bot.services import biohacking_service
+    protocols = biohacking_service.get_protocol_summary(user["id"])
+    if not protocols:
+        await update.message.reply_text(
+            "No active peptide protocols.\n\n"
+            "Tell me naturally to start one:\n"
+            '"Starting BPC-157, 250mcg twice a day for 6 weeks"'
+        )
+        return
+    lines = ["\U0001f9ea **Active Protocols**\n"]
+    for p in protocols:
+        dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
+        freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
+        line = f"**{p['peptide_name']}**: {dose_str}{freq_str}"
+        if p.get("cycle_day") is not None:
+            line += f"\n  Day {p['cycle_day']}/{p['cycle_total']}"
+            if p.get("days_remaining") is not None:
+                line += f" ({p['days_remaining']}d remaining)"
+        line += f"\n  Doses (7d): {p.get('doses_last_7d', 0)}"
+        lines.append(line)
+    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /supplements command — show supplement stack."""
+    user = await _get_user(update, context)
+    from bot.services import biohacking_service
+    supps = biohacking_service.get_active_supplements(user["id"])
+    if not supps:
+        await update.message.reply_text(
+            "No supplements in your stack.\n\n"
+            "Tell me what you take:\n"
+            '"I take creatine 5g daily, vitamin D 5000IU with breakfast"'
+        )
+        return
+    lines = ["\U0001f48a **Supplement Stack**\n"]
+    for s in supps:
+        dose_str = f"{s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
+        timing_str = f" ({s['timing']})" if s.get("timing") else ""
+        lines.append(f"- {s['supplement_name']}: {dose_str}{timing_str}")
+    # Adherence
+    adherence = biohacking_service.get_supplement_adherence(user["id"], days=7)
+    if adherence["overall_rate"] > 0:
+        lines.append(f"\n7-day adherence: {adherence['overall_rate']}%")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /bloodwork command — show latest bloodwork summary."""
+    user = await _get_user(update, context)
+    from bot.services import biohacking_service
+    panels = biohacking_service.get_bloodwork_history(user["id"], limit=1)
+    if not panels:
+        await update.message.reply_text(
+            "No bloodwork logged yet.\n\n"
+            "Tell me your results:\n"
+            '"My testosterone came back at 650 ng/dL, vitamin D at 45 ng/mL"'
+        )
+        return
+    panel = panels[0]
+    date_str = panel["test_date"].isoformat() if panel.get("test_date") else "?"
+    lab_str = f" ({panel['lab_name']})" if panel.get("lab_name") else ""
+    lines = [f"\U0001fa78 **Bloodwork** \u2014 {date_str}{lab_str}\n"]
+    for m in panel.get("markers", []):
+        flag_str = ""
+        if m.get("flag") == "high":
+            flag_str = " \u2b06\ufe0f HIGH"
+        elif m.get("flag") == "low":
+            flag_str = " \u2b07\ufe0f LOW"
+        unit_str = f" {m['unit']}" if m.get("unit") else ""
+        ref_str = ""
+        if m.get("reference_low") is not None and m.get("reference_high") is not None:
+            ref_str = f" (ref: {m['reference_low']}-{m['reference_high']})"
+        lines.append(f"- {m['marker_name']}: {m['value']}{unit_str}{ref_str}{flag_str}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /dose command — quick log a peptide dose."""
+    user = await _get_user(update, context)
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Quick-log a dose:\n"
+            "/dose BPC-157\n"
+            "/dose Ipamorelin abdomen\n\n"
+            'Or just tell me: "Took my BPC"'
+        )
+        return
+    # Feed into AI brain
+    chat = update.message.chat
+    await chat.send_action(ChatAction.TYPING)
+
+    async def _keep_typing():
+        await chat.send_action(ChatAction.TYPING)
+
+    tasks = task_service.get_tasks(user["id"])
+    prompt = f"Log this peptide dose: {text}"
+    response = await ai_brain.process(prompt, user, tasks, typing_callback=_keep_typing)
+    if response:
+        if len(response) <= 4096:
+            await update.message.reply_text(response)
+        else:
+            for i in range(0, len(response), 4096):
+                await update.message.reply_text(response[i:i + 4096])
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
     user = await _get_user(update, context)
