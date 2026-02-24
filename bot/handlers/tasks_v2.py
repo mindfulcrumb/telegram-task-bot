@@ -1,4 +1,5 @@
 """Task command handlers — user-scoped, PostgreSQL-backed."""
+import asyncio
 import logging
 from datetime import datetime, date
 from telegram import Update
@@ -9,6 +10,67 @@ from bot.services import user_service, task_service, tier_service
 from bot.ai.brain_v2 import ai_brain
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_human(update: Update, text: str):
+    """Send a response in natural chunks with typing delays.
+
+    Splits on double-newlines (paragraph breaks) so each chunk
+    feels like a separate message a human would type and send.
+    Short responses (<300 chars) are sent as one message.
+    """
+    if not text:
+        return
+
+    # Short responses — send directly, no chunking
+    if len(text) <= 300:
+        await update.message.reply_text(text)
+        return
+
+    # Split on double-newlines (paragraph breaks)
+    chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
+
+    # If splitting produced only 1 chunk or chunks are very small, try single newline
+    if len(chunks) <= 1:
+        chunks = [c.strip() for c in text.split("\n") if c.strip()]
+
+    # Merge tiny chunks (under 80 chars) with the next one to avoid spammy 1-liners
+    merged = []
+    buffer = ""
+    for chunk in chunks:
+        if buffer:
+            combined = buffer + "\n\n" + chunk
+            if len(combined) <= 600:
+                buffer = combined
+            else:
+                merged.append(buffer)
+                buffer = chunk
+        else:
+            if len(chunk) < 80 and chunks.index(chunk) < len(chunks) - 1:
+                buffer = chunk
+            else:
+                merged.append(chunk)
+    if buffer:
+        merged.append(buffer)
+
+    # Cap at 4 messages max — combine remainder into last chunk
+    if len(merged) > 4:
+        merged = merged[:3] + ["\n\n".join(merged[3:])]
+
+    chat = update.message.chat
+
+    for i, chunk in enumerate(merged):
+        # Telegram limit
+        if len(chunk) > 4096:
+            chunk = chunk[:4096]
+
+        if i > 0:
+            # Typing delay between chunks — scales with chunk length
+            delay = min(0.4 + len(chunk) * 0.002, 1.8)
+            await chat.send_action(ChatAction.TYPING)
+            await asyncio.sleep(delay)
+
+        await update.message.reply_text(chunk)
 
 
 async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -251,11 +313,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt = f"Log this workout: {text}"
     response = await ai_brain.process(prompt, user, tasks, typing_callback=_keep_typing)
     if response:
-        if len(response) <= 4096:
-            await update.message.reply_text(response)
-        else:
-            for i in range(0, len(response), 4096):
-                await update.message.reply_text(response[i:i + 4096])
+        await _send_human(update, response)
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -424,11 +482,7 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt = f"Log this peptide dose: {text}"
     response = await ai_brain.process(prompt, user, tasks, typing_callback=_keep_typing)
     if response:
-        if len(response) <= 4096:
-            await update.message.reply_text(response)
-        else:
-            for i in range(0, len(response), 4096):
-                await update.message.reply_text(response[i:i + 4096])
+        await _send_human(update, response)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -449,12 +503,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
 
     if response:
-        # Split long messages (Telegram limit is 4096 chars)
-        if len(response) <= 4096:
-            await update.message.reply_text(response)
-        else:
-            for i in range(0, len(response), 4096):
-                await update.message.reply_text(response[i:i + 4096])
+        await _send_human(update, response)
 
 
 def _format_tasks(tasks: list) -> str:
