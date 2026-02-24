@@ -7,6 +7,7 @@ import threading
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import Update, BotCommand
