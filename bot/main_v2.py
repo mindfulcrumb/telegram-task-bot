@@ -148,16 +148,18 @@ def main():
     global _startup_status
 
     port = int(os.environ.get("PORT", "8443"))
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    # Only use webhook if explicitly set via BOT_MODE=webhook
+    # RAILWAY_PUBLIC_DOMAIN is auto-injected and can conflict
+    use_webhook = os.environ.get("BOT_MODE", "").lower() == "webhook"
+    webhook_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "") if use_webhook else ""
 
-    # Start health check FIRST (polling mode only — webhook uses its own server)
-    if not railway_domain:
-        try:
-            health = HTTPServer(("0.0.0.0", port), _HealthCheck)
-            threading.Thread(target=health.serve_forever, daemon=True).start()
-            logger.info(f"Health check server on port {port}")
-        except Exception as e:
-            logger.error(f"Health check failed to start: {e}")
+    # Start health check — always needed for Railway in polling mode
+    try:
+        health = HTTPServer(("0.0.0.0", port), _HealthCheck)
+        threading.Thread(target=health.serve_forever, daemon=True).start()
+        logger.info(f"Health check server on port {port}")
+    except Exception as e:
+        logger.error(f"Health check failed to start: {e}")
 
     # Validate bot token (hard requirement)
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -213,11 +215,11 @@ def main():
     # --- Start ---
 
     try:
-        if railway_domain:
-            # Webhook mode
+        if use_webhook and webhook_domain:
+            # Webhook mode — only if BOT_MODE=webhook is explicitly set
             webhook_secret = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
             webhook_path = f"/webhook/{secrets.token_urlsafe(16)}"
-            webhook_url = f"https://{railway_domain}{webhook_path}"
+            webhook_url = f"https://{webhook_domain}{webhook_path}"
             logger.info(f"Starting WEBHOOK mode on port {port}")
             logger.info(f"Webhook URL: {webhook_url}")
             _startup_status = "running (webhook)"
@@ -232,7 +234,7 @@ def main():
                 allowed_updates=["message", "callback_query", "pre_checkout_query"],
             )
         else:
-            # Polling mode — health check already running on PORT
+            # Polling mode (default) — health check already running on PORT
             logger.info("Starting POLLING mode")
             _startup_status = "running (polling)"
             _notify_admin("🟢 <b>Stage 5</b>: Starting POLLING mode — bot should be live!")
