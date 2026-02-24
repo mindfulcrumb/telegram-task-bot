@@ -24,17 +24,25 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not STRIPE_PROVIDER_TOKEN:
-        await update.message.reply_text("Payments are not set up yet. Stay tuned!")
+        await update.message.reply_text(
+            "Zoe Pro is coming soon! You'll get:\n\n"
+            "- Unlimited tasks & AI conversations\n"
+            "- Personalized morning briefings\n"
+            "- Evening accountability check-ins\n"
+            "- Smart reminders & nudges\n"
+            "- Weekly performance insights\n\n"
+            "Stay tuned."
+        )
         return
 
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
-        title="Pro Plan",
-        description="Unlimited tasks, unlimited AI messages, daily briefings, and unlimited reminders.",
+        title="Zoe Pro",
+        description="Unlimited tasks, AI conversations, morning briefings, smart reminders, and weekly insights.",
         payload=f"pro_upgrade_{user['id']}",
         provider_token=STRIPE_PROVIDER_TOKEN,
         currency=PRO_CURRENCY,
-        prices=[LabeledPrice("Pro Plan (monthly)", PRO_PRICE)],
+        prices=[LabeledPrice("Zoe Pro (monthly)", PRO_PRICE)],
     )
 
 
@@ -70,24 +78,24 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
             context.user_data["db_user"] = user
 
         await update.message.reply_text(
-            "You're now on Pro! Here's what you unlocked:\n\n"
-            "- Unlimited tasks & AI messages\n"
-            "- Morning briefings (AI-personalized)\n"
+            "Welcome to Zoe Pro! Here's what you unlocked:\n\n"
+            "- Unlimited tasks & AI conversations\n"
+            "- Personalized morning briefings\n"
             "- Evening accountability check-ins\n"
-            "- Smart nudges for overdue tasks\n"
-            "- Weekly performance insights\n"
-            "- Unlimited reminders\n\n"
-            "Thanks for supporting us!"
+            "- Smart reminders & nudges\n"
+            "- Weekly performance insights\n\n"
+            "I'll start learning your patterns and coaching you proactively. "
+            "Thanks for trusting me with your day."
         )
 
 
 async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show terms of service (required by Telegram for payments)."""
     await update.message.reply_text(
-        "Terms of Service\n\n"
-        "By using this bot, you agree to:\n"
+        "Zoe — Terms of Service\n\n"
+        "By using Zoe, you agree to:\n"
         "- Your data is stored securely and used only to provide the service\n"
-        "- Free tier has usage limits; Pro removes them\n"
+        "- Free tier has usage limits; Zoe Pro removes them\n"
         "- You can delete your account and all data anytime with /deleteaccount\n"
         "- Payments are processed securely through Stripe\n"
         "- Refunds available within 7 days of purchase via /support"

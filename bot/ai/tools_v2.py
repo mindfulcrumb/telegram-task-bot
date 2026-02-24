@@ -29,14 +29,15 @@ def get_tool_definitions() -> list:
         },
         {
             "name": "add_task",
-            "description": "Create a new task. Infer category (Personal/Business) and priority from context.",
+            "description": "Create a new task. Infer category (Personal/Business) and priority from context. Set recurrence for repeating tasks.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Task title"},
                     "category": {"type": "string", "enum": ["Personal", "Business"]},
                     "priority": {"type": "string", "enum": ["Low", "Medium", "High"]},
-                    "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format, or null"}
+                    "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format, or null"},
+                    "recurrence": {"type": "string", "enum": ["daily", "weekdays", "weekly", "monthly"], "description": "Repeat pattern. Use when user says 'every day', 'every Monday', 'every month', 'weekdays', etc."}
                 },
                 "required": ["title"]
             }
@@ -78,7 +79,7 @@ def get_tool_definitions() -> list:
         },
         {
             "name": "edit_task",
-            "description": "Edit a task's title.",
+            "description": "Edit a task's title only. For changing due date, priority, or category, use update_task instead.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -86,6 +87,21 @@ def get_tool_definitions() -> list:
                     "new_title": {"type": "string", "description": "New title for the task"}
                 },
                 "required": ["task_number", "new_title"]
+            }
+        },
+        {
+            "name": "update_task",
+            "description": "Update a task's due date, priority, or category. Use when user says 'move X to Friday', 'make it high priority', 'change category to business', 'reschedule', 'postpone', etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_number": {"type": "integer", "description": "Task number to update"},
+                    "due_date": {"type": "string", "description": "New due date in YYYY-MM-DD format. Use null to clear."},
+                    "priority": {"type": "string", "enum": ["Low", "Medium", "High"], "description": "New priority level"},
+                    "category": {"type": "string", "enum": ["Personal", "Business"], "description": "New category"},
+                    "title": {"type": "string", "description": "New title (optional)"}
+                },
+                "required": ["task_number"]
             }
         },
         {
@@ -123,6 +139,8 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 }
                 if t.get("due_date"):
                     entry["due_date"] = t["due_date"].isoformat() if hasattr(t["due_date"], "isoformat") else str(t["due_date"])
+                if t.get("recurrence"):
+                    entry["recurrence"] = t["recurrence"]
                 task_list.append(entry)
             return {"tasks": task_list, "count": len(task_list)}
 
@@ -133,20 +151,26 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     due_date = datetime.fromisoformat(args["due_date"]).date()
                 except (ValueError, TypeError):
                     pass
+            recurrence = args.get("recurrence")
             task_service.add_task(
                 user_id=user_id,
                 title=args["title"],
                 category=args.get("category", "Personal"),
                 priority=args.get("priority", "Medium"),
                 due_date=due_date,
+                recurrence=recurrence,
             )
-            return {"success": True, "title": args["title"]}
+            result = {"success": True, "title": args["title"]}
+            if recurrence:
+                result["recurrence"] = recurrence
+            return result
 
         elif name == "complete_tasks":
             task_nums = args.get("task_numbers", [])
             completed, not_found = task_service.complete_tasks(user_id, task_nums)
             _undo_buffer[user_id] = [{"action": "done", "task_id": t["id"], "title": t["title"]} for t in completed]
-            # Update streak on completion
+            # Update streak + spawn recurring tasks
+            recurring_spawned = []
             if completed:
                 try:
                     from bot.services import coaching_service
@@ -157,6 +181,13 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     }
                 except Exception:
                     result = {"completed": [t["title"] for t in completed]}
+                # Spawn next instance for recurring tasks
+                for t in completed:
+                    spawned = task_service.spawn_next_recurring(user_id, t)
+                    if spawned:
+                        recurring_spawned.append(f"{spawned['title']} (next: {spawned['due_date']})")
+                if recurring_spawned:
+                    result["recurring_created"] = recurring_spawned
             else:
                 result = {"completed": []}
             if not_found:
@@ -184,6 +215,27 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             result = task_service.update_task_title(user_id, args["task_number"], args["new_title"])
             if result:
                 return {"old_title": result[0], "new_title": result[1]}
+            return {"error": f"Task #{args['task_number']} not found."}
+
+        elif name == "update_task":
+            updates = {}
+            if args.get("due_date"):
+                try:
+                    updates["due_date"] = datetime.fromisoformat(args["due_date"]).date()
+                except (ValueError, TypeError):
+                    return {"error": "Invalid date format. Use YYYY-MM-DD."}
+            if args.get("priority"):
+                updates["priority"] = args["priority"]
+            if args.get("category"):
+                updates["category"] = args["category"]
+            if args.get("title"):
+                updates["title"] = args["title"]
+            if not updates:
+                return {"error": "No changes specified."}
+            result = task_service.update_task(user_id, args["task_number"], **updates)
+            if result:
+                changes = ", ".join(f"{k}={v}" for k, v in updates.items())
+                return {"success": True, "task": result["title"], "changes": changes}
             return {"error": f"Task #{args['task_number']} not found."}
 
         elif name == "set_reminder":

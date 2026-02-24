@@ -126,14 +126,14 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
             if not nudges:
                 continue
 
-            lines = ["\U0001f916 **Quick nudge:**\n"]
+            lines = ["**Hey, quick thought:**\n"]
             for t, ntype in nudges:
                 if ntype == "overdue":
                     days = (today_d - t["due_date"]).days
                     lines.append(f"\U0001f534 \"{t['title']}\" is {days} days overdue")
                 elif ntype == "no_due_date":
                     lines.append(f"\u26a1 \"{t['title']}\" is high priority but has no due date")
-            lines.append("\n_Need help with any of these?_")
+            lines.append("\n_Want me to help with any of these?_")
 
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
@@ -270,7 +270,7 @@ def _generate_briefing(user, tasks, streak, patterns):
         )
 
         response, error = _call_api(
-            system_prompt="You are a supportive productivity coach. Brief, specific, casual.",
+            system_prompt="You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. Sign off as Zoe if it feels natural.",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
         )
@@ -325,7 +325,7 @@ def _generate_weekly_insight(user, stats):
         )
 
         response, error = _call_api(
-            system_prompt="You are a supportive productivity coach. Brief, specific, casual.",
+            system_prompt="You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. Sign off as Zoe if it feels natural.",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
         )

@@ -23,14 +23,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_new:
         await update.message.reply_text(
-            f"Hey {tg_user.first_name}! I'm your personal task assistant.\n\n"
-            "Just tell me what you need to do and I'll keep track of it. "
-            "You can talk to me naturally — no special commands needed.\n\n"
-            "Try saying:\n"
-            '• "add buy groceries tomorrow"\n'
-            '• "what\'s due this week?"\n'
-            '• "done 1" to complete a task\n\n'
-            "Type /help anytime to see all commands."
+            f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
+            "I'm here to help you stay on top of things — "
+            "just tell me what's on your mind and I'll organize it for you.\n\n"
+            "You can talk to me naturally, send a voice note, or use commands. "
+            "Whatever feels easiest.\n\n"
+            "Try saying something like:\n"
+            '  "Buy groceries tomorrow"\n'
+            '  "What\'s on my plate this week?"\n'
+            '  "Remind me about the dentist at 3pm"\n\n'
+            "I'll learn how you work and help you focus on what matters. "
+            "Type /help to see everything I can do."
         )
     else:
         from bot.services import task_service
@@ -40,36 +43,36 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         status = f"You have {count} active task{'s' if count != 1 else ''}"
         if overdue:
-            status += f" ({overdue} overdue!)"
+            status += f" ({overdue} overdue)"
         status += "."
 
-        await update.message.reply_text(f"Welcome back, {tg_user.first_name}! {status}")
+        await update.message.reply_text(f"Hey {tg_user.first_name}, welcome back. {status}")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await update.message.reply_text(
-        "Here's what I can do:\n\n"
-        "Just chat with me naturally, send a voice note, or use commands:\n\n"
-        "*Tasks*\n"
-        "/add <task> — Add a task\n"
-        "/list — Show all tasks\n"
-        "/today — Today's tasks\n"
-        "/week — This week's tasks\n"
-        "/overdue — Overdue tasks\n"
-        "/done <number> — Complete a task\n"
-        "/delete <number> — Delete a task\n"
-        "/edit <number> <new title> — Edit a task\n"
+        "I'm Zoe — your intelligent companion for everyday clarity.\n\n"
+        "Just talk to me, send a voice note, or use commands:\n\n"
+        "*Manage tasks*\n"
+        "/add — Add a task\n"
+        "/list — All your tasks\n"
+        "/today — Due today\n"
+        "/week — This week\n"
+        "/overdue — Past due\n"
+        "/done — Mark complete\n"
+        "/edit — Change a task\n"
+        "/delete — Remove a task\n"
         "/undo — Undo last action\n"
-        "/streak — Your completion streak\n\n"
-        "*Account*\n"
-        "/settings — Your preferences\n"
-        "/account — Subscription info\n"
-        "/upgrade — Get Pro features\n"
-        "/clear — Clear chat history\n"
-        "/deleteaccount — Delete all your data\n\n"
-        "*Pro features:* morning briefings, evening check-ins, "
-        "smart nudges, weekly insights, unlimited everything",
+        "/streak — Completion streak\n"
+        "/analyze — AI task analysis\n\n"
+        "*Your account*\n"
+        "/settings — Timezone & preferences\n"
+        "/account — Plan & usage\n"
+        "/upgrade — Unlock Zoe Pro\n"
+        "/support — Get help\n\n"
+        "*Zoe Pro* — morning briefings, evening check-ins, "
+        "smart reminders, weekly insights, unlimited everything",
         parse_mode="Markdown"
     )
 

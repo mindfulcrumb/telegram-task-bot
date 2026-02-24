@@ -134,6 +134,9 @@ def initialize():
             -- Add check-in hour to users
             ALTER TABLE users ADD COLUMN IF NOT EXISTS check_in_hour INT DEFAULT 20;
 
+            -- Add recurrence to tasks (daily, weekly, monthly, weekdays, or null)
+            ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recurrence TEXT;
+
             CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON tasks(user_id, due_date) WHERE status = 'active';
             CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, id);

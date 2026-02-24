@@ -26,7 +26,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     groq_key = os.environ.get("GROQ_API_KEY")
     if not groq_key:
-        await update.message.reply_text("Voice messages aren't configured yet.")
+        await update.message.reply_text("Voice messages aren't set up yet — type it out for now.")
         return
 
     voice = update.message.voice or update.message.audio

@@ -40,13 +40,14 @@ def get_tasks(user_id: int, filter_type: str = "all") -> list:
 
 
 def add_task(user_id: int, title: str, category: str = "Personal",
-             priority: str = "Medium", due_date: date = None) -> dict:
-    """Create a new task for a user."""
+             priority: str = "Medium", due_date: date = None,
+             recurrence: str = None) -> dict:
+    """Create a new task for a user. recurrence: daily/weekly/monthly/weekdays or None."""
     with get_cursor() as cur:
         cur.execute(
-            """INSERT INTO tasks (user_id, title, category, priority, due_date)
-               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-            (user_id, title, category, priority, due_date)
+            """INSERT INTO tasks (user_id, title, category, priority, due_date, recurrence)
+               VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+            (user_id, title, category, priority, due_date, recurrence)
         )
         return dict(cur.fetchone())
 
@@ -122,6 +123,75 @@ def update_task_title(user_id: int, task_index: int, new_title: str) -> tuple[st
             (new_title, task["id"], user_id)
         )
     return old_title, new_title
+
+
+def _next_recurrence_date(current_due: date, recurrence: str) -> date:
+    """Calculate the next due date for a recurring task."""
+    base = current_due or date.today()
+    if recurrence == "daily":
+        return base + timedelta(days=1)
+    elif recurrence == "weekdays":
+        nxt = base + timedelta(days=1)
+        while nxt.weekday() >= 5:  # skip Sat/Sun
+            nxt += timedelta(days=1)
+        return nxt
+    elif recurrence == "weekly":
+        return base + timedelta(weeks=1)
+    elif recurrence == "monthly":
+        month = base.month + 1
+        year = base.year
+        if month > 12:
+            month = 1
+            year += 1
+        day = min(base.day, 28)  # safe for all months
+        return date(year, month, day)
+    return base + timedelta(weeks=1)  # fallback
+
+
+def spawn_next_recurring(user_id: int, completed_task: dict) -> dict | None:
+    """If a completed task is recurring, create the next instance."""
+    recurrence = completed_task.get("recurrence")
+    if not recurrence:
+        return None
+
+    next_due = _next_recurrence_date(completed_task.get("due_date"), recurrence)
+    return add_task(
+        user_id=user_id,
+        title=completed_task["title"],
+        category=completed_task.get("category", "Personal"),
+        priority=completed_task.get("priority", "Medium"),
+        due_date=next_due,
+        recurrence=recurrence,
+    )
+
+
+def update_task(user_id: int, task_index: int, **kwargs) -> dict | None:
+    """Update any fields on a task by index. Returns updated task dict or None."""
+    tasks = get_tasks(user_id)
+    if task_index < 1 or task_index > len(tasks):
+        return None
+
+    task = tasks[task_index - 1]
+    allowed = {"title", "category", "priority", "due_date"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+
+    if not updates:
+        return None
+
+    set_clauses = []
+    params = []
+    for key, val in updates.items():
+        set_clauses.append(f"{key} = %s")
+        params.append(val)
+
+    params.extend([task["id"], user_id])
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = %s AND user_id = %s RETURNING *",
+            params
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def get_tasks_with_reminders(user_id: int) -> list:

@@ -54,7 +54,7 @@ async def _post_init(application):
 async def _fallback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fallback /start when DB is not available."""
     await update.message.reply_text(
-        "Bot is alive! But the database isn't connected yet.\n\n"
+        "Hey, I'm Zoe! I'm waking up but my memory isn't connected yet.\n\n"
         "Admin: check Railway env vars — DATABASE_URL must be set."
     )
 
@@ -62,7 +62,7 @@ async def _fallback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fallback for any message when DB is not available."""
     await update.message.reply_text(
-        "I'm running but can't process messages yet — database not connected.\n"
+        "I'm here but can't process messages yet — still connecting.\n"
         "Admin: set DATABASE_URL in Railway."
     )
 
