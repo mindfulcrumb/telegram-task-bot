@@ -101,7 +101,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             user_id = int(state.replace("uid_", ""))
 
             from bot.services import whoop_service
-            success = whoop_service.exchange_code(user_id, code)
+            success, error_msg = whoop_service.exchange_code(user_id, code)
 
             if success:
                 # Try initial sync
@@ -122,8 +122,15 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 )
             else:
                 self.send_response(500)
+                self.send_header("Content-Type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"Failed to connect WHOOP. Try again in Telegram.")
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Failed to connect WHOOP</h1>"
+                    f"<p>{error_msg}</p>"
+                    f"<p>Please try /connect_whoop again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
 
         except Exception as e:
             logger.error(f"WHOOP callback error: {e}")

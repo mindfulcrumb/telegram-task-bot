@@ -65,11 +65,14 @@ def get_auth_url(user_id: int) -> str | None:
     return f"{WHOOP_AUTH_URL}?{params}"
 
 
-def exchange_code(user_id: int, code: str) -> bool:
-    """Exchange authorization code for tokens and store in DB."""
+def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
+    """Exchange authorization code for tokens and store in DB.
+    Returns (success, error_message)."""
     client_id = _get_client_id()
     client_secret = _get_client_secret()
     redirect_uri = _get_redirect_uri()
+
+    logger.info(f"WHOOP token exchange: redirect_uri={redirect_uri}")
 
     data = urllib.parse.urlencode({
         "grant_type": "authorization_code",
@@ -88,9 +91,13 @@ def exchange_code(user_id: int, code: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             token_data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:500]
+        logger.error(f"WHOOP token exchange HTTP {e.code}: {body}")
+        return False, f"HTTP {e.code}: {body}"
     except Exception as e:
         logger.error(f"WHOOP token exchange failed: {e}")
-        return False
+        return False, str(e)
 
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
@@ -98,8 +105,8 @@ def exchange_code(user_id: int, code: str) -> bool:
     scopes = token_data.get("scope", "")
 
     if not access_token or not refresh_token:
-        logger.error("WHOOP token response missing tokens")
-        return False
+        logger.error(f"WHOOP token response missing tokens: {token_data}")
+        return False, "Token response missing access_token or refresh_token"
 
     expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
@@ -126,7 +133,7 @@ def exchange_code(user_id: int, code: str) -> bool:
         )
 
     logger.info(f"WHOOP tokens stored for user {user_id}")
-    return True
+    return True, ""
 
 
 def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
