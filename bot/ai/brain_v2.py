@@ -119,6 +119,16 @@ class AIBrain:
 
         name = user.get("first_name", "friend")
 
+        # Calendar events
+        calendar_section = ""
+        try:
+            from bot.services import calendar_service
+            events = calendar_service.fetch_upcoming_events(user.get("id", 0), days=3)
+            if events:
+                calendar_section = "\n" + calendar_service.format_events_for_ai(events) + "\n"
+        except Exception:
+            pass
+
         # Coaching context (streaks, patterns)
         coaching_section = ""
         try:
@@ -161,7 +171,7 @@ RIGHT NOW:
 - Today's date: {now.strftime('%Y-%m-%d')}
 - User: {name}
 - Status: {situation_str}
-{coaching_section}
+{coaching_section}{calendar_section}
 TASKS:
 {task_list}
 

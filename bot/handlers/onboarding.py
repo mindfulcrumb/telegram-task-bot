@@ -67,6 +67,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/streak — Completion streak\n"
         "/analyze — AI task analysis\n\n"
         "*Your account*\n"
+        "/calendar — Connect Google Calendar\n"
         "/settings — Timezone & preferences\n"
         "/account — Plan & usage\n"
         "/upgrade — Unlock Zoe Pro\n"
@@ -160,6 +161,65 @@ async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "This will permanently delete your account, all tasks, "
             "conversation history, and usage data.\n\n"
             "Send /deleteaccount again to confirm."
+        )
+
+
+async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Connect or disconnect Google Calendar via iCal URL."""
+    user = await _ensure_user(update, context)
+    if not user:
+        return
+
+    from bot.services import calendar_service
+
+    args = context.args
+    if args and args[0].lower() == "disconnect":
+        calendar_service.remove_calendar_url(user["id"])
+        await update.message.reply_text("Calendar disconnected.")
+        return
+
+    if args and args[0].startswith("http"):
+        url = args[0]
+        if "calendar.google.com" not in url and ".ics" not in url:
+            await update.message.reply_text(
+                "That doesn't look like a Google Calendar URL.\n\n"
+                "Make sure it ends in .ics or comes from calendar.google.com"
+            )
+            return
+
+        calendar_service.save_calendar_url(user["id"], url)
+        events = calendar_service.fetch_upcoming_events(user["id"], days=3)
+
+        if events:
+            lines = [f"Connected! I can see {len(events)} upcoming events:\n"]
+            for e in events[:5]:
+                dt = e["start"]
+                time_str = dt.strftime("%b %d") if e.get("all_day") else dt.strftime("%b %d %I:%M %p")
+                lines.append(f"  {e['title']} — {time_str}")
+            await update.message.reply_text("\n".join(lines))
+        else:
+            await update.message.reply_text(
+                "Connected! No upcoming events in the next 3 days, "
+                "but I'll check your calendar when planning your day."
+            )
+        return
+
+    # No args — show instructions
+    current = calendar_service.get_calendar_url(user["id"])
+    if current:
+        await update.message.reply_text(
+            "Your Google Calendar is connected.\n\n"
+            "I check it for your morning briefings and when you ask about your schedule.\n\n"
+            "To disconnect: /calendar disconnect"
+        )
+    else:
+        await update.message.reply_text(
+            "Connect your Google Calendar so I can see your schedule.\n\n"
+            "1. Open Google Calendar on desktop\n"
+            "2. Settings (gear icon) > your calendar name\n"
+            "3. Scroll to 'Secret address in iCal format'\n"
+            "4. Copy the URL and send it to me:\n\n"
+            "/calendar https://calendar.google.com/calendar/ical/..."
         )
 
 

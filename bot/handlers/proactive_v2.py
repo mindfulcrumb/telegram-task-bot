@@ -257,15 +257,31 @@ def _generate_briefing(user, tasks, streak, patterns):
                     due_str = " due TODAY"
             task_lines.append(f"- {t['title']} [{t['category']}]{due_str}")
 
+        # Include calendar events if available
+        cal_section = ""
+        try:
+            from bot.services import calendar_service
+            events = calendar_service.fetch_upcoming_events(user["id"], days=1)
+            if events:
+                cal_lines = [f"Calendar today ({len(events)} events):"]
+                for e in events[:5]:
+                    dt = e["start"]
+                    time_str = "all day" if e.get("all_day") else dt.strftime("%I:%M %p")
+                    cal_lines.append(f"- {e['title']} at {time_str}")
+                cal_section = "\n".join(cal_lines) + "\n\n"
+        except Exception:
+            pass
+
         prompt = (
             f"Generate a morning briefing for {user.get('first_name', 'friend')}.\n\n"
             f"Tasks ({len(tasks)} total, {len(overdue)} overdue, {len(due_today)} due today):\n"
             + "\n".join(task_lines) + "\n\n"
-            f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
+            + cal_section
+            + f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
             f"Most productive: {patterns.get('most_productive_day', 'varies')}\n"
             f"Best time: {patterns.get('preferred_time', 'varies')}\n\n"
-            "Write 3-5 lines. Say which task to start with and why. "
-            "Mention streak if > 0. Be casual like a friend texting. "
+            "Write 3-5 lines. Mention calendar events if any. Say which task to start with and why. "
+            "Mention streak if > 0. Be warm and thoughtful, like Zoe. "
             "Use markdown bold. Under 500 chars."
         )
 

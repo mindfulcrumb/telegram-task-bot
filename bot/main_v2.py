@@ -41,8 +41,9 @@ async def _post_init(application):
         BotCommand("edit", "Edit a task"),
         BotCommand("streak", "Your completion streak"),
         BotCommand("analyze", "AI analysis of your tasks"),
+        BotCommand("calendar", "Connect Google Calendar"),
         BotCommand("settings", "Your preferences"),
-        BotCommand("upgrade", "Get Pro features"),
+        BotCommand("upgrade", "Unlock Zoe Pro"),
         BotCommand("account", "Subscription info"),
         BotCommand("help", "Show all commands"),
         BotCommand("support", "Get help"),
@@ -163,11 +164,13 @@ def _register_full_handlers(application):
     # Onboarding
     from bot.handlers.onboarding import (
         cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
+        cmd_calendar,
     )
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
     application.add_handler(CommandHandler("settings", cmd_settings))
     application.add_handler(CommandHandler("account", cmd_account))
+    application.add_handler(CommandHandler("calendar", cmd_calendar))
     application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
 
     # Tasks
