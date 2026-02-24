@@ -17,7 +17,7 @@ WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 
 # Scopes we need
-WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
+WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement offline"
 
 
 def _get_client_id() -> str:
@@ -49,8 +49,8 @@ def get_auth_url(user_id: int) -> str | None:
     if not client_id or not redirect_uri:
         return None
 
-    # State encodes user_id so we can match on callback
-    state = f"uid_{user_id}"
+    # State encodes user_id — WHOOP requires min 8 chars
+    state = f"uid_{user_id:06d}"
     params = urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,

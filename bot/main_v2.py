@@ -71,9 +71,10 @@ class _HealthCheck(BaseHTTPRequestHandler):
             state = params.get("state", [None])[0]
 
             if not code or not state or not state.startswith("uid_"):
+                logger.error(f"WHOOP callback missing params. code={bool(code)}, state={state}, path={self.path}")
                 self.send_response(400)
                 self.end_headers()
-                self.wfile.write(b"Missing code or state parameter")
+                self.wfile.write(b"Missing code or state parameter. Please try /connect_whoop again in Telegram.")
                 return
 
             user_id = int(state.replace("uid_", ""))
