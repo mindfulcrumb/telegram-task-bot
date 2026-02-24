@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from datetime import datetime, date
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
@@ -504,10 +504,13 @@ async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = whoop_service.get_auth_url(user["id"])
     if url:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Connect WHOOP", url=url)]
+        ])
         await update.message.reply_text(
-            "Connect your WHOOP to unlock recovery-based training:\n\n"
-            f"{url}\n\n"
-            "Click the link, log into WHOOP, and authorize Zoe."
+            "Unlock recovery-based training by connecting your WHOOP.\n\n"
+            "Tap the button below, log in, and authorize Zoe.",
+            reply_markup=keyboard,
         )
     else:
         await update.message.reply_text("Couldn't generate WHOOP link. Try again later.")
