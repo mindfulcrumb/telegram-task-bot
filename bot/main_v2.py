@@ -18,12 +18,15 @@ logger = logging.getLogger(__name__)
 _db_ready = False
 
 
+_startup_status = "starting"
+
+
 class _HealthCheck(BaseHTTPRequestHandler):
     """Minimal health check so Railway doesn't kill polling mode."""
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(f"OK - {_startup_status}".encode())
 
     def log_message(self, *args):
         pass
@@ -31,25 +34,28 @@ class _HealthCheck(BaseHTTPRequestHandler):
 
 async def _post_init(application):
     """Set bot commands so users see the menu in Telegram."""
-    commands = [
-        BotCommand("add", "Add a new task"),
-        BotCommand("list", "Show all tasks"),
-        BotCommand("today", "Today's tasks"),
-        BotCommand("week", "This week's tasks"),
-        BotCommand("overdue", "Overdue tasks"),
-        BotCommand("done", "Complete a task"),
-        BotCommand("edit", "Edit a task"),
-        BotCommand("streak", "Your completion streak"),
-        BotCommand("analyze", "AI analysis of your tasks"),
-        BotCommand("calendar", "Connect Google Calendar"),
-        BotCommand("settings", "Your preferences"),
-        BotCommand("upgrade", "Unlock Zoe Pro"),
-        BotCommand("account", "Subscription info"),
-        BotCommand("help", "Show all commands"),
-        BotCommand("support", "Get help"),
-    ]
-    await application.bot.set_my_commands(commands)
-    logger.info(f"Bot menu commands set ({len(commands)} commands)")
+    try:
+        commands = [
+            BotCommand("add", "Add a new task"),
+            BotCommand("list", "Show all tasks"),
+            BotCommand("today", "Today's tasks"),
+            BotCommand("week", "This week's tasks"),
+            BotCommand("overdue", "Overdue tasks"),
+            BotCommand("done", "Complete a task"),
+            BotCommand("edit", "Edit a task"),
+            BotCommand("streak", "Your completion streak"),
+            BotCommand("analyze", "AI analysis of your tasks"),
+            BotCommand("calendar", "Connect Google Calendar"),
+            BotCommand("settings", "Your preferences"),
+            BotCommand("upgrade", "Unlock Zoe Pro"),
+            BotCommand("account", "Subscription info"),
+            BotCommand("help", "Show all commands"),
+            BotCommand("support", "Get help"),
+        ]
+        await application.bot.set_my_commands(commands)
+        logger.info(f"Bot menu commands set ({len(commands)} commands)")
+    except Exception as e:
+        logger.error(f"Failed to set bot commands: {type(e).__name__}: {e}")
 
 
 async def _fallback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,6 +78,9 @@ def main():
     """Start the bot."""
     global _db_ready
 
+    # Print immediately — bypasses logging in case logging setup crashes
+    print("[ZOE] Starting bot...", flush=True)
+
     # Logging
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -83,7 +92,8 @@ def main():
 
     # Log environment for debugging
     logger.info("=== STARTUP DIAGNOSTICS ===")
-    logger.info(f"TELEGRAM_BOT_TOKEN: {'SET' if os.environ.get('TELEGRAM_BOT_TOKEN') else 'MISSING'}")
+    logger.info(f"Python: {sys.version}")
+    logger.info(f"TELEGRAM_BOT_TOKEN: {'SET (' + os.environ.get('TELEGRAM_BOT_TOKEN', '')[:10] + '...)' if os.environ.get('TELEGRAM_BOT_TOKEN') else 'MISSING'}")
     logger.info(f"DATABASE_URL: {'SET' if os.environ.get('DATABASE_URL') else 'MISSING'}")
     logger.info(f"ANTHROPIC_API_KEY: {'SET' if os.environ.get('ANTHROPIC_API_KEY') else 'MISSING'}")
     logger.info(f"RAILWAY_PUBLIC_DOMAIN: {os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'NOT SET')}")
@@ -91,14 +101,31 @@ def main():
     logger.info(f"ADMIN_USER_IDS: {os.environ.get('ADMIN_USER_IDS', 'NOT SET')}")
     logger.info("===========================")
 
+    global _startup_status
+
+    port = int(os.environ.get("PORT", "8443"))
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+
+    # Start health check FIRST (polling mode only — webhook uses its own server)
+    if not railway_domain:
+        try:
+            health = HTTPServer(("0.0.0.0", port), _HealthCheck)
+            threading.Thread(target=health.serve_forever, daemon=True).start()
+            logger.info(f"Health check server on port {port}")
+        except Exception as e:
+            logger.error(f"Health check failed to start: {e}")
+
     # Validate bot token (hard requirement)
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not bot_token:
         logger.error("TELEGRAM_BOT_TOKEN not set — cannot start")
+        _startup_status = "error: no token"
         return
 
     # Build app
+    logger.info("Building application...")
     application = Application.builder().token(bot_token).post_init(_post_init).build()
+    logger.info("Application built")
 
     # Try to initialize PostgreSQL
     db_url = os.environ.get("DATABASE_URL")
@@ -130,37 +157,42 @@ def main():
 
     # --- Start ---
 
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    port = int(os.environ.get("PORT", "8443"))
+    try:
+        if railway_domain:
+            # Webhook mode
+            webhook_secret = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
+            webhook_path = f"/webhook/{secrets.token_urlsafe(16)}"
+            webhook_url = f"https://{railway_domain}{webhook_path}"
+            logger.info(f"Starting WEBHOOK mode on port {port}")
+            logger.info(f"Webhook URL: {webhook_url}")
+            _startup_status = "running (webhook)"
 
-    if railway_domain:
-        # Webhook mode
-        webhook_secret = os.environ.get("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
-        webhook_path = f"/webhook/{secrets.token_urlsafe(16)}"
-        webhook_url = f"https://{railway_domain}{webhook_path}"
-        logger.info(f"Starting WEBHOOK mode on port {port}")
-        logger.info(f"Webhook URL: {webhook_url}")
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path=webhook_path,
+                webhook_url=webhook_url,
+                secret_token=webhook_secret,
+                allowed_updates=["message", "callback_query", "pre_checkout_query"],
+            )
+        else:
+            # Polling mode — health check already running on PORT
+            logger.info("Starting POLLING mode")
+            _startup_status = "running (polling)"
 
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=webhook_path,
-            webhook_url=webhook_url,
-            secret_token=webhook_secret,
-            allowed_updates=["message", "callback_query", "pre_checkout_query"],
-        )
-    else:
-        # Polling mode
-        if os.environ.get("PORT"):
-            health = HTTPServer(("0.0.0.0", port), _HealthCheck)
-            threading.Thread(target=health.serve_forever, daemon=True).start()
-            logger.info(f"Health check server on port {port}")
-
-        logger.info("Starting POLLING mode")
-        application.run_polling(
-            allowed_updates=["message", "callback_query", "pre_checkout_query"],
-            drop_pending_updates=True,
-        )
+            application.run_polling(
+                allowed_updates=["message", "callback_query", "pre_checkout_query"],
+                drop_pending_updates=True,
+            )
+    except Exception as e:
+        import traceback
+        _startup_status = f"CRASHED: {type(e).__name__}: {e}"
+        logger.error(f"FATAL: Bot failed to start: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        # Keep process alive so health check can report the error
+        import time
+        while True:
+            time.sleep(60)
 
 
 def _register_full_handlers(application):
