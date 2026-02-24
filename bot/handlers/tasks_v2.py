@@ -572,7 +572,18 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         lines.append("\nRed zone — recovery day. Mobility or rest.")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    # Inline action buttons
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("What should I train?", callback_data="whoop_train"),
+            InlineKeyboardButton("Log workout", callback_data="whoop_log"),
+        ],
+        [
+            InlineKeyboardButton("Full dashboard", callback_data="whoop_dashboard"),
+        ],
+    ])
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -644,7 +655,15 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if trends.get("strain_avg") is not None:
             lines.append(f"Strain avg: {trends['strain_avg']}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    # Inline action buttons
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("What should I train?", callback_data="whoop_train"),
+            InlineKeyboardButton("Log workout", callback_data="whoop_log"),
+        ],
+    ])
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -658,6 +677,104 @@ async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYP
 
     whoop_service.revoke_access(user["id"])
     await update.message.reply_text("WHOOP disconnected. All WHOOP data removed.")
+
+
+async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button callbacks from WHOOP commands."""
+    query = update.callback_query
+    await query.answer()
+
+    user = context.user_data.get("db_user")
+    if not user:
+        tg = update.effective_user
+        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+        context.user_data["db_user"] = user
+
+    chat = query.message.chat
+
+    if query.data == "whoop_train":
+        await chat.send_action(ChatAction.TYPING)
+
+        async def _keep_typing():
+            await chat.send_action(ChatAction.TYPING)
+
+        tasks = task_service.get_tasks(user["id"])
+        response = await ai_brain.process(
+            "Based on my WHOOP recovery, what should I train today? Give me a specific session.",
+            user, tasks, typing_callback=_keep_typing,
+        )
+        if response:
+            await chat.send_message(response)
+
+    elif query.data == "whoop_log":
+        await chat.send_message("What did you do? e.g. 'Push day — bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
+
+    elif query.data == "whoop_dashboard":
+        # Trigger the full dashboard inline
+        from bot.services import whoop_service
+        if not whoop_service.is_connected(user["id"]):
+            await chat.send_message("WHOOP not connected. Use /connect_whoop to link.")
+            return
+
+        await chat.send_action(ChatAction.TYPING)
+        try:
+            whoop_service.sync_all(user["id"])
+        except Exception:
+            pass
+
+        data = whoop_service.get_today_recovery(user["id"])
+        trends = whoop_service.get_whoop_trends(user["id"], days=7)
+
+        if not data:
+            await chat.send_message("No WHOOP data available yet.")
+            return
+
+        recovery = data.get("recovery_score")
+        zone = whoop_service.get_recovery_zone(recovery)
+        zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
+
+        lines = [f"**WHOOP Dashboard**\n"]
+        lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
+        if data.get("hrv_rmssd") is not None:
+            lines.append(f"HRV: {data['hrv_rmssd']}ms")
+        if data.get("resting_hr") is not None:
+            lines.append(f"Resting HR: {data['resting_hr']}bpm")
+        if data.get("sleep_performance") is not None:
+            sleep_str = f"Sleep: {data['sleep_performance']}%"
+            parts = []
+            if data.get("deep_sleep_minutes") is not None:
+                parts.append(f"{data['deep_sleep_minutes']}min deep")
+            if data.get("rem_sleep_minutes") is not None:
+                parts.append(f"{data['rem_sleep_minutes']}min REM")
+            if parts:
+                sleep_str += f" ({', '.join(parts)})"
+            lines.append(sleep_str)
+        if data.get("daily_strain") is not None:
+            lines.append(f"Strain: {data['daily_strain']}")
+
+        if trends and trends.get("days", 0) > 2:
+            lines.append("\n**7-Day Trends:**")
+            if trends.get("recovery_avg") is not None:
+                arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
+                    trends.get("recovery_trend", ""), "")
+                lines.append(f"Recovery avg: {trends['recovery_avg']}% {arrow}")
+            if trends.get("hrv_avg") is not None:
+                arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
+                    trends.get("hrv_trend", ""), "")
+                lines.append(f"HRV avg: {trends['hrv_avg']}ms {arrow}")
+            if trends.get("sleep_avg") is not None:
+                lines.append(f"Sleep avg: {trends['sleep_avg']}%")
+            if trends.get("strain_avg") is not None:
+                lines.append(f"Strain avg: {trends['strain_avg']}")
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("What should I train?", callback_data="whoop_train"),
+                InlineKeyboardButton("Log workout", callback_data="whoop_log"),
+            ],
+        ])
+
+        await chat.send_message("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
