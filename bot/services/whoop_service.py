@@ -2,7 +2,7 @@
 import logging
 import os
 import urllib.parse
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 import httpx
 
@@ -116,7 +116,7 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
         logger.error(f"WHOOP token response missing access_token: {token_data}")
         return False, f"No access_token in response. Keys: {list(token_data.keys())}"
 
-    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
     # Get WHOOP user ID
     whoop_user_id = None
@@ -179,7 +179,7 @@ def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
     if not new_access:
         return None
 
-    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
     with get_cursor() as cur:
         cur.execute(
@@ -204,7 +204,7 @@ def get_access_token(user_id: int) -> str | None:
             return None
 
     # Check if expired (with 5-min buffer)
-    if row["expires_at"] and row["expires_at"] < datetime.utcnow() + timedelta(minutes=5):
+    if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc) + timedelta(minutes=5):
         if row.get("refresh_token"):
             return _refresh_tokens(user_id, row["refresh_token"])
         logger.warning(f"WHOOP token expired for user {user_id} but no refresh_token")
