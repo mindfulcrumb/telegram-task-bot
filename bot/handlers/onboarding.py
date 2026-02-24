@@ -1,6 +1,6 @@
 """User onboarding — /start, /help, /settings, /account, /deleteaccount."""
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes
 
 from bot.services import user_service
@@ -43,38 +43,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard,
         )
 
-        # Prompt timezone setup
-        tz_keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("US Eastern", callback_data="tz:America/New_York"),
-                InlineKeyboardButton("US Central", callback_data="tz:America/Chicago"),
-            ],
-            [
-                InlineKeyboardButton("US Pacific", callback_data="tz:America/Los_Angeles"),
-                InlineKeyboardButton("US Mountain", callback_data="tz:America/Denver"),
-            ],
-            [
-                InlineKeyboardButton("UK", callback_data="tz:Europe/London"),
-                InlineKeyboardButton("Central EU", callback_data="tz:Europe/Paris"),
-            ],
-            [
-                InlineKeyboardButton("Portugal", callback_data="tz:Europe/Lisbon"),
-                InlineKeyboardButton("Eastern EU", callback_data="tz:Europe/Athens"),
-            ],
-            [
-                InlineKeyboardButton("India", callback_data="tz:Asia/Kolkata"),
-                InlineKeyboardButton("Japan/Korea", callback_data="tz:Asia/Tokyo"),
-            ],
-            [
-                InlineKeyboardButton("Australia East", callback_data="tz:Australia/Sydney"),
-                InlineKeyboardButton("Brazil", callback_data="tz:America/Sao_Paulo"),
-            ],
-            [InlineKeyboardButton("Send location instead", callback_data="tz:request_location")],
-        ])
+        # Request location for automatic timezone detection
+        location_keyboard = ReplyKeyboardMarkup(
+            [[KeyboardButton("Share my location", request_location=True)]],
+            one_time_keyboard=True,
+            resize_keyboard=True,
+        )
         await update.message.reply_text(
-            "One quick thing — what's your timezone?\n"
-            "This helps me send reminders at the right time.",
-            reply_markup=tz_keyboard,
+            "One quick thing — tap the button below so I can set your timezone automatically.\n"
+            "This way reminders and briefings arrive at the right time.",
+            reply_markup=location_keyboard,
         )
     else:
         from bot.services import task_service
@@ -355,7 +333,8 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     short_name = tz.split("/")[-1].replace("_", " ")
     await update.message.reply_text(
         f"Got it! Timezone set to {short_name} ({tz}).\n"
-        "Reminders and briefings will use this timezone."
+        "Reminders and briefings will use this timezone.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
