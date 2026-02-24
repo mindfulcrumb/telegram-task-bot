@@ -1,11 +1,10 @@
 """WHOOP integration — OAuth2, data sync, recovery/sleep/strain access."""
 import logging
 import os
-import json
-import urllib.request
-import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, date
+
+import httpx
 
 from bot.db.database import get_cursor
 
@@ -16,8 +15,17 @@ WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 
-# Scopes we need
+# Scopes — offline MUST be first per WHOOP docs (enables refresh tokens)
 WHOOP_SCOPES = "offline read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
+
+# Shared httpx client with browser-like headers to avoid Cloudflare blocks
+_http = httpx.Client(
+    timeout=20,
+    headers={
+        "User-Agent": "Mozilla/5.0 (compatible; ZoeBot/1.0)",
+        "Accept": "application/json",
+    },
+)
 
 
 def _get_client_id() -> str:
@@ -74,27 +82,25 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
 
     logger.info(f"WHOOP token exchange: redirect_uri={redirect_uri}")
 
-    data = urllib.parse.urlencode({
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }).encode()
-
-    req = urllib.request.Request(
-        WHOOP_TOKEN_URL,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            token_data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()[:500]
-        logger.error(f"WHOOP token exchange HTTP {e.code}: {body}")
-        return False, f"HTTP {e.code}: {body}"
+        resp = _http.post(
+            WHOOP_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        if resp.status_code != 200:
+            body = resp.text[:500]
+            logger.error(f"WHOOP token exchange HTTP {resp.status_code}: {body}")
+            return False, f"HTTP {resp.status_code}: {body}"
+
+        token_data = resp.json()
     except Exception as e:
         logger.error(f"WHOOP token exchange failed: {e}")
         return False, str(e)
@@ -116,7 +122,8 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
     whoop_user_id = None
     try:
         profile = _api_get("/user/profile/basic", access_token)
-        whoop_user_id = profile.get("user_id")
+        if profile:
+            whoop_user_id = profile.get("user_id")
     except Exception:
         pass
 
@@ -143,23 +150,24 @@ def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
     client_id = _get_client_id()
     client_secret = _get_client_secret()
 
-    data = urllib.parse.urlencode({
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "scope": "offline",
-    }).encode()
-
-    req = urllib.request.Request(
-        WHOOP_TOKEN_URL,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            token_data = json.loads(resp.read())
+        resp = _http.post(
+            WHOOP_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "offline",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        if resp.status_code != 200:
+            logger.error(f"WHOOP token refresh HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        token_data = resp.json()
     except Exception as e:
         logger.error(f"WHOOP token refresh failed for user {user_id}: {e}")
         return None
@@ -225,20 +233,17 @@ def revoke_access(user_id: int) -> bool:
 def _api_get(path: str, access_token: str, params: dict = None) -> dict | None:
     """Make authenticated GET request to WHOOP API."""
     url = f"{WHOOP_API_BASE}{path}"
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        logger.error(f"WHOOP API {path} HTTP {e.code}: {e.read().decode()[:200]}")
-        return None
+        resp = _http.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if resp.status_code != 200:
+            logger.error(f"WHOOP API {path} HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+        return resp.json()
     except Exception as e:
         logger.error(f"WHOOP API {path} failed: {e}")
         return None
