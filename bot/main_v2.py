@@ -117,7 +117,11 @@ def main():
 
     if _db_ready:
         # Full handler registration
-        _register_full_handlers(application)
+        try:
+            _register_full_handlers(application)
+            logger.info("All handlers registered successfully")
+        except Exception as e:
+            logger.error(f"Handler registration failed: {type(e).__name__}: {e}")
     else:
         # Degraded mode — just respond that DB is missing
         application.add_handler(CommandHandler("start", _fallback_start))
@@ -161,68 +165,97 @@ def main():
 
 def _register_full_handlers(application):
     """Register all handlers (requires DB)."""
+    _text_handler = None
+
     # Onboarding
-    from bot.handlers.onboarding import (
-        cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-        cmd_calendar, handle_onboarding_callback,
-    )
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("help", cmd_help))
-    application.add_handler(CommandHandler("settings", cmd_settings))
-    application.add_handler(CommandHandler("account", cmd_account))
-    application.add_handler(CommandHandler("calendar", cmd_calendar))
-    application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
-    application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
+    try:
+        from bot.handlers.onboarding import (
+            cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
+            cmd_calendar, handle_onboarding_callback,
+        )
+        application.add_handler(CommandHandler("start", cmd_start))
+        application.add_handler(CommandHandler("help", cmd_help))
+        application.add_handler(CommandHandler("settings", cmd_settings))
+        application.add_handler(CommandHandler("account", cmd_account))
+        application.add_handler(CommandHandler("calendar", cmd_calendar))
+        application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
+        application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
+        logger.info("Onboarding handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register onboarding handlers: {type(e).__name__}: {e}")
 
     # Tasks
-    from bot.handlers.tasks_v2 import (
-        cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
-        cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
-        cmd_analyze, cmd_streak, handle_message,
-    )
-    application.add_handler(CommandHandler("add", cmd_add))
-    application.add_handler(CommandHandler("list", cmd_list))
-    application.add_handler(CommandHandler("today", cmd_today))
-    application.add_handler(CommandHandler("week", cmd_week))
-    application.add_handler(CommandHandler("overdue", cmd_overdue))
-    application.add_handler(CommandHandler("done", cmd_done))
-    application.add_handler(CommandHandler("delete", cmd_delete))
-    application.add_handler(CommandHandler("edit", cmd_edit))
-    application.add_handler(CommandHandler("undo", cmd_undo))
-    application.add_handler(CommandHandler("clear", cmd_clear))
-    application.add_handler(CommandHandler("analyze", cmd_analyze))
-    application.add_handler(CommandHandler("streak", cmd_streak))
+    try:
+        from bot.handlers.tasks_v2 import (
+            cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
+            cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
+            cmd_analyze, cmd_streak, handle_message,
+        )
+        application.add_handler(CommandHandler("add", cmd_add))
+        application.add_handler(CommandHandler("list", cmd_list))
+        application.add_handler(CommandHandler("today", cmd_today))
+        application.add_handler(CommandHandler("week", cmd_week))
+        application.add_handler(CommandHandler("overdue", cmd_overdue))
+        application.add_handler(CommandHandler("done", cmd_done))
+        application.add_handler(CommandHandler("delete", cmd_delete))
+        application.add_handler(CommandHandler("edit", cmd_edit))
+        application.add_handler(CommandHandler("undo", cmd_undo))
+        application.add_handler(CommandHandler("clear", cmd_clear))
+        application.add_handler(CommandHandler("analyze", cmd_analyze))
+        application.add_handler(CommandHandler("streak", cmd_streak))
+        _text_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        logger.info("Task handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register task handlers: {type(e).__name__}: {e}")
 
     # Payments
-    from bot.handlers.payments import (
-        cmd_upgrade, handle_pre_checkout, handle_successful_payment,
-        cmd_terms, cmd_support,
-    )
-    application.add_handler(CommandHandler("upgrade", cmd_upgrade))
-    application.add_handler(CommandHandler("terms", cmd_terms))
-    application.add_handler(CommandHandler("support", cmd_support))
-    application.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
+    try:
+        from bot.handlers.payments import (
+            cmd_upgrade, handle_pre_checkout, handle_successful_payment,
+            cmd_terms, cmd_support,
+        )
+        application.add_handler(CommandHandler("upgrade", cmd_upgrade))
+        application.add_handler(CommandHandler("terms", cmd_terms))
+        application.add_handler(CommandHandler("support", cmd_support))
+        application.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
+        application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
+        logger.info("Payment handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register payment handlers: {type(e).__name__}: {e}")
 
     # Admin
-    from bot.handlers.admin import cmd_migrate_notion, cmd_diagnostics
-    application.add_handler(CommandHandler("migrate", cmd_migrate_notion))
-    application.add_handler(CommandHandler("diagnostics", cmd_diagnostics))
+    try:
+        from bot.handlers.admin import cmd_migrate_notion, cmd_diagnostics
+        application.add_handler(CommandHandler("migrate", cmd_migrate_notion))
+        application.add_handler(CommandHandler("diagnostics", cmd_diagnostics))
+        logger.info("Admin handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register admin handlers: {type(e).__name__}: {e}")
 
     # Voice (before text catch-all)
-    from bot.handlers.voice_v2 import handle_voice, is_voice_configured
-    if is_voice_configured():
-        application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-        logger.info("Voice handler registered (Groq Whisper)")
+    try:
+        from bot.handlers.voice_v2 import handle_voice, is_voice_configured
+        if is_voice_configured():
+            application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+            logger.info("Voice handler registered (Groq Whisper)")
+        else:
+            logger.info("Voice skipped (GROQ_API_KEY not set)")
+    except Exception as e:
+        logger.error(f"Failed to register voice handler: {type(e).__name__}: {e}")
 
     # Free text → AI brain (must be last)
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_message
-    ))
+    if _text_handler:
+        application.add_handler(_text_handler)
 
     # Proactive coaching jobs
-    from bot.handlers.proactive_v2 import setup_proactive_jobs
-    setup_proactive_jobs(application)
+    try:
+        if application.job_queue is None:
+            logger.warning("Job queue unavailable (APScheduler not installed). Proactive features disabled.")
+        else:
+            from bot.handlers.proactive_v2 import setup_proactive_jobs
+            setup_proactive_jobs(application)
+    except Exception as e:
+        logger.error(f"Failed to setup proactive jobs: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
