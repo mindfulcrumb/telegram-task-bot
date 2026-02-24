@@ -6,7 +6,7 @@ import secrets
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     PreCheckoutQueryHandler, ContextTypes, filters,
@@ -27,6 +27,28 @@ class _HealthCheck(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
+
+
+async def _post_init(application):
+    """Set bot commands so users see the menu in Telegram."""
+    commands = [
+        BotCommand("add", "Add a new task"),
+        BotCommand("list", "Show all tasks"),
+        BotCommand("today", "Today's tasks"),
+        BotCommand("week", "This week's tasks"),
+        BotCommand("overdue", "Overdue tasks"),
+        BotCommand("done", "Complete a task"),
+        BotCommand("edit", "Edit a task"),
+        BotCommand("streak", "Your completion streak"),
+        BotCommand("analyze", "AI analysis of your tasks"),
+        BotCommand("settings", "Your preferences"),
+        BotCommand("upgrade", "Get Pro features"),
+        BotCommand("account", "Subscription info"),
+        BotCommand("help", "Show all commands"),
+        BotCommand("support", "Get help"),
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info(f"Bot menu commands set ({len(commands)} commands)")
 
 
 async def _fallback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,7 +97,7 @@ def main():
         return
 
     # Build app
-    application = Application.builder().token(bot_token).build()
+    application = Application.builder().token(bot_token).post_init(_post_init).build()
 
     # Try to initialize PostgreSQL
     db_url = os.environ.get("DATABASE_URL")
