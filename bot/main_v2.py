@@ -67,6 +67,27 @@ class _HealthCheck(BaseHTTPRequestHandler):
         try:
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
+            logger.info(f"WHOOP callback hit. Full path: {self.path}")
+            logger.info(f"WHOOP callback params: {params}")
+
+            # Check for OAuth error response
+            error = params.get("error", [None])[0]
+            if error:
+                error_desc = params.get("error_description", ["Unknown"])[0]
+                logger.error(f"WHOOP OAuth error: {error} — {error_desc}")
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>WHOOP Authorization Failed</h1>"
+                    f"<p>Error: {error}</p>"
+                    f"<p>{error_desc}</p>"
+                    f"<p>Please try /connect_whoop again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
+                return
+
             code = params.get("code", [None])[0]
             state = params.get("state", [None])[0]
 

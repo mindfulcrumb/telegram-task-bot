@@ -17,7 +17,7 @@ WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 
 # Scopes we need
-WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement offline"
+WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
 
 
 def _get_client_id() -> str:
@@ -29,10 +29,14 @@ def _get_client_secret() -> str:
 
 
 def _get_redirect_uri() -> str:
+    # Explicit env var takes priority
+    explicit = os.environ.get("WHOOP_REDIRECT_URI", "")
+    if explicit:
+        return explicit
     domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
     if domain:
         return f"https://{domain}/whoop/callback"
-    return os.environ.get("WHOOP_REDIRECT_URI", "")
+    return ""
 
 
 def is_configured() -> bool:
