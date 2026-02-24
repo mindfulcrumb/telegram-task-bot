@@ -51,6 +51,8 @@ class _HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/whoop/callback"):
             self._handle_whoop_callback()
+        elif self.path == "/whoop/debug":
+            self._handle_whoop_debug()
         else:
             self.send_response(200)
             self.end_headers()
@@ -62,6 +64,38 @@ class _HealthCheck(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _handle_whoop_debug(self):
+        """Debug endpoint to verify WHOOP configuration."""
+        try:
+            client_id = os.environ.get("WHOOP_CLIENT_ID", "")
+            client_secret = os.environ.get("WHOOP_CLIENT_SECRET", "")
+            redirect_uri = os.environ.get("WHOOP_REDIRECT_URI", "")
+            railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+
+            from bot.services.whoop_service import _get_redirect_uri, is_configured, WHOOP_SCOPES
+
+            effective_redirect = _get_redirect_uri()
+
+            info = {
+                "configured": is_configured(),
+                "client_id_set": bool(client_id),
+                "client_id_preview": client_id[:8] + "..." if client_id else "MISSING",
+                "client_secret_set": bool(client_secret),
+                "whoop_redirect_uri_env": redirect_uri or "NOT SET",
+                "railway_public_domain_env": railway_domain or "NOT SET",
+                "effective_redirect_uri": effective_redirect or "EMPTY",
+                "scopes": WHOOP_SCOPES,
+            }
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(info, indent=2).encode())
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f"Debug error: {e}".encode())
 
     def _handle_whoop_callback(self):
         """Handle WHOOP OAuth callback — exchange code for tokens."""

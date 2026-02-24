@@ -17,7 +17,7 @@ WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 
 # Scopes we need
-WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement offline"
+WHOOP_SCOPES = "offline read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
 
 
 def _get_client_id() -> str:
@@ -148,6 +148,7 @@ def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
         "refresh_token": refresh_token,
         "client_id": client_id,
         "client_secret": client_secret,
+        "scope": "offline",
     }).encode()
 
     req = urllib.request.Request(
