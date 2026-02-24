@@ -166,6 +166,8 @@ TOOL USE GUIDELINES:
 - "tomorrow", "next week", "friday" -> convert to YYYY-MM-DD dates
 - Infer category (Personal/Business) and priority from context
 - When user says "undo", "bring it back", "that was a mistake" -> use undo_last_action
+- When user says "remind me about X at TIME" -> use set_reminder with task_number and full datetime (YYYY-MM-DDTHH:MM:SS)
+- Convert "remind me at 3pm" to today's date + 15:00:00, "remind me tomorrow at 9" to tomorrow + 09:00:00
 
 Keep it real. No corporate speak. Just be helpful."""
 

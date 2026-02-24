@@ -88,6 +88,18 @@ def get_tool_definitions() -> list:
                 "required": ["task_number", "new_title"]
             }
         },
+        {
+            "name": "set_reminder",
+            "description": "Set a reminder on a task. The bot will send a message at the specified time. Use when user says 'remind me', 'set a reminder', 'alert me at', etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_number": {"type": "integer", "description": "Task number to set reminder on"},
+                    "reminder_datetime": {"type": "string", "description": "When to remind, in ISO format YYYY-MM-DDTHH:MM:SS. Convert 'tomorrow at 9am' etc. to full datetime."}
+                },
+                "required": ["task_number", "reminder_datetime"]
+            }
+        },
     ]
 
 
@@ -172,6 +184,32 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             result = task_service.update_task_title(user_id, args["task_number"], args["new_title"])
             if result:
                 return {"old_title": result[0], "new_title": result[1]}
+            return {"error": f"Task #{args['task_number']} not found."}
+
+        elif name == "set_reminder":
+            from bot.services.tier_service import check_limit
+            user_tier = "free"
+            try:
+                from bot.services import user_service
+                u = user_service.get_user_by_id(user_id)
+                user_tier = u.get("tier", "free") if u else "free"
+            except Exception:
+                pass
+            allowed, limit_msg = check_limit(user_id, "set_reminder", user_tier)
+            if not allowed:
+                return {"error": limit_msg}
+            try:
+                reminder_dt = datetime.fromisoformat(args["reminder_datetime"])
+            except (ValueError, TypeError):
+                return {"error": "Invalid datetime format. Use YYYY-MM-DDTHH:MM:SS"}
+            if reminder_dt <= datetime.now():
+                return {"error": "Reminder time must be in the future."}
+            ok = task_service.set_reminder(user_id, args["task_number"], reminder_dt)
+            if ok:
+                tasks = task_service.get_tasks(user_id)
+                idx = args["task_number"]
+                title = tasks[idx - 1]["title"] if 1 <= idx <= len(tasks) else "task"
+                return {"success": True, "task": title, "remind_at": reminder_dt.strftime("%b %d at %I:%M %p")}
             return {"error": f"Task #{args['task_number']} not found."}
 
         else:

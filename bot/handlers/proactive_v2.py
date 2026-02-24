@@ -183,11 +183,35 @@ async def weekly_insights_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Weekly insight failed for user {user.get('id')}: {e}")
 
 
+# --- Reminders ---
+
+async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 60 seconds. Fires reminders that are due."""
+    from bot.services import task_service
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            due_reminders = task_service.get_tasks_with_reminders(user["id"])
+            for task in due_reminders:
+                await context.bot.send_message(
+                    chat_id=user["telegram_user_id"],
+                    text=f"\u23f0 **Reminder:** {task['title']}",
+                    parse_mode="Markdown",
+                )
+                task_service.clear_reminder(task["id"])
+                logger.info(f"Reminder fired for user {user['id']}: {task['title']}")
+        except Exception as e:
+            logger.error(f"Reminder failed for user {user.get('id')}: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
     """Register all proactive coaching jobs."""
     jq = application.job_queue
+
+    # Reminders: every 60 seconds
+    jq.run_repeating(reminder_job, interval=60, first=10, name="reminders")
 
     # Morning briefing scanner: every 15 min
     jq.run_repeating(morning_briefing_job, interval=900, first=60, name="morning_briefing")
@@ -201,7 +225,7 @@ def setup_proactive_jobs(application):
     # Weekly insights: every 6 hours (self-skips on non-Sundays)
     jq.run_repeating(weekly_insights_job, interval=21600, first=600, name="weekly_insights")
 
-    logger.info("Proactive coaching jobs registered")
+    logger.info("Proactive coaching jobs registered (including reminders)")
 
 
 # --- Helpers ---
