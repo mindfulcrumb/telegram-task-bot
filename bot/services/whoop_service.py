@@ -17,7 +17,7 @@ WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 
 # Scopes we need
-WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
+WHOOP_SCOPES = "read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement offline"
 
 
 def _get_client_id() -> str:
@@ -99,14 +99,16 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
         logger.error(f"WHOOP token exchange failed: {e}")
         return False, str(e)
 
+    logger.info(f"WHOOP token response keys: {list(token_data.keys())}")
+
     access_token = token_data.get("access_token")
-    refresh_token = token_data.get("refresh_token")
+    refresh_token = token_data.get("refresh_token", "")
     expires_in = token_data.get("expires_in", 3600)
     scopes = token_data.get("scope", "")
 
-    if not access_token or not refresh_token:
-        logger.error(f"WHOOP token response missing tokens: {token_data}")
-        return False, "Token response missing access_token or refresh_token"
+    if not access_token:
+        logger.error(f"WHOOP token response missing access_token: {token_data}")
+        return False, f"No access_token in response. Keys: {list(token_data.keys())}"
 
     expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
@@ -194,7 +196,10 @@ def get_access_token(user_id: int) -> str | None:
 
     # Check if expired (with 5-min buffer)
     if row["expires_at"] and row["expires_at"] < datetime.utcnow() + timedelta(minutes=5):
-        return _refresh_tokens(user_id, row["refresh_token"])
+        if row.get("refresh_token"):
+            return _refresh_tokens(user_id, row["refresh_token"])
+        logger.warning(f"WHOOP token expired for user {user_id} but no refresh_token")
+        return None
 
     return row["access_token"]
 
