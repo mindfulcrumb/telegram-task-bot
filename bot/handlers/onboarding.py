@@ -71,28 +71,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await update.message.reply_text(
-        "I'm Zoe — your intelligent companion for everyday clarity.\n\n"
-        "Just talk to me, send a voice note, or use commands:\n\n"
-        "*Manage tasks*\n"
+        "I'm Zoe — your AI coach for tasks, training, and performance.\n\n"
+        "Talk to me naturally, send a voice note, or use commands:\n\n"
+        "*Tasks*\n"
         "/add — Add a task\n"
         "/list — All your tasks\n"
         "/today — Due today\n"
-        "/week — This week\n"
-        "/overdue — Past due\n"
         "/done — Mark complete\n"
-        "/edit — Change a task\n"
-        "/delete — Remove a task\n"
-        "/undo — Undo last action\n"
-        "/streak — Completion streak\n"
-        "/analyze — AI task analysis\n\n"
-        "*Your account*\n"
-        "/calendar — Connect Google Calendar\n"
+        "/streak — Completion streak\n\n"
+        "*Fitness*\n"
+        "/workout — Log a workout\n"
+        "/gains — Streak, PRs & pattern balance\n"
+        "/metrics — Body metrics\n\n"
+        "Just tell me naturally:\n"
+        '  "Did bench 4x8 at 75kg, rows 4x10"\n'
+        '  "I weigh 81kg today"\n'
+        '  "What should I train today?"\n\n'
+        "*Account*\n"
         "/settings — Timezone & preferences\n"
-        "/account — Plan & usage\n"
         "/upgrade — Unlock Zoe Pro\n"
         "/support — Get help\n\n"
-        "*Zoe Pro* — morning briefings, evening check-ins, "
-        "smart reminders, weekly insights, unlimited everything",
+        "*Zoe Pro* — AI fitness coaching, morning briefings, "
+        "workout insights, weekly reports, unlimited everything",
         parse_mode="Markdown"
     )
 

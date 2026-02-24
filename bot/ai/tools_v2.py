@@ -116,6 +116,82 @@ def get_tool_definitions() -> list:
                 "required": ["task_number", "reminder_datetime"]
             }
         },
+        # --- Fitness tools ---
+        {
+            "name": "log_workout",
+            "description": "Log a workout session. Use when user says they trained, worked out, did exercises, went to the gym, etc. Infer movement_pattern from exercise names. Exercises array is optional for quick logs like 'did cardio for 30 min'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Workout title (e.g., 'Upper Body Push', 'Leg Day', 'Cardio')"},
+                    "duration_minutes": {"type": "integer", "description": "Duration in minutes"},
+                    "rpe": {"type": "number", "description": "Rate of perceived exertion 1-10"},
+                    "notes": {"type": "string", "description": "Any notes (how it felt, pain, energy level)"},
+                    "exercises": {
+                        "type": "array",
+                        "description": "Individual exercises performed. Include when user mentions specific exercises with sets/reps/weight.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "exercise_name": {"type": "string", "description": "Exercise name (e.g., 'Bench Press', 'Squat')"},
+                                "movement_pattern": {"type": "string", "enum": ["squat", "hinge", "horizontal_push", "horizontal_pull", "vertical_push", "vertical_pull", "carry_rotation"], "description": "Movement pattern category. Infer from exercise name if not specified."},
+                                "sets": {"type": "integer", "description": "Number of sets"},
+                                "reps": {"type": "string", "description": "Reps per set (e.g., '8', '8-10', '12,10,8')"},
+                                "weight": {"type": "number", "description": "Weight used"},
+                                "weight_unit": {"type": "string", "enum": ["kg", "lbs"], "description": "Weight unit (default: kg)"},
+                                "rpe": {"type": "number", "description": "RPE for this exercise specifically"}
+                            },
+                            "required": ["exercise_name"]
+                        }
+                    }
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "get_fitness_context",
+            "description": "Get full fitness summary: recent workouts, movement pattern balance, streak, body metrics, PRs, volume trends. Call this BEFORE giving workout advice or when user asks 'what should I train', 'how am I doing', 'program my week', etc.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "log_body_metric",
+            "description": "Log a body metric. Use when user mentions their weight, body fat, measurements, or 1RM numbers.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "metric_type": {"type": "string", "description": "Type of metric (weight, body_fat, chest, waist, hips, arms, bench_1rm, squat_1rm, deadlift_1rm, or custom)"},
+                    "value": {"type": "number", "description": "The measurement value"},
+                    "unit": {"type": "string", "description": "Unit of measurement (kg, lbs, %, cm, in)"}
+                },
+                "required": ["metric_type", "value"]
+            }
+        },
+        {
+            "name": "update_fitness_profile",
+            "description": "Set or update user's fitness profile: goals, experience level, training frequency, limitations, preferred style. Use when user mentions their fitness goal, experience, injuries/limitations, or how often they train.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "fitness_goal": {"type": "string", "enum": ["build_muscle", "lose_fat", "strength", "athletic_performance", "general_fitness"], "description": "Primary fitness goal"},
+                    "experience_level": {"type": "string", "enum": ["beginner", "intermediate", "advanced"], "description": "Training experience level"},
+                    "training_days_per_week": {"type": "integer", "description": "How many days per week they train"},
+                    "limitations": {"type": "string", "description": "Physical limitations or injuries (e.g., 'bad left shoulder', 'lower back issues')"},
+                    "preferred_style": {"type": "string", "description": "Training style preference (e.g., 'powerlifting', 'calisthenics', 'functional', 'bodybuilding')"}
+                }
+            }
+        },
+        {
+            "name": "get_exercise_history",
+            "description": "Get progression history for a specific exercise. Use when user asks about their progress on a specific lift, or when you need data to program progressive overload.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "exercise_name": {"type": "string", "description": "Exercise name to look up (e.g., 'Bench Press', 'Squat')"},
+                    "limit": {"type": "integer", "description": "Number of recent entries to return (default: 10)"}
+                },
+                "required": ["exercise_name"]
+            }
+        },
     ]
 
 
@@ -263,6 +339,154 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 title = tasks[idx - 1]["title"] if 1 <= idx <= len(tasks) else "task"
                 return {"success": True, "task": title, "remind_at": reminder_dt.strftime("%b %d at %I:%M %p")}
             return {"error": f"Task #{args['task_number']} not found."}
+
+        # --- Fitness tools ---
+        elif name == "log_workout":
+            from bot.services import fitness_service
+            workout = fitness_service.log_workout(
+                user_id=user_id,
+                title=args["title"],
+                duration_minutes=args.get("duration_minutes"),
+                rpe=args.get("rpe"),
+                notes=args.get("notes"),
+                exercises=args.get("exercises"),
+            )
+            result = {
+                "success": True,
+                "title": args["title"],
+                "workout_id": workout["id"],
+            }
+            if args.get("duration_minutes"):
+                result["duration"] = args["duration_minutes"]
+            if args.get("exercises"):
+                result["exercise_count"] = len(args["exercises"])
+            # Include streak info
+            streak = fitness_service.get_workout_streak(user_id)
+            result["workout_streak"] = streak.get("current_streak", 0)
+            # Include any PRs detected
+            if workout.get("prs"):
+                result["prs"] = workout["prs"]
+            # Include pattern balance for AI to reference
+            patterns = fitness_service.get_movement_pattern_balance(user_id, days=14)
+            if patterns:
+                result["pattern_balance_14d"] = patterns
+            return result
+
+        elif name == "get_fitness_context":
+            from bot.services import fitness_service
+            summary = fitness_service.get_fitness_summary(user_id)
+            # Format for AI consumption
+            result = {}
+            if summary["profile"]:
+                p = summary["profile"]
+                result["profile"] = {
+                    "goal": p.get("fitness_goal"),
+                    "experience": p.get("experience_level"),
+                    "days_per_week": p.get("training_days_per_week"),
+                    "limitations": p.get("limitations"),
+                    "style": p.get("preferred_style"),
+                }
+            s = summary["streak"]
+            result["streak"] = {
+                "current": s.get("current_streak", 0),
+                "longest": s.get("longest_streak", 0),
+                "last_workout": s["last_workout_date"].isoformat() if s.get("last_workout_date") else None,
+                "weekly_target": s.get("weekly_target", 3),
+            }
+            # Recent workouts with exercises
+            recent = []
+            for w in summary["recent_workouts"]:
+                entry = {
+                    "date": w["created_at"].strftime("%Y-%m-%d") if w.get("created_at") else None,
+                    "title": w["title"],
+                    "duration": w.get("duration_minutes"),
+                    "rpe": w.get("rpe"),
+                }
+                if w.get("exercises"):
+                    entry["exercises"] = [
+                        {
+                            "name": ex["exercise_name"],
+                            "pattern": ex.get("movement_pattern"),
+                            "sets": ex.get("sets"),
+                            "reps": ex.get("reps"),
+                            "weight": ex.get("weight"),
+                            "unit": ex.get("weight_unit"),
+                        }
+                        for ex in w["exercises"]
+                    ]
+                recent.append(entry)
+            result["recent_workouts"] = recent
+            result["pattern_balance_14d"] = summary["pattern_balance"]
+            vol = summary["volume_trend"]
+            result["volume_trend"] = {
+                "trend": vol["trend"],
+                "this_week_sets": vol["this_week_sets"],
+                "last_week_sets": vol["last_week_sets"],
+            }
+            # Metrics
+            metrics = {}
+            for k, v in summary["latest_metrics"].items():
+                metrics[k] = {
+                    "value": v["value"],
+                    "unit": v.get("unit"),
+                    "date": v["recorded_at"].strftime("%Y-%m-%d") if v.get("recorded_at") else None,
+                }
+            result["latest_metrics"] = metrics
+            result["recent_prs"] = summary["recent_prs"]
+            result["active_training_weeks"] = summary["active_training_weeks"]
+            return result
+
+        elif name == "log_body_metric":
+            from bot.services import fitness_service
+            metric = fitness_service.log_metric(
+                user_id=user_id,
+                metric_type=args["metric_type"],
+                value=args["value"],
+                unit=args.get("unit"),
+            )
+            result = {
+                "success": True,
+                "metric_type": args["metric_type"],
+                "value": args["value"],
+                "unit": args.get("unit"),
+            }
+            if metric.get("previous_value") is not None:
+                result["previous_value"] = metric["previous_value"]
+                result["change"] = metric["change"]
+            return result
+
+        elif name == "update_fitness_profile":
+            from bot.services import fitness_service
+            profile = fitness_service.update_fitness_profile(user_id, **args)
+            return {
+                "success": True,
+                "profile": {
+                    "goal": profile.get("fitness_goal"),
+                    "experience": profile.get("experience_level"),
+                    "days_per_week": profile.get("training_days_per_week"),
+                    "limitations": profile.get("limitations"),
+                    "style": profile.get("preferred_style"),
+                }
+            }
+
+        elif name == "get_exercise_history":
+            from bot.services import fitness_service
+            history = fitness_service.get_exercise_history(
+                user_id=user_id,
+                exercise_name=args["exercise_name"],
+                limit=args.get("limit", 10),
+            )
+            entries = []
+            for h in history:
+                entries.append({
+                    "date": h["workout_date"].strftime("%Y-%m-%d") if h.get("workout_date") else None,
+                    "sets": h.get("sets"),
+                    "reps": h.get("reps"),
+                    "weight": h.get("weight"),
+                    "unit": h.get("weight_unit"),
+                    "rpe": h.get("rpe"),
+                })
+            return {"exercise": args["exercise_name"], "history": entries, "count": len(entries)}
 
         else:
             return {"error": f"Unknown tool: {name}"}

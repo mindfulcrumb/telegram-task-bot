@@ -27,10 +27,12 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Zoe Pro is coming soon! You'll get:\n\n"
             "- Unlimited tasks & AI conversations\n"
+            "- AI fitness coaching & workout programming\n"
+            "- Pattern balance analysis & PR tracking\n"
             "- Personalized morning briefings\n"
             "- Evening accountability check-ins\n"
             "- Smart reminders & nudges\n"
-            "- Weekly performance insights\n\n"
+            "- Weekly performance & fitness reports\n\n"
             "Stay tuned."
         )
         return
@@ -38,7 +40,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="Zoe Pro",
-        description="Unlimited tasks, AI conversations, morning briefings, smart reminders, and weekly insights.",
+        description="AI fitness coaching, workout programming, unlimited tasks & conversations, morning briefings, and weekly reports.",
         payload=f"pro_upgrade_{user['id']}",
         provider_token=STRIPE_PROVIDER_TOKEN,
         currency=PRO_CURRENCY,
@@ -80,12 +82,14 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(
             "Welcome to Zoe Pro! Here's what you unlocked:\n\n"
             "- Unlimited tasks & AI conversations\n"
+            "- AI fitness coaching & workout programming\n"
+            "- Pattern balance analysis & PR tracking\n"
             "- Personalized morning briefings\n"
             "- Evening accountability check-ins\n"
             "- Smart reminders & nudges\n"
-            "- Weekly performance insights\n\n"
+            "- Weekly performance & fitness reports\n\n"
             "I'll start learning your patterns and coaching you proactively. "
-            "Thanks for trusting me with your day."
+            "Thanks for trusting me with your training and your day."
         )
 
 

@@ -62,18 +62,14 @@ async def _post_init(application):
             BotCommand("add", "Add a new task"),
             BotCommand("list", "Show all tasks"),
             BotCommand("today", "Today's tasks"),
-            BotCommand("week", "This week's tasks"),
-            BotCommand("overdue", "Overdue tasks"),
             BotCommand("done", "Complete a task"),
-            BotCommand("edit", "Edit a task"),
+            BotCommand("workout", "Log a workout"),
+            BotCommand("gains", "Workout streak & PRs"),
+            BotCommand("metrics", "Body metrics"),
             BotCommand("streak", "Your completion streak"),
-            BotCommand("analyze", "AI analysis of your tasks"),
-            BotCommand("calendar", "Connect Google Calendar"),
             BotCommand("settings", "Your preferences"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
-            BotCommand("account", "Subscription info"),
             BotCommand("help", "Show all commands"),
-            BotCommand("support", "Get help"),
         ]
         await application.bot.set_my_commands(commands)
         logger.info(f"Bot menu commands set ({len(commands)} commands)")
@@ -277,12 +273,13 @@ def _register_full_handlers(application):
     except Exception as e:
         logger.error(f"Failed to register onboarding handlers: {type(e).__name__}: {e}")
 
-    # Tasks
+    # Tasks + Fitness
     try:
         from bot.handlers.tasks_v2 import (
             cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
             cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
-            cmd_analyze, cmd_streak, handle_message,
+            cmd_analyze, cmd_streak, cmd_workout, cmd_metrics, cmd_gains,
+            handle_message,
         )
         application.add_handler(CommandHandler("add", cmd_add))
         application.add_handler(CommandHandler("list", cmd_list))
@@ -296,8 +293,11 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("clear", cmd_clear))
         application.add_handler(CommandHandler("analyze", cmd_analyze))
         application.add_handler(CommandHandler("streak", cmd_streak))
+        application.add_handler(CommandHandler("workout", cmd_workout))
+        application.add_handler(CommandHandler("metrics", cmd_metrics))
+        application.add_handler(CommandHandler("gains", cmd_gains))
         _text_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-        logger.info("Task handlers registered")
+        logger.info("Task + fitness handlers registered")
     except Exception as e:
         logger.error(f"Failed to register task handlers: {type(e).__name__}: {e}")
 

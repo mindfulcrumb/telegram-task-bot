@@ -13,6 +13,9 @@ LIMITS = {
         "check_ins": False,
         "weekly_insights": False,
         "max_reminders": 3,
+        "max_workouts_per_day": 2,
+        "body_metrics": True,
+        "fitness_insights": False,
     },
     "pro": {
         "max_tasks": None,  # unlimited
@@ -21,6 +24,9 @@ LIMITS = {
         "check_ins": True,
         "weekly_insights": True,
         "max_reminders": None,
+        "max_workouts_per_day": None,
+        "body_metrics": True,
+        "fitness_insights": True,
     },
 }
 

@@ -140,12 +140,73 @@ def initialize():
             -- Google Calendar iCal URL for calendar sync
             ALTER TABLE users ADD COLUMN IF NOT EXISTS google_calendar_url TEXT;
 
+            -- Workout sessions
+            CREATE TABLE IF NOT EXISTS workouts (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                duration_minutes INT,
+                rpe REAL,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Individual exercises within a workout
+            CREATE TABLE IF NOT EXISTS workout_exercises (
+                id SERIAL PRIMARY KEY,
+                workout_id INT NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+                exercise_name TEXT NOT NULL,
+                movement_pattern TEXT,
+                sets INT,
+                reps TEXT,
+                weight REAL,
+                weight_unit TEXT DEFAULT 'kg',
+                rpe REAL,
+                notes TEXT,
+                sort_order INT DEFAULT 0
+            );
+
+            -- Body metrics (weight, body fat, 1RMs, measurements)
+            CREATE TABLE IF NOT EXISTS body_metrics (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                metric_type TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT,
+                recorded_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- User fitness profile (goals, experience, limitations)
+            CREATE TABLE IF NOT EXISTS fitness_profiles (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                fitness_goal TEXT,
+                experience_level TEXT DEFAULT 'intermediate',
+                training_days_per_week INT DEFAULT 3,
+                limitations TEXT,
+                preferred_style TEXT,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Workout streaks (separate from task streaks)
+            CREATE TABLE IF NOT EXISTS workout_streaks (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                current_streak INT DEFAULT 0,
+                longest_streak INT DEFAULT 0,
+                last_workout_date DATE,
+                weekly_target INT DEFAULT 3
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON tasks(user_id, due_date) WHERE status = 'active';
             CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, id);
             CREATE INDEX IF NOT EXISTS idx_usage_user_date ON usage(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_check_ins_user_date ON check_ins(user_id, check_in_date);
             CREATE INDEX IF NOT EXISTS idx_nudge_log_user_date ON nudge_log(user_id, nudged_at);
+            CREATE INDEX IF NOT EXISTS idx_workouts_user ON workouts(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_workout_exercises_workout ON workout_exercises(workout_id);
+            CREATE INDEX IF NOT EXISTS idx_body_metrics_user ON body_metrics(user_id, metric_type, recorded_at);
         """)
     logger.info("PostgreSQL schema initialized")
 

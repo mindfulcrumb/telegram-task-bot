@@ -228,6 +228,99 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /workout command — quick log or prompt."""
+    user = await _get_user(update, context)
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Log a workout:\n"
+            "/workout push day 45min\n"
+            "/workout cardio 30min\n\n"
+            "Or just tell me naturally what you did!"
+        )
+        return
+    # Feed into AI brain as a workout log
+    chat = update.message.chat
+    await chat.send_action(ChatAction.TYPING)
+
+    async def _keep_typing():
+        await chat.send_action(ChatAction.TYPING)
+
+    tasks = task_service.get_tasks(user["id"])
+    prompt = f"Log this workout: {text}"
+    response = await ai_brain.process(prompt, user, tasks, typing_callback=_keep_typing)
+    if response:
+        if len(response) <= 4096:
+            await update.message.reply_text(response)
+        else:
+            for i in range(0, len(response), 4096):
+                await update.message.reply_text(response[i:i + 4096])
+
+
+async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /metrics command — show body metrics."""
+    user = await _get_user(update, context)
+    from bot.services import fitness_service
+    metrics = fitness_service.get_latest_metrics(user["id"])
+    if not metrics:
+        await update.message.reply_text("No body metrics yet. Tell me your weight, body fat, or 1RMs!")
+        return
+    lines = ["\U0001f4ca **Body Metrics**\n"]
+    for metric_type, data in metrics.items():
+        label = metric_type.replace("_", " ").title()
+        unit = data.get("unit", "")
+        val = data["value"]
+        date_str = data["recorded_at"].strftime("%b %d") if data.get("recorded_at") else ""
+        lines.append(f"{label}: {val}{unit} ({date_str})")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /gains command — workout streak + PRs + pattern balance."""
+    user = await _get_user(update, context)
+    from bot.services import fitness_service
+
+    streak = fitness_service.get_workout_streak(user["id"])
+    patterns = fitness_service.get_movement_pattern_balance(user["id"], days=14)
+    prs = fitness_service.detect_prs(user["id"])
+
+    lines = []
+
+    # Streak
+    current = streak.get("current_streak", 0)
+    longest = streak.get("longest_streak", 0)
+    if current > 0:
+        lines.append(f"\U0001f525 **Workout streak: {current}** (best: {longest})")
+    else:
+        lines.append("No active workout streak. Log a workout to start one!")
+
+    # Pattern balance
+    if patterns:
+        lines.append("\n\U0001f4ca **Pattern Balance (14d):**")
+        pattern_labels = {
+            "horizontal_push": "Push (horiz)",
+            "horizontal_pull": "Pull (horiz)",
+            "vertical_push": "Push (vert)",
+            "vertical_pull": "Pull (vert)",
+            "squat": "Squat",
+            "hinge": "Hinge",
+            "carry_rotation": "Carry/Rotation",
+        }
+        for key, label in pattern_labels.items():
+            count = patterns.get(key, 0)
+            bar = "\u2588" * count if count > 0 else "-"
+            lines.append(f"  {label}: {bar} {count}")
+
+    # PRs
+    if prs:
+        lines.append("\n\U0001f3c6 **Recent PRs:**")
+        for p in prs[:5]:
+            lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
     user = await _get_user(update, context)
