@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime, date
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.services import user_service, task_service, tier_service
@@ -234,8 +235,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # Show "typing..." while AI processes (refreshed between agent turns)
+    chat = update.message.chat
+    await chat.send_action(ChatAction.TYPING)
+
+    async def _keep_typing():
+        await chat.send_action(ChatAction.TYPING)
+
     tasks = task_service.get_tasks(user["id"])
-    response = await ai_brain.process(text, user, tasks)
+    response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
 
     if response:
         # Split long messages (Telegram limit is 4096 chars)

@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +51,24 @@ def _call_api(system_prompt, messages, tools=None, max_tokens=2048):
         return None, f"Error: {_to_ascii(type(e).__name__)}"
 
 
+def _user_now(user: dict) -> datetime:
+    """Get current datetime in the user's timezone."""
+    tz_name = user.get("timezone", "UTC")
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        # Fallback if zoneinfo not available or bad tz name
+        return datetime.now()
+
+
 class AIBrain:
     """AI Brain with agent loop — user-scoped."""
 
     def _build_system_prompt(self, user: dict, tasks: list) -> str:
         """Build system prompt from user data and their tasks."""
-        now = datetime.now()
+        # Use user's timezone for time awareness
+        now = _user_now(user)
         hour = now.hour
         if hour < 12:
             time_of_day = "morning"
@@ -68,7 +80,7 @@ class AIBrain:
             time_of_day = "night"
 
         # Build task list
-        today = date.today()
+        today = now.date()
         today_str = today.isoformat()
         overdue = 0
         due_today = 0
@@ -188,8 +200,11 @@ TOOL USE GUIDELINES:
 
 Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. Just genuinely helpful."""
 
-    async def process(self, user_input: str, user: dict, tasks: list = None) -> str | None:
-        """Agent loop: call Claude with tools, execute tools, repeat until text response."""
+    async def process(self, user_input: str, user: dict, tasks: list = None, typing_callback=None) -> str | None:
+        """Agent loop: call Claude with tools, execute tools, repeat until text response.
+
+        typing_callback: optional async callable to refresh typing indicator between turns.
+        """
         from bot.ai.tools_v2 import get_tool_definitions, execute_tool
         from bot.ai import memory_pg as memory
         from bot.services.tier_service import check_limit, track_usage
@@ -220,6 +235,13 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. Just genuinely hel
             response = None
 
             for turn in range(max_turns):
+                # Refresh typing indicator between turns so dots stay visible
+                if typing_callback and turn > 0:
+                    try:
+                        await typing_callback()
+                    except Exception:
+                        pass
+
                 response, error = _call_api(system_prompt, messages, tools=tools)
 
                 if error:

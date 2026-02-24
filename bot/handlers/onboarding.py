@@ -42,6 +42,40 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '  "What should I focus on today?"',
             reply_markup=keyboard,
         )
+
+        # Prompt timezone setup
+        tz_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("US Eastern", callback_data="tz:America/New_York"),
+                InlineKeyboardButton("US Central", callback_data="tz:America/Chicago"),
+            ],
+            [
+                InlineKeyboardButton("US Pacific", callback_data="tz:America/Los_Angeles"),
+                InlineKeyboardButton("US Mountain", callback_data="tz:America/Denver"),
+            ],
+            [
+                InlineKeyboardButton("UK", callback_data="tz:Europe/London"),
+                InlineKeyboardButton("Central EU", callback_data="tz:Europe/Paris"),
+            ],
+            [
+                InlineKeyboardButton("Portugal", callback_data="tz:Europe/Lisbon"),
+                InlineKeyboardButton("Eastern EU", callback_data="tz:Europe/Athens"),
+            ],
+            [
+                InlineKeyboardButton("India", callback_data="tz:Asia/Kolkata"),
+                InlineKeyboardButton("Japan/Korea", callback_data="tz:Asia/Tokyo"),
+            ],
+            [
+                InlineKeyboardButton("Australia East", callback_data="tz:Australia/Sydney"),
+                InlineKeyboardButton("Brazil", callback_data="tz:America/Sao_Paulo"),
+            ],
+            [InlineKeyboardButton("Send location instead", callback_data="tz:request_location")],
+        ])
+        await update.message.reply_text(
+            "One quick thing — what's your timezone?\n"
+            "This helps me send reminders at the right time.",
+            reply_markup=tz_keyboard,
+        )
     else:
         from bot.services import task_service
         tasks = task_service.get_tasks(user["id"])
@@ -176,6 +210,29 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
 
+    # Timezone selection
+    if query.data.startswith("tz:"):
+        tz_value = query.data[3:]
+        if tz_value == "request_location":
+            await query.message.reply_text(
+                "Send me your location and I'll figure out your timezone.\n\n"
+                "Tap the paperclip (attach) > Location > Send My Current Location.\n\n"
+                "Or type it manually: /settings timezone Europe/Lisbon"
+            )
+            return
+        user = context.user_data.get("db_user")
+        if not user:
+            tg = update.effective_user
+            user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+            context.user_data["db_user"] = user
+        user_service.update_settings(user["id"], timezone=tz_value)
+        # Update cached user
+        user["timezone"] = tz_value
+        context.user_data["db_user"] = user
+        short_name = tz_value.split("/")[-1].replace("_", " ")
+        await query.message.edit_text(f"Timezone set to {short_name}. You're all set!")
+        return
+
     if query.data == "show_help":
         await query.message.reply_text(
             "Just talk to me, send a voice note, or use commands:\n\n"
@@ -278,6 +335,89 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "4. Copy the URL and send it to me:\n\n"
             "/calendar https://calendar.google.com/calendar/ical/..."
         )
+
+
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle shared location — detect timezone automatically."""
+    user = await _ensure_user(update, context)
+    if not user:
+        return
+
+    loc = update.message.location
+    if not loc:
+        return
+
+    tz = _timezone_from_coords(loc.latitude, loc.longitude)
+    user_service.update_settings(user["id"], timezone=tz)
+    user["timezone"] = tz
+    context.user_data["db_user"] = user
+
+    short_name = tz.split("/")[-1].replace("_", " ")
+    await update.message.reply_text(
+        f"Got it! Timezone set to {short_name} ({tz}).\n"
+        "Reminders and briefings will use this timezone."
+    )
+
+
+def _timezone_from_coords(lat: float, lon: float) -> str:
+    """Best-effort timezone from coordinates using known city regions."""
+    # Major timezone regions by rough lat/lon bounding boxes
+    zones = [
+        # Americas
+        (24, 50, -130, -115, "America/Los_Angeles"),
+        (31, 49, -115, -102, "America/Denver"),
+        (25, 49, -102, -87, "America/Chicago"),
+        (25, 49, -87, -67, "America/New_York"),
+        (-5, 12, -83, -60, "America/Bogota"),
+        (-35, -5, -74, -35, "America/Sao_Paulo"),
+        (-56, -22, -74, -53, "America/Argentina/Buenos_Aires"),
+        (14, 33, -118, -86, "America/Mexico_City"),
+        (43, 84, -141, -52, "America/Toronto"),
+        # Europe
+        (50, 61, -8, 2, "Europe/London"),
+        (36, 44, -10, 0, "Europe/Lisbon"),
+        (42, 51, -2, 8, "Europe/Paris"),
+        (47, 55, 6, 15, "Europe/Berlin"),
+        (36, 47, 6, 19, "Europe/Rome"),
+        (35, 42, 19, 30, "Europe/Athens"),
+        (55, 71, 20, 32, "Europe/Helsinki"),
+        (46, 62, 30, 45, "Europe/Moscow"),
+        # Middle East / Africa
+        (29, 38, 34, 40, "Asia/Jerusalem"),
+        (21, 32, 39, 56, "Asia/Dubai"),
+        # Asia
+        (8, 37, 68, 90, "Asia/Kolkata"),
+        (18, 54, 97, 106, "Asia/Bangkok"),
+        (1, 7, 100, 120, "Asia/Singapore"),
+        (18, 54, 108, 135, "Asia/Shanghai"),
+        (30, 46, 129, 146, "Asia/Tokyo"),
+        # Oceania
+        (-45, -10, 113, 154, "Australia/Sydney"),
+        (-47, -34, 166, 179, "Pacific/Auckland"),
+    ]
+
+    for lat_min, lat_max, lon_min, lon_max, tz in zones:
+        if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+            return tz
+
+    # Fallback: estimate from longitude (15 degrees per hour)
+    offset = round(lon / 15)
+    fallback_map = {
+        -12: "Pacific/Baker_Island", -11: "Pacific/Midway",
+        -10: "Pacific/Honolulu", -9: "America/Anchorage",
+        -8: "America/Los_Angeles", -7: "America/Denver",
+        -6: "America/Chicago", -5: "America/New_York",
+        -4: "America/Halifax", -3: "America/Sao_Paulo",
+        -2: "Atlantic/South_Georgia", -1: "Atlantic/Azores",
+        0: "Europe/London", 1: "Europe/Paris",
+        2: "Europe/Athens", 3: "Europe/Moscow",
+        4: "Asia/Dubai", 5: "Asia/Karachi",
+        6: "Asia/Dhaka", 7: "Asia/Bangkok",
+        8: "Asia/Shanghai", 9: "Asia/Tokyo",
+        10: "Australia/Sydney", 11: "Pacific/Noumea",
+        12: "Pacific/Auckland",
+    }
+    return fallback_map.get(offset, "UTC")
 
 
 async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict | None:

@@ -55,8 +55,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"\U0001f399\ufe0f _{text}_", parse_mode="Markdown")
 
         # Feed into AI brain (same path as text messages)
+        chat_id = update.effective_chat.id
+
+        async def _keep_typing():
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         tasks = task_service.get_tasks(user["id"])
-        response = await ai_brain.process(text, user, tasks)
+        response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
 
         if response:
             if len(response) <= 4096:
