@@ -45,11 +45,92 @@ _startup_status = "starting"
 
 
 class _HealthCheck(BaseHTTPRequestHandler):
-    """Minimal health check so Railway doesn't kill polling mode."""
+    """Health check + WHOOP OAuth callback + webhook endpoint."""
+
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(f"OK - {_startup_status}".encode())
+        if self.path.startswith("/whoop/callback"):
+            self._handle_whoop_callback()
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(f"OK - {_startup_status}".encode())
+
+    def do_POST(self):
+        if self.path == "/whoop/webhook":
+            self._handle_whoop_webhook()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _handle_whoop_callback(self):
+        """Handle WHOOP OAuth callback — exchange code for tokens."""
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            code = params.get("code", [None])[0]
+            state = params.get("state", [None])[0]
+
+            if not code or not state or not state.startswith("uid_"):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing code or state parameter")
+                return
+
+            user_id = int(state.replace("uid_", ""))
+
+            from bot.services import whoop_service
+            success = whoop_service.exchange_code(user_id, code)
+
+            if success:
+                # Try initial sync
+                try:
+                    whoop_service.sync_all(user_id)
+                except Exception:
+                    pass
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    b"<h1>WHOOP Connected!</h1>"
+                    b"<p>You can close this window and go back to Telegram.</p>"
+                    b"<p>Zoe now has access to your recovery, sleep, and strain data.</p>"
+                    b"</body></html>"
+                )
+            else:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"Failed to connect WHOOP. Try again in Telegram.")
+
+        except Exception as e:
+            logger.error(f"WHOOP callback error: {e}")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"Internal error during WHOOP connection")
+
+    def _handle_whoop_webhook(self):
+        """Handle WHOOP webhook events."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body) if body else {}
+
+            event_type = payload.get("type", "")
+            whoop_user_id = payload.get("user_id")
+
+            if event_type and whoop_user_id:
+                from bot.services import whoop_service
+                whoop_service.handle_webhook(event_type, whoop_user_id)
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        except Exception as e:
+            logger.error(f"WHOOP webhook error: {e}")
+            self.send_response(500)
+            self.end_headers()
 
     def log_message(self, *args):
         pass
@@ -60,13 +141,13 @@ async def _post_init(application):
     try:
         commands = [
             BotCommand("workout", "Log a workout"),
+            BotCommand("recovery", "WHOOP recovery score"),
             BotCommand("gains", "Streak, PRs & patterns"),
             BotCommand("protocols", "Peptide protocols"),
             BotCommand("supplements", "Supplement stack"),
             BotCommand("dose", "Log a peptide dose"),
             BotCommand("add", "Add a task"),
             BotCommand("today", "Today's tasks"),
-            BotCommand("done", "Complete a task"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
             BotCommand("help", "All commands"),
         ]
@@ -279,6 +360,7 @@ def _register_full_handlers(application):
             cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
             cmd_analyze, cmd_streak, cmd_workout, cmd_metrics, cmd_gains,
             cmd_protocols, cmd_supplements, cmd_bloodwork, cmd_dose,
+            cmd_connect_whoop, cmd_recovery, cmd_whoop, cmd_disconnect_whoop,
             handle_message,
         )
         application.add_handler(CommandHandler("add", cmd_add))
@@ -300,8 +382,12 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("supplements", cmd_supplements))
         application.add_handler(CommandHandler("bloodwork", cmd_bloodwork))
         application.add_handler(CommandHandler("dose", cmd_dose))
+        application.add_handler(CommandHandler("connect_whoop", cmd_connect_whoop))
+        application.add_handler(CommandHandler("recovery", cmd_recovery))
+        application.add_handler(CommandHandler("whoop", cmd_whoop))
+        application.add_handler(CommandHandler("disconnect_whoop", cmd_disconnect_whoop))
         _text_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-        logger.info("Task + fitness + biohacking handlers registered")
+        logger.info("Task + fitness + biohacking + WHOOP handlers registered")
     except Exception as e:
         logger.error(f"Failed to register task handlers: {type(e).__name__}: {e}")
 

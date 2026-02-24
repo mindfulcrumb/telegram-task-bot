@@ -88,6 +88,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/supplements — Supplement stack\n"
         "/bloodwork — Latest bloodwork\n"
         "/dose — Log a peptide dose\n\n"
+        "*WHOOP*\n"
+        "/connect\\_whoop — Link your WHOOP\n"
+        "/recovery — Today's recovery score\n"
+        "/whoop — Full WHOOP dashboard\n\n"
         "Just tell me naturally:\n"
         '  "Did bench 4x8 at 75kg, rows 4x10"\n'
         '  "Took my BPC-157"\n'
@@ -98,7 +102,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/upgrade — Unlock Zoe Pro\n"
         "/support — Get help\n\n"
         "*Zoe Pro* — AI fitness coaching, peptide tracking, "
-        "bloodwork intelligence, morning briefings, unlimited everything",
+        "WHOOP integration, bloodwork intelligence, morning briefings, unlimited everything",
         parse_mode="Markdown"
     )
 
@@ -229,7 +233,8 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
             "/workout — Log a workout\n"
             "/gains — Streak, PRs & patterns\n"
             "/protocols — Peptide protocols\n"
-            "/supplements — Supplement stack\n\n"
+            "/supplements — Supplement stack\n"
+            "/recovery — WHOOP recovery score\n\n"
             "*Account*\n"
             "/settings — Timezone & preferences\n"
             "/upgrade — Unlock Zoe Pro\n\n"
@@ -258,13 +263,17 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
             "- Progressive overload, PR detection, workout streaks\n"
             "- Program your training based on your history\n\n"
             "*Biohacking (Pro)*\n"
-            "- Peptide protocol tracking & dose reminders\n"
+            "- Peptide protocol tracking & dose logging\n"
             "- Supplement stack management & adherence\n"
-            "- Bloodwork logging with biomarker trends\n"
-            "- Connect it all: recovery + protocols + bloodwork\n\n"
+            "- Bloodwork logging with biomarker trends\n\n"
+            "*WHOOP Integration (Pro)*\n"
+            "- Recovery-based training recommendations\n"
+            "- HRV, sleep, and strain tracking\n"
+            "- Recovery + protocols + bloodwork connected\n\n"
             "*With Zoe Pro:*\n"
             "- AI workout programming & fitness coaching\n"
             "- Peptide, supplement & bloodwork intelligence\n"
+            "- WHOOP-powered recovery coaching\n"
             "- Morning briefings & weekly reports\n"
             "- Unlimited everything\n\n"
             "Just start talking to me — I'll figure out the rest.",

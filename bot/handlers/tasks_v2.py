@@ -485,6 +485,178 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_human(update, response)
 
 
+async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /connect_whoop command — link WHOOP device."""
+    user = await _get_user(update, context)
+    from bot.services import whoop_service
+
+    if not whoop_service.is_configured():
+        await update.message.reply_text(
+            "WHOOP integration is coming soon! Stay tuned."
+        )
+        return
+
+    if whoop_service.is_connected(user["id"]):
+        await update.message.reply_text(
+            "Your WHOOP is already connected! Use /recovery to see your data."
+        )
+        return
+
+    url = whoop_service.get_auth_url(user["id"])
+    if url:
+        await update.message.reply_text(
+            "Connect your WHOOP to unlock recovery-based training:\n\n"
+            f"{url}\n\n"
+            "Click the link, log into WHOOP, and authorize Zoe."
+        )
+    else:
+        await update.message.reply_text("Couldn't generate WHOOP link. Try again later.")
+
+
+async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /recovery command — show today's WHOOP recovery."""
+    user = await _get_user(update, context)
+    from bot.services import whoop_service
+
+    if not whoop_service.is_connected(user["id"]):
+        await update.message.reply_text(
+            "WHOOP not connected. Use /connect_whoop to link your device."
+        )
+        return
+
+    chat = update.message.chat
+    await chat.send_action(ChatAction.TYPING)
+
+    # Sync fresh data
+    try:
+        whoop_service.sync_all(user["id"])
+    except Exception:
+        pass
+
+    data = whoop_service.get_today_recovery(user["id"])
+    if not data:
+        await update.message.reply_text("No recovery data available yet. Check back after your WHOOP syncs.")
+        return
+
+    recovery = data.get("recovery_score")
+    zone = whoop_service.get_recovery_zone(recovery)
+    zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
+
+    lines = [f"{zone_emoji} **Recovery: {recovery}%** ({zone.upper()})\n"]
+
+    if data.get("hrv_rmssd") is not None:
+        lines.append(f"HRV: {data['hrv_rmssd']}ms")
+    if data.get("resting_hr") is not None:
+        lines.append(f"Resting HR: {data['resting_hr']}bpm")
+    if data.get("sleep_performance") is not None:
+        sleep_line = f"Sleep: {data['sleep_performance']}%"
+        if data.get("deep_sleep_minutes") is not None:
+            sleep_line += f" ({data['deep_sleep_minutes']}min deep"
+            if data.get("rem_sleep_minutes") is not None:
+                sleep_line += f", {data['rem_sleep_minutes']}min REM"
+            sleep_line += ")"
+        lines.append(sleep_line)
+    if data.get("daily_strain") is not None:
+        lines.append(f"Strain: {data['daily_strain']}")
+    if data.get("spo2") is not None:
+        lines.append(f"SpO2: {data['spo2']}%")
+
+    # Add recommendation based on zone
+    if zone == "green":
+        lines.append("\nGreen zone — go hard today.")
+    elif zone == "yellow":
+        lines.append("\nYellow zone — moderate intensity, no maxes.")
+    else:
+        lines.append("\nRed zone — recovery day. Mobility or rest.")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /whoop command — full WHOOP dashboard."""
+    user = await _get_user(update, context)
+    from bot.services import whoop_service
+
+    if not whoop_service.is_connected(user["id"]):
+        await update.message.reply_text(
+            "WHOOP not connected. Use /connect_whoop to link your device."
+        )
+        return
+
+    chat = update.message.chat
+    await chat.send_action(ChatAction.TYPING)
+
+    try:
+        whoop_service.sync_all(user["id"])
+    except Exception:
+        pass
+
+    data = whoop_service.get_today_recovery(user["id"])
+    trends = whoop_service.get_whoop_trends(user["id"], days=7)
+
+    if not data:
+        await update.message.reply_text("No WHOOP data available yet.")
+        return
+
+    recovery = data.get("recovery_score")
+    zone = whoop_service.get_recovery_zone(recovery)
+    zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
+
+    lines = [f"**WHOOP Dashboard**\n"]
+
+    # Today
+    lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
+    if data.get("hrv_rmssd") is not None:
+        lines.append(f"HRV: {data['hrv_rmssd']}ms")
+    if data.get("resting_hr") is not None:
+        lines.append(f"Resting HR: {data['resting_hr']}bpm")
+    if data.get("sleep_performance") is not None:
+        sleep_str = f"Sleep: {data['sleep_performance']}%"
+        parts = []
+        if data.get("deep_sleep_minutes") is not None:
+            parts.append(f"{data['deep_sleep_minutes']}min deep")
+        if data.get("rem_sleep_minutes") is not None:
+            parts.append(f"{data['rem_sleep_minutes']}min REM")
+        if parts:
+            sleep_str += f" ({', '.join(parts)})"
+        lines.append(sleep_str)
+    if data.get("daily_strain") is not None:
+        lines.append(f"Strain: {data['daily_strain']}")
+
+    # 7-day trends
+    if trends and trends.get("days", 0) > 2:
+        lines.append("\n**7-Day Trends:**")
+        if trends.get("recovery_avg") is not None:
+            arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
+                trends.get("recovery_trend", ""), ""
+            )
+            lines.append(f"Recovery avg: {trends['recovery_avg']}% {arrow}")
+        if trends.get("hrv_avg") is not None:
+            arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
+                trends.get("hrv_trend", ""), ""
+            )
+            lines.append(f"HRV avg: {trends['hrv_avg']}ms {arrow}")
+        if trends.get("sleep_avg") is not None:
+            lines.append(f"Sleep avg: {trends['sleep_avg']}%")
+        if trends.get("strain_avg") is not None:
+            lines.append(f"Strain avg: {trends['strain_avg']}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /disconnect_whoop — unlink WHOOP device."""
+    user = await _get_user(update, context)
+    from bot.services import whoop_service
+
+    if not whoop_service.is_connected(user["id"]):
+        await update.message.reply_text("WHOOP isn't connected.")
+        return
+
+    whoop_service.revoke_access(user["id"])
+    await update.message.reply_text("WHOOP disconnected. All WHOOP data removed.")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
     user = await _get_user(update, context)

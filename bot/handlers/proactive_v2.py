@@ -272,15 +272,57 @@ def _generate_briefing(user, tasks, streak, patterns):
         except Exception:
             pass
 
+        # WHOOP data for morning briefing
+        whoop_section = ""
+        try:
+            from bot.services import whoop_service
+            if whoop_service.is_connected(user["id"]):
+                try:
+                    whoop_service.sync_all(user["id"])
+                except Exception:
+                    pass
+                whoop_data = whoop_service.get_today_recovery(user["id"])
+                if whoop_data:
+                    recovery = whoop_data.get("recovery_score")
+                    zone = whoop_service.get_recovery_zone(recovery)
+                    hrv = whoop_data.get("hrv_rmssd")
+                    sleep = whoop_data.get("sleep_performance")
+                    whoop_section = (
+                        f"WHOOP: Recovery {recovery}% ({zone}), "
+                        f"HRV {hrv}ms, Sleep {sleep}%\n\n"
+                    )
+        except Exception:
+            pass
+
+        # Fitness data for briefing
+        fitness_section = ""
+        try:
+            from bot.services import fitness_service
+            workout_streak = fitness_service.get_workout_streak(user["id"])
+            ws = workout_streak.get("current_streak", 0)
+            patterns_14d = fitness_service.get_movement_pattern_balance(user["id"], days=14)
+            if ws > 0:
+                fitness_section += f"Workout streak: {ws} sessions\n"
+            if patterns_14d:
+                total_push = patterns_14d.get("horizontal_push", 0) + patterns_14d.get("vertical_push", 0)
+                total_pull = patterns_14d.get("horizontal_pull", 0) + patterns_14d.get("vertical_pull", 0)
+                if total_push > 0 or total_pull > 0:
+                    fitness_section += f"Push:Pull ratio (14d): {total_push}:{total_pull}\n"
+        except Exception:
+            pass
+
         prompt = (
             f"Generate a morning briefing for {user.get('first_name', 'friend')}.\n\n"
             f"Tasks ({len(tasks)} total, {len(overdue)} overdue, {len(due_today)} due today):\n"
             + "\n".join(task_lines) + "\n\n"
             + cal_section
+            + whoop_section
+            + fitness_section
             + f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
             f"Most productive: {patterns.get('most_productive_day', 'varies')}\n"
             f"Best time: {patterns.get('preferred_time', 'varies')}\n\n"
-            "Write 3-5 lines. Mention calendar events if any. Say which task to start with and why. "
+            "Write 3-5 lines. If WHOOP data is available, mention recovery zone and suggest training intensity accordingly. "
+            "Mention calendar events if any. Say which task to start with and why. "
             "Mention streak if > 0. Be warm and thoughtful, like Zoe. "
             "Use markdown bold. Under 500 chars."
         )

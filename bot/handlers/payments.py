@@ -32,6 +32,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "- Peptide protocol tracking & dose reminders\n"
             "- Supplement stack management & adherence\n"
             "- Bloodwork intelligence & biomarker trends\n"
+            "- WHOOP integration & recovery coaching\n"
             "- Personalized morning briefings\n"
             "- Smart reminders & weekly reports\n\n"
             "Stay tuned."
@@ -41,7 +42,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="Zoe Pro",
-        description="AI fitness coaching, peptide tracking, bloodwork intelligence, unlimited tasks & conversations, morning briefings, and weekly reports.",
+        description="AI fitness coaching, peptide tracking, WHOOP integration, bloodwork intelligence, unlimited tasks & conversations, morning briefings, and weekly reports.",
         payload=f"pro_upgrade_{user['id']}",
         provider_token=STRIPE_PROVIDER_TOKEN,
         currency=PRO_CURRENCY,
@@ -87,6 +88,7 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
             "- Peptide protocol tracking & dose intelligence\n"
             "- Supplement stack management & adherence\n"
             "- Bloodwork intelligence & biomarker trends\n"
+            "- WHOOP integration & recovery coaching\n"
             "- Personalized morning briefings\n"
             "- Smart reminders & weekly reports\n\n"
             "I'll start learning your patterns and coaching you proactively. "

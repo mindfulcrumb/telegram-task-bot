@@ -286,6 +286,17 @@ def get_tool_definitions() -> list:
             "description": "Get full biohacking summary: active peptide protocols with adherence, supplement stack, latest bloodwork with flagged markers. Call this before giving biohacking advice.",
             "input_schema": {"type": "object", "properties": {}}
         },
+        # --- WHOOP tools ---
+        {
+            "name": "get_whoop_status",
+            "description": "Get today's WHOOP recovery score, HRV, sleep performance, strain, and 7-day trends. Call this when user asks about recovery, readiness, how they should train, or anything WHOOP-related. Also syncs latest data from WHOOP.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "connect_whoop",
+            "description": "Generate WHOOP OAuth URL for user to link their WHOOP device. Use when user says 'connect WHOOP', 'link my WHOOP', etc.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
     ]
 
 
@@ -787,6 +798,56 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 for f in summary["flagged_biomarkers"]
             ]
             return result
+
+        # --- WHOOP tools ---
+        elif name == "get_whoop_status":
+            from bot.services import whoop_service
+            if not whoop_service.is_connected(user_id):
+                return {"error": "WHOOP not connected. Use connect_whoop to link your device."}
+            # Sync fresh data
+            try:
+                whoop_service.sync_all(user_id)
+            except Exception:
+                pass
+            today = whoop_service.get_today_recovery(user_id)
+            trends = whoop_service.get_whoop_trends(user_id, days=7)
+            result = {"connected": True}
+            if today:
+                zone = whoop_service.get_recovery_zone(today.get("recovery_score"))
+                result["today"] = {
+                    "recovery_score": today.get("recovery_score"),
+                    "recovery_zone": zone,
+                    "hrv_rmssd": today.get("hrv_rmssd"),
+                    "resting_hr": today.get("resting_hr"),
+                    "spo2": today.get("spo2"),
+                    "skin_temp": today.get("skin_temp"),
+                    "sleep_performance": today.get("sleep_performance"),
+                    "deep_sleep_min": today.get("deep_sleep_minutes"),
+                    "rem_sleep_min": today.get("rem_sleep_minutes"),
+                    "daily_strain": today.get("daily_strain"),
+                }
+            if trends and trends.get("days", 0) > 0:
+                result["trends_7d"] = {
+                    "recovery_avg": trends.get("recovery_avg"),
+                    "recovery_trend": trends.get("recovery_trend"),
+                    "hrv_avg": trends.get("hrv_avg"),
+                    "hrv_trend": trends.get("hrv_trend"),
+                    "rhr_avg": trends.get("rhr_avg"),
+                    "sleep_avg": trends.get("sleep_avg"),
+                    "strain_avg": trends.get("strain_avg"),
+                }
+            return result
+
+        elif name == "connect_whoop":
+            from bot.services import whoop_service
+            if not whoop_service.is_configured():
+                return {"error": "WHOOP integration is not configured yet. Coming soon!"}
+            if whoop_service.is_connected(user_id):
+                return {"already_connected": True, "message": "WHOOP is already linked. Use get_whoop_status to see your data."}
+            url = whoop_service.get_auth_url(user_id)
+            if url:
+                return {"auth_url": url, "message": "Click the link to connect your WHOOP account."}
+            return {"error": "Could not generate WHOOP authorization URL."}
 
         else:
             return {"error": f"Unknown tool: {name}"}

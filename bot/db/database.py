@@ -284,6 +284,43 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_supplements_user ON supplements(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_bloodwork_user ON bloodwork(user_id, test_date);
             CREATE INDEX IF NOT EXISTS idx_biomarkers_user ON biomarkers(user_id, marker_name);
+
+            -- WHOOP OAuth tokens
+            CREATE TABLE IF NOT EXISTS whoop_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                scopes TEXT,
+                whoop_user_id BIGINT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- WHOOP daily data (cached from API)
+            CREATE TABLE IF NOT EXISTS whoop_daily (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                cycle_date DATE NOT NULL,
+                recovery_score INT,
+                hrv_rmssd REAL,
+                resting_hr INT,
+                spo2 REAL,
+                skin_temp REAL,
+                sleep_performance INT,
+                sleep_efficiency REAL,
+                deep_sleep_minutes INT,
+                rem_sleep_minutes INT,
+                light_sleep_minutes INT,
+                respiratory_rate REAL,
+                daily_strain REAL,
+                calories_kj REAL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, cycle_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_whoop_daily_user ON whoop_daily(user_id, cycle_date);
         """)
     logger.info("PostgreSQL schema initialized")
 

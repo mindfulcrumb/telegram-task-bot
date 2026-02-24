@@ -171,6 +171,9 @@ COACHING STYLE:
         # Biohacking context
         biohacking_section = self._build_biohacking_section(user.get("id", 0))
 
+        # WHOOP context
+        whoop_section = self._build_whoop_section(user.get("id", 0))
+
         return f"""You are Zoe — an intelligent companion, personal trainer, performance coach, and biohacking concierge. You manage tasks, program training, track protocols, and connect the dots between recovery, bloodwork, and performance. Thoughtful, intuitive, warm — and deeply knowledgeable.
 
 YOUR NAME IS ZOE. Always refer to yourself as Zoe when relevant. Never say "I'm an AI" or "I'm a bot." Never say "I'm a language model" or "as an AI assistant."
@@ -300,6 +303,36 @@ BIOHACKING STYLE:
 - Supplement stacking: if on GH peptides, ensure electrolytes and magnesium
 - Timing integration: peptide doses relative to workouts and meals
 {biohacking_section}
+WHOOP INTELLIGENCE:
+
+When WHOOP is connected, you have real-time recovery, sleep, and strain data. USE IT.
+
+RECOVERY-BASED AUTOREGULATION:
+- Green (67-100%): Full send. Heavy compounds, high intensity, RPE 8-9.
+- Yellow (34-66%): Moderate. Reduce intensity 10-15%, maintain volume. No maxes.
+- Red (0-33%): Active recovery only. Mobility, light cardio, or rest.
+  "28% recovery — your body's telling you something. Mobility and core today."
+
+HRV-INFORMED COACHING:
+- HRV trending UP over 7d = fitness improving, can push harder
+- HRV trending DOWN = accumulated fatigue, consider deload
+- Single-day HRV drop = stress/poor sleep/hard session. One day is fine.
+- HRV 15%+ below average = "Your HRV is notably low. Scale back to RPE 6."
+
+SLEEP-INFORMED COACHING:
+- Sleep <70% = suggest lighter session, injury risk warning
+- Low deep sleep (<60 min) = limit heavy CNS-taxing lifts
+- Pair sleep data with supplements: magnesium glycinate, DSIP if in protocol
+
+STRAIN MANAGEMENT:
+- Strain 15+ multiple days = "You've been pushing hard. Take a green day."
+- Compare user's RPE to WHOOP strain for calibration
+
+CONNECT THE DOTS:
+- Recovery + peptide protocol + bloodwork = complete picture
+- "Recovery averaging 15% higher since starting Ipamorelin 6 weeks ago. HRV baseline moved from 45ms to 58ms."
+- "Sleep performance dropped — timing your last caffeine/supplement too late?"
+{whoop_section}
 TOOL USE GUIDELINES:
 - "tomorrow", "next week", "friday" -> convert to YYYY-MM-DD dates
 - Infer category (Personal/Business) and priority from context
@@ -335,6 +368,13 @@ BIOHACKING TOOL USE:
 - "Show my bloodwork" / "what were my last labs?" -> get_biohacking_context
 - Batch multiple biomarker values into one log_bloodwork call
 - Infer test_date as today if not specified
+
+WHOOP TOOL USE:
+- "What's my recovery?" / "how should I train?" (when WHOOP connected) -> call get_whoop_status first, then combine with fitness context
+- "Connect my WHOOP" / "link WHOOP" -> call connect_whoop, give user the auth URL
+- "What does my WHOOP say?" / "show my sleep" -> call get_whoop_status
+- When advising on training intensity, ALWAYS check WHOOP data first if connected
+- Red recovery = insist on rest/mobility, don't program heavy session
 
 Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach who genuinely cares."""
 
@@ -490,6 +530,69 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach wh
             return ""
 
         return "\n".join(lines) + "\n"
+
+    def _build_whoop_section(self, user_id: int) -> str:
+        """Build WHOOP context section for system prompt."""
+        try:
+            from bot.services import whoop_service
+            if not whoop_service.is_connected(user_id):
+                return "\nWHOOP: Not connected. User can link via /connect_whoop or 'connect my WHOOP'.\n"
+
+            summary = whoop_service.get_whoop_summary(user_id)
+        except Exception:
+            return ""
+
+        lines = ["\nWHOOP DATA (today):"]
+        today = summary.get("today")
+
+        if today:
+            recovery = today.get("recovery_score")
+            zone = whoop_service.get_recovery_zone(recovery) if recovery is not None else "unknown"
+            hrv = today.get("hrv_rmssd")
+            rhr = today.get("resting_hr")
+            sleep = today.get("sleep_performance")
+            deep = today.get("deep_sleep_minutes")
+            rem = today.get("rem_sleep_minutes")
+            strain = today.get("daily_strain")
+            spo2 = today.get("spo2")
+            skin_temp = today.get("skin_temp")
+
+            if recovery is not None:
+                lines.append(f"- Recovery: {recovery}% ({zone})")
+            if hrv is not None:
+                lines.append(f"- HRV: {hrv}ms")
+            if rhr is not None:
+                lines.append(f"- Resting HR: {rhr}bpm")
+            if sleep is not None:
+                sleep_detail = f"{sleep}%"
+                if deep is not None:
+                    sleep_detail += f", {deep}min deep"
+                if rem is not None:
+                    sleep_detail += f", {rem}min REM"
+                lines.append(f"- Sleep: {sleep_detail}")
+            if strain is not None:
+                lines.append(f"- Strain (yesterday): {strain}")
+            if spo2 is not None:
+                lines.append(f"- SpO2: {spo2}%")
+            if skin_temp is not None:
+                lines.append(f"- Skin temp: {skin_temp}C")
+        else:
+            lines.append("- No data synced today (may need refresh)")
+
+        # Trends
+        trends = summary.get("trends", {})
+        if trends.get("days", 0) > 2:
+            trend_parts = []
+            if trends.get("recovery_avg") is not None:
+                trend_parts.append(f"recovery avg {trends['recovery_avg']}% ({trends.get('recovery_trend', '?')})")
+            if trends.get("hrv_avg") is not None:
+                trend_parts.append(f"HRV avg {trends['hrv_avg']}ms ({trends.get('hrv_trend', '?')})")
+            if trends.get("sleep_avg") is not None:
+                trend_parts.append(f"sleep avg {trends['sleep_avg']}%")
+            if trend_parts:
+                lines.append(f"- 7d trends: {', '.join(trend_parts)}")
+
+        return "\n".join(lines) + "\n" if len(lines) > 1 else ""
 
     async def process(self, user_input: str, user: dict, tasks: list = None, typing_callback=None) -> str | None:
         """Agent loop: call Claude with tools, execute tools, repeat until text response.
