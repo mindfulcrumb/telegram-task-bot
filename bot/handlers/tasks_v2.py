@@ -142,9 +142,11 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Check tier limit
-    allowed, msg = tier_service.check_limit(user["id"], "add_task", user.get("tier", "free"), is_admin=user.get("is_admin", False))
+    allowed, msg = tier_service.check_limit(user["id"], "add_task", user.get("tier", "free"), is_admin=user.get("is_admin", False), telegram_user_id=user.get("telegram_user_id"))
     if not allowed:
-        await update.message.reply_text(msg)
+        from bot.handlers.payments import get_subscribe_keyboard
+        keyboard = get_subscribe_keyboard(update.effective_user.id)
+        await update.message.reply_text(msg, reply_markup=keyboard)
         return
 
     task_service.add_task(user["id"], title=text)
@@ -945,9 +947,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_session_id = ai_brain._pending_session.pop(user["id"], None)
 
     if response:
-        # Add feedback buttons on substantive responses (longer than a quick ack)
-        show_feedback = len(response) > 80
-        await _send_human(update, response, add_feedback=show_feedback)
+        # If paywall was hit, attach subscribe button
+        if ai_brain._paywall_hit:
+            from bot.handlers.payments import get_subscribe_keyboard
+            keyboard = get_subscribe_keyboard(update.effective_user.id)
+            await update.message.reply_text(response, reply_markup=keyboard)
+        else:
+            # Add feedback buttons on substantive responses (longer than a quick ack)
+            show_feedback = len(response) > 80
+            await _send_human(update, response, add_feedback=show_feedback)
     elif not pending_session_id:
         await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
 

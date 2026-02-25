@@ -1,7 +1,7 @@
 """Telegram Payments — /upgrade, /terms, /support."""
 import logging
 import os
-from telegram import Update, LabeledPrice
+from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ContextTypes
 
 from bot.services import user_service
@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 PRO_PRICE = int(os.getenv("PRO_PRICE_CENTS", "999"))  # $9.99 default
 PRO_CURRENCY = os.getenv("PRO_CURRENCY", "USD")
 STRIPE_PROVIDER_TOKEN = os.getenv("STRIPE_PROVIDER_TOKEN", "")
+SUBSCRIBE_BASE_URL = os.getenv("SUBSCRIBE_URL", "https://meetzoe.app/subscribe")
+
+
+def get_subscribe_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
+    """Build the subscribe inline keyboard with WebView button."""
+    subscribe_url = f"{SUBSCRIBE_BASE_URL}?tgid={telegram_user_id}"
+    if STRIPE_PROVIDER_TOKEN:
+        return None  # Native Telegram payments handle this
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "Subscribe — $9.99/mo",
+            web_app=WebAppInfo(url=subscribe_url),
+        )
+    ]])
 
 
 async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24,18 +38,26 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not STRIPE_PROVIDER_TOKEN:
+        # Open subscribe page inside Telegram WebView
+        tg_id = update.effective_user.id
+        subscribe_url = f"{SUBSCRIBE_BASE_URL}?tgid={tg_id}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "Subscribe — $9.99/mo",
+                web_app=WebAppInfo(url=subscribe_url),
+            )
+        ]])
         await update.message.reply_text(
-            "Zoe Pro is coming soon! You'll get:\n\n"
-            "- Unlimited tasks & AI conversations\n"
+            "Upgrade to Zoe Pro for unlimited access:\n\n"
+            "- Unlimited AI conversations\n"
             "- AI fitness coaching & workout programming\n"
-            "- Pattern balance analysis & PR tracking\n"
-            "- Peptide protocol tracking & dose reminders\n"
+            "- Peptide protocol tracking & dose intelligence\n"
             "- Supplement stack management & adherence\n"
             "- Bloodwork intelligence & biomarker trends\n"
             "- WHOOP integration & recovery coaching\n"
             "- Personalized morning briefings\n"
-            "- Smart reminders & weekly reports\n\n"
-            "Stay tuned."
+            "- Smart reminders & weekly reports",
+            reply_markup=keyboard,
         )
         return
 

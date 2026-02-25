@@ -52,7 +52,29 @@ def get_usage_today(user_id: int, action: str) -> int:
         return cur.fetchone()["cnt"]
 
 
-def check_limit(user_id: int, action: str, tier: str = "free", is_admin: bool = False) -> tuple[bool, str | None]:
+def _check_supabase_upgrade(user_id: int, telegram_user_id: int | None) -> bool:
+    """Check Supabase for an active subscription and upgrade locally if found."""
+    if not telegram_user_id:
+        return False
+    try:
+        from bot.db.supabase_bridge import check_subscription
+        if check_subscription(telegram_user_id):
+            from bot.services import user_service
+            user_service.update_tier(user_id, "pro")
+            logger.info(f"User {user_id} upgraded to pro via Supabase subscription")
+            return True
+    except Exception as e:
+        logger.debug(f"Supabase subscription check skipped: {e}")
+    return False
+
+
+def check_limit(
+    user_id: int,
+    action: str,
+    tier: str = "free",
+    is_admin: bool = False,
+    telegram_user_id: int | None = None,
+) -> tuple[bool, str | None]:
     """Check if user can perform action. Returns (allowed, message_if_blocked)."""
     # Admin users bypass all limits
     if is_admin or tier == "pro":
@@ -65,6 +87,8 @@ def check_limit(user_id: int, action: str, tier: str = "free", is_admin: bool = 
         if max_tasks is not None:
             current = count_active_tasks(user_id)
             if current >= max_tasks:
+                if _check_supabase_upgrade(user_id, telegram_user_id):
+                    return True, None
                 return False, f"You've hit the free tier limit of {max_tasks} active tasks. Complete some tasks or /upgrade to Pro for unlimited!"
         return True, None
 
@@ -73,6 +97,8 @@ def check_limit(user_id: int, action: str, tier: str = "free", is_admin: bool = 
         if max_msgs is not None:
             used = get_usage_today(user_id, "ai_message")
             if used >= max_msgs:
+                if _check_supabase_upgrade(user_id, telegram_user_id):
+                    return True, None
                 return False, f"You've used all {max_msgs} AI messages for today. They reset at midnight, or /upgrade to Pro for unlimited!"
         return True, None
 
@@ -82,6 +108,8 @@ def check_limit(user_id: int, action: str, tier: str = "free", is_admin: bool = 
         if max_reminders is not None:
             current = count_active_reminders(user_id)
             if current >= max_reminders:
+                if _check_supabase_upgrade(user_id, telegram_user_id):
+                    return True, None
                 return False, f"Free tier allows {max_reminders} active reminders. /upgrade to Pro for unlimited!"
         return True, None
 

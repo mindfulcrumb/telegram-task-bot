@@ -560,7 +560,8 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 user_is_admin = u.get("is_admin", False) if u else False
             except Exception:
                 pass
-            allowed, limit_msg = check_limit(user_id, "set_reminder", user_tier, is_admin=user_is_admin)
+            user_tg_id = u.get("telegram_user_id") if u else None
+            allowed, limit_msg = check_limit(user_id, "set_reminder", user_tier, is_admin=user_is_admin, telegram_user_id=user_tg_id)
             if not allowed:
                 return {"error": limit_msg}
             try:

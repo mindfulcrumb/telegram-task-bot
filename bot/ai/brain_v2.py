@@ -89,6 +89,8 @@ class AIBrain:
         self._pending_session = {}
         # Cached static prompt — built once, reused for every request
         self._static_prompt = None
+        # Set to True when process() hits the paywall (AI message limit)
+        self._paywall_hit = False
 
     def _get_static_prompt(self) -> str:
         """Get the static system prompt (built once, cached in memory)."""
@@ -815,6 +817,8 @@ TASKS:
         from bot.ai import memory_pg as memory
         from bot.services.tier_service import check_limit, track_usage
 
+        self._paywall_hit = False
+
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             return None
@@ -824,8 +828,10 @@ TASKS:
         is_admin = user.get("is_admin", False)
 
         # Check AI message limit
-        allowed, msg = check_limit(user_id, "ai_message", tier, is_admin=is_admin)
+        telegram_user_id = user.get("telegram_user_id")
+        allowed, msg = check_limit(user_id, "ai_message", tier, is_admin=is_admin, telegram_user_id=telegram_user_id)
         if not allowed:
+            self._paywall_hit = True
             return msg
 
         try:
