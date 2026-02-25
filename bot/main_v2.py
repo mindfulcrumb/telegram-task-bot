@@ -648,14 +648,17 @@ def _register_full_handlers(application):
     except Exception as e:
         logger.error(f"Failed to register voice handler: {type(e).__name__}: {e}")
 
-    # Photo/document uploads (blood tests, lab results)
+    # Photo/document uploads (blood tests, lab results — images + PDFs)
     try:
         from bot.handlers.photo_handler import handle_photo
         application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         application.add_handler(MessageHandler(
             filters.Document.IMAGE, handle_photo
         ))
-        logger.info("Photo handler registered (blood test uploads)")
+        application.add_handler(MessageHandler(
+            filters.Document.PDF, handle_photo
+        ))
+        logger.info("Photo handler registered (blood test uploads — images + PDFs)")
     except Exception as e:
         logger.error(f"Failed to register photo handler: {type(e).__name__}: {e}")
 

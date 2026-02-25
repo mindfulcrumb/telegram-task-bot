@@ -1,4 +1,4 @@
-"""Photo/document handler — blood test uploads via Claude Vision."""
+"""Photo/document handler — blood test uploads via Claude Vision (images + PDFs)."""
 import asyncio
 import base64
 import json
@@ -77,6 +77,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = None
     file_ext = ".jpg"
 
+    is_pdf = False
+
     if update.message.photo:
         # Photos come in multiple sizes — grab the largest
         photo_file = update.message.photo[-1]
@@ -84,12 +86,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or ""
-        if mime.startswith("image/") or doc.file_name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        fname = (doc.file_name or "").lower()
+        if mime == "application/pdf" or fname.endswith(".pdf"):
+            photo_file = doc
+            file_ext = ".pdf"
+            is_pdf = True
+        elif mime.startswith("image/") or fname.endswith((".jpg", ".jpeg", ".png", ".webp")):
             photo_file = doc
             if doc.file_name:
                 file_ext = os.path.splitext(doc.file_name)[1] or ".jpg"
         else:
-            # Not an image — ignore (could be a PDF or other file)
             return
 
     if not photo_file:
@@ -115,21 +121,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tmp_path = tempfile.mktemp(suffix=file_ext)
         await tg_file.download_to_drive(tmp_path)
 
-        logger.info(f"Photo from user {user['id']} — processing for blood test detection")
+        logger.info(f"{'PDF' if is_pdf else 'Photo'} from user {user['id']} — processing for blood test detection")
 
         # Convert to base64
         with open(tmp_path, "rb") as f:
             b64_data = base64.standard_b64encode(f.read()).decode("utf-8")
 
-        media_types = {
-            ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-            ".png": "image/png", ".webp": "image/webp",
-        }
-        media_type = media_types.get(file_ext.lower(), "image/jpeg")
+        if is_pdf:
+            media_type = "application/pdf"
+        else:
+            media_types = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png", ".webp": "image/webp",
+            }
+            media_type = media_types.get(file_ext.lower(), "image/jpeg")
 
         # Call Claude Vision to extract bloodwork
         extraction = await asyncio.to_thread(
-            _extract_bloodwork_vision, b64_data, media_type, api_key
+            _extract_bloodwork_vision, b64_data, media_type, api_key, is_pdf
         )
 
         if not extraction or not extraction.get("is_blood_test"):
@@ -242,7 +251,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Photo handling failed: {type(e).__name__}: {e}")
-        await update.message.reply_text("Had trouble reading that image. Try a clearer photo or type the values.")
+        await update.message.reply_text("Had trouble reading that. Try a clearer photo or PDF, or type the values.")
     finally:
         typing_active = False
         typing_task.cancel()
@@ -253,33 +262,47 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 
-def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str) -> dict | None:
-    """Call Claude Vision to extract bloodwork markers from an image. Runs in thread."""
+def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str, is_pdf: bool = False) -> dict | None:
+    """Call Claude to extract bloodwork markers from an image or PDF. Runs in thread."""
     import anthropic
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
+
+        # PDFs use "document" content block, images use "image"
+        if is_pdf:
+            file_block = {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": b64_data,
+                },
+            }
+        else:
+            file_block = {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": b64_data,
+                },
+            }
+
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64_data,
-                        },
-                    },
+                    file_block,
                     {
                         "type": "text",
                         "text": BLOODWORK_EXTRACTION_PROMPT,
                     },
                 ],
             }],
-            timeout=45.0,
+            timeout=90.0,
         )
 
         if not response.content:
