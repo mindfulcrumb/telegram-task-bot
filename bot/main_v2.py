@@ -333,14 +333,21 @@ async def _post_init(application):
     # ── Bot menu commands ──
     try:
         commands = [
+            BotCommand("start", "Start / restart Zoe"),
+            BotCommand("add", "Add a task"),
+            BotCommand("today", "Today's tasks"),
+            BotCommand("list", "All tasks"),
+            BotCommand("week", "This week's tasks"),
             BotCommand("workout", "Log a workout"),
             BotCommand("recovery", "WHOOP recovery score"),
             BotCommand("gains", "Streak, PRs & patterns"),
             BotCommand("protocols", "Peptide protocols"),
             BotCommand("supplements", "Supplement stack"),
+            BotCommand("bloodwork", "Bloodwork analysis"),
             BotCommand("dose", "Log a peptide dose"),
-            BotCommand("add", "Add a task"),
-            BotCommand("today", "Today's tasks"),
+            BotCommand("calendar", "Google Calendar"),
+            BotCommand("settings", "Your preferences"),
+            BotCommand("account", "Account info"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
             BotCommand("help", "All commands"),
         ]
