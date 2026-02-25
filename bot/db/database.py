@@ -385,6 +385,15 @@ def initialize():
 
             CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory(user_id, category);
             CREATE INDEX IF NOT EXISTS idx_response_feedback_user ON response_feedback(user_id, created_at);
+
+            -- Additional performance indexes (audit Feb 2026)
+            CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date) WHERE status = 'active' AND due_date IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_conv_created ON conversations(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_peptide_logs_protocol ON peptide_logs(protocol_id);
+            CREATE INDEX IF NOT EXISTS idx_supplement_logs_supplement ON supplement_logs(supplement_id);
+            CREATE INDEX IF NOT EXISTS idx_biomarkers_bloodwork ON biomarkers(bloodwork_id);
+            CREATE INDEX IF NOT EXISTS idx_workout_sessions_started ON workout_sessions(user_id, started_at);
+            CREATE INDEX IF NOT EXISTS idx_workout_exercises_name ON workout_exercises(exercise_name);
         """)
     logger.info("PostgreSQL schema initialized")
 

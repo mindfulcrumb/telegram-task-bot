@@ -1,4 +1,6 @@
-"""WHOOP integration — OAuth2, data sync, recovery/sleep/strain access."""
+"""WHOOP integration — OAuth2, data sync, recovery/sleep/strain access (API v2)."""
+import hashlib
+import hmac
 import logging
 import os
 import urllib.parse
@@ -10,10 +12,10 @@ from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
 
-# WHOOP API endpoints
+# WHOOP API endpoints (v2 — v1 deprecated Oct 2025)
 WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
-WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
+WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2"
 
 # Scopes — offline MUST be first per WHOOP docs (enables refresh tokens)
 WHOOP_SCOPES = "offline read:recovery read:sleep read:workout read:cycles read:profile read:body_measurement"
@@ -125,21 +127,25 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
         if profile:
             whoop_user_id = profile.get("user_id")
     except Exception:
-        pass
+        logger.warning(f"WHOOP profile fetch failed for user {user_id} (non-fatal)")
 
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO whoop_tokens (user_id, access_token, refresh_token, expires_at, scopes, whoop_user_id)
-               VALUES (%s, %s, %s, %s, %s, %s)
-               ON CONFLICT (user_id) DO UPDATE SET
-                 access_token = EXCLUDED.access_token,
-                 refresh_token = EXCLUDED.refresh_token,
-                 expires_at = EXCLUDED.expires_at,
-                 scopes = EXCLUDED.scopes,
-                 whoop_user_id = EXCLUDED.whoop_user_id,
-                 updated_at = NOW()""",
-            (user_id, access_token, refresh_token, expires_at, scopes, whoop_user_id),
-        )
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO whoop_tokens (user_id, access_token, refresh_token, expires_at, scopes, whoop_user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (user_id) DO UPDATE SET
+                     access_token = EXCLUDED.access_token,
+                     refresh_token = EXCLUDED.refresh_token,
+                     expires_at = EXCLUDED.expires_at,
+                     scopes = EXCLUDED.scopes,
+                     whoop_user_id = EXCLUDED.whoop_user_id,
+                     updated_at = NOW()""",
+                (user_id, access_token, refresh_token, expires_at, scopes, whoop_user_id),
+            )
+    except Exception as e:
+        logger.error(f"WHOOP token storage failed for user {user_id}: {e}")
+        return False, "Failed to store tokens. Please try again."
 
     logger.info(f"WHOOP tokens stored for user {user_id}")
     return True, ""
@@ -460,10 +466,18 @@ def sync_all(user_id: int) -> dict:
     }
 
 
+_ALLOWED_DAILY_FIELDS = {
+    "recovery_score", "hrv_rmssd", "resting_hr", "spo2", "skin_temp",
+    "sleep_performance", "sleep_efficiency", "deep_sleep_minutes",
+    "rem_sleep_minutes", "light_sleep_minutes", "respiratory_rate",
+    "daily_strain", "calories_kj",
+}
+
+
 def _upsert_daily(user_id: int, cycle_date: date, **kwargs):
-    """Upsert whoop_daily row with given fields."""
-    # Filter out None values
-    fields = {k: v for k, v in kwargs.items() if v is not None}
+    """Upsert whoop_daily row with given fields (whitelist-validated)."""
+    # Filter out None values and validate against whitelist
+    fields = {k: v for k, v in kwargs.items() if v is not None and k in _ALLOWED_DAILY_FIELDS}
     if not fields:
         return
 
@@ -602,8 +616,24 @@ def get_whoop_summary(user_id: int) -> dict:
 
 # --- Webhook handling ---
 
-def handle_webhook(event_type: str, whoop_user_id: int, data_id: int = None) -> bool:
-    """Process a WHOOP webhook event."""
+def verify_webhook_signature(body: bytes, signature: str, timestamp: str) -> bool:
+    """Verify WHOOP webhook HMAC-SHA256 signature."""
+    secret = _get_client_secret()
+    if not secret:
+        logger.warning("WHOOP webhook signature check skipped: no client secret")
+        return True  # Allow if not configured (dev mode)
+
+    expected = hmac.new(
+        secret.encode(),
+        timestamp.encode() + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
+
+
+def handle_webhook(event_type: str, whoop_user_id: int, data_id: str = None) -> bool:
+    """Process a WHOOP webhook event (v2: data_id is UUID string)."""
     # Find our user_id from whoop_user_id
     with get_cursor() as cur:
         cur.execute(
@@ -615,6 +645,8 @@ def handle_webhook(event_type: str, whoop_user_id: int, data_id: int = None) -> 
             logger.warning(f"WHOOP webhook for unknown whoop_user_id {whoop_user_id}")
             return False
         user_id = row["user_id"]
+
+    logger.info(f"WHOOP webhook: event={event_type} user={user_id} data_id={data_id}")
 
     if event_type in ("recovery.updated", "recovery.created"):
         sync_recovery(user_id)

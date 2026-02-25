@@ -50,6 +50,9 @@ def prune_old(days: int = 7):
     """Delete conversation history older than N days."""
     with get_cursor() as cur:
         cur.execute(
-            "DELETE FROM conversations WHERE created_at < NOW() - INTERVAL '%s days'",
+            "DELETE FROM conversations WHERE created_at < NOW() - make_interval(days => %s)",
             (days,)
         )
+        deleted = cur.rowcount
+        if deleted > 0:
+            logger.info(f"Pruned {deleted} conversation rows older than {days} days")

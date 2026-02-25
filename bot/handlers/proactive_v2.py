@@ -38,7 +38,6 @@ async def morning_briefing_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
-                parse_mode="Markdown",
             )
             coaching_service.record_nudge(user["id"], 0, "briefing")
             logger.info(f"Briefing sent to user {user['id']}")
@@ -126,19 +125,18 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
             if not nudges:
                 continue
 
-            lines = ["**Hey, quick thought:**\n"]
+            lines = ["Hey, quick thought:\n"]
             for t, ntype in nudges:
                 if ntype == "overdue":
                     days = (today_d - t["due_date"]).days
                     lines.append(f"\U0001f534 \"{t['title']}\" is {days} days overdue")
                 elif ntype == "no_due_date":
                     lines.append(f"\u26a1 \"{t['title']}\" is high priority but has no due date")
-            lines.append("\n_Want me to help with any of these?_")
+            lines.append("\nWant me to help with any of these?")
 
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text="\n".join(lines),
-                parse_mode="Markdown",
             )
 
             for t, ntype in nudges:
@@ -174,7 +172,6 @@ async def weekly_insights_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
-                parse_mode="Markdown",
             )
             coaching_service.record_nudge(user["id"], 0, "weekly_insight")
             logger.info(f"Weekly insight sent to user {user['id']}")
@@ -195,13 +192,110 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
             for task in due_reminders:
                 await context.bot.send_message(
                     chat_id=user["telegram_user_id"],
-                    text=f"\u23f0 **Reminder:** {task['title']}",
-                    parse_mode="Markdown",
+                    text=f"\u23f0 Reminder: {task['title']}",
                 )
                 task_service.clear_reminder(task["id"])
                 logger.info(f"Reminder fired for user {user['id']}: {task['title']}")
         except Exception as e:
             logger.error(f"Reminder failed for user {user.get('id')}: {e}")
+
+
+# --- Conversation Pruning ---
+
+async def prune_conversations_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs daily. Deletes conversation history older than 7 days."""
+    try:
+        from bot.ai import memory_pg
+        memory_pg.prune_old(days=7)
+    except Exception as e:
+        logger.error(f"Conversation pruning failed: {e}")
+
+
+# --- Stale Session Cleanup ---
+
+async def cleanup_sessions_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 2 hours. Abandons workout sessions older than 3 hours."""
+    try:
+        from bot.services import fitness_service
+        fitness_service.cleanup_stale_sessions(hours=3)
+    except Exception as e:
+        logger.error(f"Session cleanup failed: {e}")
+
+
+# --- Dose Reminders ---
+
+async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 4 hours. Reminds Pro users about peptide doses and supplements."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            hour = now_user.hour
+
+            # Only remind at reasonable hours (8am, 12pm, 8pm)
+            if hour not in (8, 12, 20):
+                continue
+
+            # Check dedup
+            if coaching_service.was_nudged_today(user["id"], 0, f"dose_{hour}"):
+                continue
+
+            reminders = []
+
+            # Check active peptide protocols
+            try:
+                from bot.services import biohacking_service
+                protocols = biohacking_service.get_active_protocols(user["id"])
+                for p in protocols:
+                    freq = (p.get("frequency") or "").lower()
+                    # Match timing: morning=8, afternoon=12, evening=20
+                    if hour == 8 and any(w in freq for w in ["morning", "am", "daily", "2x", "twice"]):
+                        reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
+                    elif hour == 20 and any(w in freq for w in ["evening", "pm", "night", "bed", "daily", "2x", "twice"]):
+                        reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
+                    elif hour == 12 and "midday" in freq:
+                        reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
+            except Exception:
+                pass
+
+            # Check supplements at morning
+            if hour == 8:
+                try:
+                    from bot.services import biohacking_service
+                    supplements = biohacking_service.get_active_supplements(user["id"])
+                    if supplements:
+                        supp_names = [s["supplement_name"] for s in supplements[:5]]
+                        if supp_names:
+                            reminders.append(f"Supplements: {', '.join(supp_names)}")
+                except Exception:
+                    pass
+
+            if not reminders:
+                continue
+
+            name = user.get("first_name", "friend")
+            if hour == 8:
+                text = f"Morning {name} \u2615 Time for:\n" + "\n".join(f"  {r}" for r in reminders)
+            elif hour == 20:
+                text = f"Evening dose check, {name}:\n" + "\n".join(f"  {r}" for r in reminders)
+            else:
+                text = f"Dose reminder:\n" + "\n".join(f"  {r}" for r in reminders)
+
+            text += "\n\nJust say 'took my BPC' or 'took supplements' to log it."
+
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, f"dose_{hour}")
+            logger.info(f"Dose reminder sent to user {user['id']} ({len(reminders)} items)")
+
+        except Exception as e:
+            logger.error(f"Dose reminder failed for user {user.get('id')}: {e}")
 
 
 # --- Job Registration ---
@@ -225,7 +319,16 @@ def setup_proactive_jobs(application):
     # Weekly insights: every 6 hours (self-skips on non-Sundays)
     jq.run_repeating(weekly_insights_job, interval=21600, first=600, name="weekly_insights")
 
-    logger.info("Proactive coaching jobs registered (including reminders)")
+    # Conversation pruning: daily (every 24h)
+    jq.run_repeating(prune_conversations_job, interval=86400, first=3600, name="prune_conversations")
+
+    # Stale session cleanup: every 2 hours
+    jq.run_repeating(cleanup_sessions_job, interval=7200, first=600, name="cleanup_sessions")
+
+    # Dose reminders: every 4 hours
+    jq.run_repeating(dose_reminder_job, interval=14400, first=900, name="dose_reminders")
+
+    logger.info("Proactive coaching jobs registered (8 jobs including reminders, pruning, dose reminders)")
 
 
 # --- Helpers ---
@@ -324,12 +427,12 @@ def _generate_briefing(user, tasks, streak, patterns):
             "Write 3-5 lines. If WHOOP data is available, mention recovery zone and suggest training intensity accordingly. "
             "Mention calendar events if any. Say which task to start with and why. "
             "Mention streak if > 0. Be warm and thoughtful, like Zoe. "
-            "Use markdown bold. Under 500 chars."
+            "No markdown formatting. Under 500 chars."
         )
 
         response, error = _call_api(
-            system_prompt="You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. Sign off as Zoe if it feels natural.",
-            messages=[{"role": "user", "content": prompt}],
+            "You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting. Sign off as Zoe if it feels natural.",
+            [{"role": "user", "content": prompt}],
             max_tokens=200,
         )
 
@@ -353,7 +456,7 @@ def _template_briefing(user, tasks):
     high = sum(1 for t in tasks if t.get("priority") == "High")
 
     lines = [f"Good morning, {name}!\n"]
-    lines.append(f"You have **{total}** active tasks.")
+    lines.append(f"You have {total} active tasks.")
     if overdue:
         lines.append(f"\U0001f534 {overdue} overdue")
     if due_today:
@@ -361,7 +464,7 @@ def _template_briefing(user, tasks):
     if high:
         lines.append(f"\u26a1 {high} high priority")
     if tasks:
-        lines.append(f"\nStart with: **{tasks[0]['title']}**")
+        lines.append(f"\nStart with: {tasks[0]['title']}")
     lines.append("\nWhat are you tackling first?")
     return "\n".join(lines)
 
@@ -379,12 +482,12 @@ def _generate_weekly_insight(user, stats):
             f"Best day: {stats.get('most_productive_day', 'varies')}\n"
             f"Currently overdue: {stats.get('current_overdue', 0)}\n\n"
             "Write 3-4 lines. Compare weeks. Give ONE actionable tip. "
-            "Be encouraging. Markdown bold. Under 400 chars."
+            "Be encouraging. No markdown formatting. Under 400 chars."
         )
 
         response, error = _call_api(
-            system_prompt="You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. Sign off as Zoe if it feels natural.",
-            messages=[{"role": "user", "content": prompt}],
+            "You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting. Sign off as Zoe if it feels natural.",
+            [{"role": "user", "content": prompt}],
             max_tokens=200,
         )
 
@@ -402,8 +505,8 @@ def _generate_weekly_insight(user, stats):
     trend = f"up {diff}" if diff > 0 else f"down {abs(diff)}" if diff < 0 else "same as"
 
     return (
-        f"**Weekly recap, {name}!**\n\n"
-        f"You completed **{this_w}** tasks this week ({trend} last week).\n"
+        f"Weekly recap, {name}!\n\n"
+        f"You completed {this_w} tasks this week ({trend} last week).\n"
         f"Most productive day: {stats.get('most_productive_day', 'varies')}\n"
         f"Currently overdue: {stats.get('current_overdue', 0)}\n\n"
         "Keep it up!"

@@ -174,18 +174,32 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.wfile.write(b"Internal error during WHOOP connection")
 
     def _handle_whoop_webhook(self):
-        """Handle WHOOP webhook events."""
+        """Handle WHOOP webhook events (v2 with signature verification)."""
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
+
+            # Verify webhook signature (HMAC-SHA256)
+            signature = self.headers.get("X-WHOOP-Signature", "")
+            timestamp = self.headers.get("X-WHOOP-Signature-Timestamp", "")
+            if signature and timestamp:
+                from bot.services import whoop_service
+                if not whoop_service.verify_webhook_signature(body, signature, timestamp):
+                    logger.warning("WHOOP webhook signature verification FAILED")
+                    self.send_response(403)
+                    self.end_headers()
+                    self.wfile.write(b"Invalid signature")
+                    return
+
             payload = json.loads(body) if body else {}
 
             event_type = payload.get("type", "")
             whoop_user_id = payload.get("user_id")
+            data_id = payload.get("id")  # v2: UUID string
 
             if event_type and whoop_user_id:
                 from bot.services import whoop_service
-                whoop_service.handle_webhook(event_type, whoop_user_id)
+                whoop_service.handle_webhook(event_type, whoop_user_id, data_id)
 
             self.send_response(200)
             self.end_headers()

@@ -703,7 +703,7 @@ TASKS:
     def _select_model(self, user_input):
         """Select model based on request complexity.
 
-        Returns model ID for Sonnet on complex requests, None for default (Haiku).
+        Returns (model_id, max_tokens) — Sonnet+2048 for complex, None+1024 for default Haiku.
         """
         sonnet = "claude-sonnet-4-5-20250929"
         lower = user_input.lower()
@@ -713,11 +713,15 @@ TASKS:
             "analyze", "bloodwork", "labs", "biomarkers",
             "plan my week", "review my",
             "connect whoop", "connect my whoop",
+            "how's my recovery", "how is my recovery", "what's my recovery",
+            "how am i progressing", "how's my protocol", "how is my protocol",
+            "diagnose", "should i train", "should i work out",
+            "what does my whoop", "show my sleep",
         ]
         for trigger in complex_triggers:
             if trigger in lower:
-                return sonnet
-        return None
+                return sonnet, 2048
+        return None, 1024
 
     async def process(self, user_input: str, user: dict, tasks: list = None, typing_callback=None) -> str | None:
         """Agent loop: call Claude with tools, execute tools, repeat until text response.
@@ -761,7 +765,7 @@ TASKS:
             if tools:
                 tools[-1]["cache_control"] = {"type": "ephemeral"}
 
-            model = self._select_model(user_input)
+            model, max_tokens = self._select_model(user_input)
             max_turns = int(os.environ.get("AGENT_MAX_TURNS", "5"))
             response = None
 
@@ -773,17 +777,20 @@ TASKS:
                     except Exception:
                         pass
 
-                response, error = _call_api(system, messages, tools=tools, model=model)
+                response, error = _call_api(system, messages, tools=tools, model=model, max_tokens=max_tokens)
 
                 if error:
                     logger.error(f"Agent API error on turn {turn}: {error}")
                     error_msg = f"Hmm, hit a snag: {error}"
-                    memory.save_turn(user_id, "user", user_input)
+                    # Save only once — the success path at the bottom handles normal saves
+                    if turn == 0:
+                        memory.save_turn(user_id, "user", user_input)
                     memory.save_turn(user_id, "assistant", error_msg)
                     return error_msg
 
                 if not response or not response.content:
-                    memory.save_turn(user_id, "user", user_input)
+                    if turn == 0:
+                        memory.save_turn(user_id, "user", user_input)
                     memory.save_turn(user_id, "assistant", "Something went wrong processing that.")
                     return None
 
@@ -801,6 +808,11 @@ TASKS:
                         })
 
                 messages.append({"role": "assistant", "content": assistant_content})
+
+                # Check stop reason — break on max_tokens to avoid truncated loops
+                if hasattr(response, "stop_reason") and response.stop_reason == "max_tokens":
+                    logger.warning(f"Agent hit max_tokens on turn {turn}")
+                    break
 
                 # Check for tool calls
                 tool_calls = [b for b in response.content if b.type == "tool_use"]
