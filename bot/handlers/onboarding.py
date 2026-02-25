@@ -79,15 +79,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── New user — start conversational onboarding ──
     context.user_data["ob"] = {}
 
-    # Step 1: Welcome + phone verification
+    # Step 1: Welcome + disclaimer + phone verification
+    await update.message.reply_text(
+        f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
+        "Your AI coach for training, tasks, and everything in between.\n\n"
+        "Before we get started:\n\n"
+        "Zoe is an AI wellness assistant, not a medical professional. "
+        "All information provided is for educational and informational purposes only "
+        "and is not intended to diagnose, treat, cure, or prevent any disease.\n\n"
+        "Peptide and supplement information reflects published research — many compounds "
+        "discussed are not FDA-approved for human use. Bloodwork interpretations are "
+        "informational reference ranges, not clinical diagnoses.\n\n"
+        "Always consult a qualified healthcare provider before starting any new supplement, "
+        "peptide, or training protocol.\n\n"
+        "By continuing, you acknowledge these terms."
+    )
+
     phone_keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
         one_time_keyboard=True,
         resize_keyboard=True,
     )
     await update.message.reply_text(
-        f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
-        "Your AI coach for training, tasks, and everything in between.\n"
         "Tap below to connect your account.",
         reply_markup=phone_keyboard,
     )
