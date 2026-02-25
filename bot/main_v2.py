@@ -286,18 +286,7 @@ def main():
     logger.info(f"ADMIN_USER_IDS: {os.environ.get('ADMIN_USER_IDS', 'NOT SET')}")
     logger.info("===========================")
 
-    # TELEMETRY: Stage 1 — process started
-    _notify_admin(
-        f"🟡 <b>Zoe Boot Stage 1</b>\n"
-        f"Process started\n"
-        f"Python: {sys.version.split()[0]}\n"
-        f"Token: {'YES' if has_token else 'NO'}\n"
-        f"DB: {'YES' if has_db else 'NO'}\n"
-        f"AI: {'YES' if has_ai else 'NO'}\n"
-        f"Domain: {railway_domain or 'none (polling mode)'}\n"
-        f"Port: {port_str}\n"
-        f"Admin IDs: {'YES' if has_admin else 'NO'}"
-    )
+    # Stage 1 — process started (logged only, no admin message)
 
     global _startup_status
 
@@ -327,7 +316,6 @@ def main():
     try:
         application = Application.builder().token(bot_token).post_init(_post_init).build()
         logger.info("Application built")
-        _notify_admin("🟡 <b>Stage 2</b>: Application built OK")
     except Exception as e:
         _notify_admin(f"🔴 <b>Stage 2 FAILED</b>: Application.build() crashed\n<code>{type(e).__name__}: {e}</code>")
         raise
@@ -340,7 +328,6 @@ def main():
             init_db()
             _db_ready = True
             logger.info("PostgreSQL initialized successfully")
-            _notify_admin("🟡 <b>Stage 3</b>: PostgreSQL initialized OK")
         except Exception as e:
             logger.error(f"PostgreSQL init failed: {type(e).__name__}: {e}")
             _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED — degraded mode\n<code>{type(e).__name__}: {e}</code>")
@@ -355,7 +342,6 @@ def main():
         try:
             _register_full_handlers(application)
             logger.info("All handlers registered successfully")
-            _notify_admin("🟡 <b>Stage 4</b>: All handlers registered OK")
         except Exception as e:
             logger.error(f"Handler registration failed: {type(e).__name__}: {e}")
             _notify_admin(f"🟠 <b>Stage 4</b>: Handler registration FAILED\n<code>{type(e).__name__}: {e}</code>")
@@ -364,7 +350,7 @@ def main():
         application.add_handler(CommandHandler("start", _fallback_start))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _fallback_message))
         logger.warning("Running in DEGRADED MODE — only basic responses available")
-        _notify_admin("🟠 <b>Stage 4</b>: Degraded mode — fallback handlers only")
+        _notify_admin("🔴 <b>Zoe DEGRADED MODE</b>: DB not ready — fallback handlers only")
 
     # --- Start ---
 
@@ -377,7 +363,6 @@ def main():
             logger.info(f"Starting WEBHOOK mode on port {port}")
             logger.info(f"Webhook URL: {webhook_url}")
             _startup_status = "running (webhook)"
-            _notify_admin(f"🟢 <b>Stage 5</b>: Starting WEBHOOK mode\nURL: {webhook_url}")
 
             application.run_webhook(
                 listen="0.0.0.0",
@@ -391,7 +376,6 @@ def main():
             # Polling mode (default) — health check already running on PORT
             logger.info("Starting POLLING mode")
             _startup_status = "running (polling)"
-            _notify_admin("🟢 <b>Stage 5</b>: Starting POLLING mode — bot should be live!")
 
             application.run_polling(
                 allowed_updates=["message", "callback_query", "pre_checkout_query"],

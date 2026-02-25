@@ -142,7 +142,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Check tier limit
-    allowed, msg = tier_service.check_limit(user["id"], "add_task", user.get("tier", "free"))
+    allowed, msg = tier_service.check_limit(user["id"], "add_task", user.get("tier", "free"), is_admin=user.get("is_admin", False))
     if not allowed:
         await update.message.reply_text(msg)
         return

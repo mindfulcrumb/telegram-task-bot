@@ -52,8 +52,11 @@ def get_usage_today(user_id: int, action: str) -> int:
         return cur.fetchone()["cnt"]
 
 
-def check_limit(user_id: int, action: str, tier: str = "free") -> tuple[bool, str | None]:
+def check_limit(user_id: int, action: str, tier: str = "free", is_admin: bool = False) -> tuple[bool, str | None]:
     """Check if user can perform action. Returns (allowed, message_if_blocked)."""
+    # Admin users bypass all limits
+    if is_admin or tier == "pro":
+        return True, None
     limits = LIMITS.get(tier, LIMITS["free"])
 
     if action == "add_task":

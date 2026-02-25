@@ -479,13 +479,15 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
         elif name == "set_reminder":
             from bot.services.tier_service import check_limit
             user_tier = "free"
+            user_is_admin = False
             try:
                 from bot.services import user_service
                 u = user_service.get_user_by_id(user_id)
                 user_tier = u.get("tier", "free") if u else "free"
+                user_is_admin = u.get("is_admin", False) if u else False
             except Exception:
                 pass
-            allowed, limit_msg = check_limit(user_id, "set_reminder", user_tier)
+            allowed, limit_msg = check_limit(user_id, "set_reminder", user_tier, is_admin=user_is_admin)
             if not allowed:
                 return {"error": limit_msg}
             try:

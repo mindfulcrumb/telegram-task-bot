@@ -738,9 +738,10 @@ TASKS:
 
         user_id = user["id"]
         tier = user.get("tier", "free")
+        is_admin = user.get("is_admin", False)
 
         # Check AI message limit
-        allowed, msg = check_limit(user_id, "ai_message", tier)
+        allowed, msg = check_limit(user_id, "ai_message", tier, is_admin=is_admin)
         if not allowed:
             return msg
 

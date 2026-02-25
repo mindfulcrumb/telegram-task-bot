@@ -27,6 +27,20 @@ def get_or_create_user(telegram_user_id: int, username: str = None, first_name: 
         user = cur.fetchone()
 
         if user:
+            # Auto-fix: ensure admin users always have pro tier + is_admin flag
+            is_admin = _is_admin_id(telegram_user_id)
+            if is_admin and (user.get("tier") != "pro" or not user.get("is_admin")):
+                cur.execute(
+                    "UPDATE users SET tier = 'pro', is_admin = TRUE, last_active = NOW(), "
+                    "telegram_username = COALESCE(%s, telegram_username), "
+                    "first_name = COALESCE(%s, first_name) WHERE telegram_user_id = %s",
+                    (username, first_name, telegram_user_id)
+                )
+                user = dict(user)
+                user["tier"] = "pro"
+                user["is_admin"] = True
+                return user
+
             # Update last_active and profile info if changed
             cur.execute(
                 """UPDATE users SET last_active = NOW(),
