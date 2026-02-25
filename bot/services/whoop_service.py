@@ -205,8 +205,14 @@ def get_access_token(user_id: int) -> str | None:
 
     # Check if expired (with 5-min buffer)
     if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc) + timedelta(minutes=5):
-        if row.get("refresh_token"):
-            return _refresh_tokens(user_id, row["refresh_token"])
+        if row["refresh_token"]:
+            logger.info(f"WHOOP token expired for user {user_id}, refreshing...")
+            new_token = _refresh_tokens(user_id, row["refresh_token"])
+            if new_token:
+                logger.info(f"WHOOP token refreshed for user {user_id}")
+            else:
+                logger.error(f"WHOOP token refresh FAILED for user {user_id}")
+            return new_token
         logger.warning(f"WHOOP token expired for user {user_id} but no refresh_token")
         return None
 
@@ -240,10 +246,16 @@ def _api_get(path: str, access_token: str, params: dict = None) -> dict | None:
             params=params,
             headers={"Authorization": f"Bearer {access_token}"},
         )
-        if resp.status_code != 200:
-            logger.error(f"WHOOP API {path} HTTP {resp.status_code}: {resp.text[:200]}")
+        if resp.status_code == 401:
+            logger.error(f"WHOOP API {path} 401 Unauthorized — token likely expired or revoked")
             return None
-        return resp.json()
+        if resp.status_code != 200:
+            logger.error(f"WHOOP API {path} HTTP {resp.status_code}: {resp.text[:300]}")
+            return None
+        data = resp.json()
+        record_count = len(data.get("records", [])) if isinstance(data, dict) else 0
+        logger.info(f"WHOOP API {path} OK: {record_count} records")
+        return data
     except Exception as e:
         logger.error(f"WHOOP API {path} failed: {e}")
         return None
@@ -252,31 +264,48 @@ def _api_get(path: str, access_token: str, params: dict = None) -> dict | None:
 # --- Data sync ---
 
 def sync_recovery(user_id: int) -> dict | None:
-    """Fetch latest recovery from WHOOP and store."""
+    """Fetch latest scored recovery from WHOOP and store."""
     token = get_access_token(user_id)
     if not token:
+        logger.warning(f"WHOOP sync_recovery: no token for user {user_id}")
         return None
 
-    data = _api_get("/recovery", token, {"limit": 1})
+    data = _api_get("/recovery", token, {"limit": 5})
     if not data or not data.get("records"):
+        logger.warning(f"WHOOP sync_recovery: no records for user {user_id}")
         return None
 
-    rec = data["records"][0]
-    score = rec.get("score", {})
+    # Find first SCORED record (latest might be PENDING_SCORE)
+    rec = None
+    for r in data["records"]:
+        state = r.get("score_state", "unknown")
+        if state == "SCORED" and r.get("score"):
+            rec = r
+            break
 
+    if not rec:
+        states = [r.get("score_state", "?") for r in data["records"]]
+        logger.info(f"WHOOP sync_recovery: no scored records for user {user_id}, states={states}")
+        return None
+
+    score = rec["score"]
     recovery_score = score.get("recovery_score")
     hrv = score.get("hrv_rmssd_milli")
     rhr = score.get("resting_heart_rate")
     spo2 = score.get("spo2_percentage")
     skin_temp = score.get("skin_temp_celsius")
 
-    # Get cycle date from the cycle_id
     cycle_date = date.today()
     if rec.get("created_at"):
         try:
             cycle_date = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00")).date()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"WHOOP recovery date parse failed: {rec.get('created_at')} — {e}")
+
+    logger.info(
+        f"WHOOP recovery synced: user={user_id} date={cycle_date} "
+        f"score={recovery_score} hrv={hrv} rhr={rhr} spo2={spo2}"
+    )
 
     _upsert_daily(user_id, cycle_date,
                    recovery_score=recovery_score, hrv_rmssd=hrv,
@@ -293,18 +322,31 @@ def sync_recovery(user_id: int) -> dict | None:
 
 
 def sync_sleep(user_id: int) -> dict | None:
-    """Fetch latest sleep data from WHOOP and store."""
+    """Fetch latest scored sleep data from WHOOP and store."""
     token = get_access_token(user_id)
     if not token:
+        logger.warning(f"WHOOP sync_sleep: no token for user {user_id}")
         return None
 
-    data = _api_get("/activity/sleep", token, {"limit": 1})
+    data = _api_get("/activity/sleep", token, {"limit": 5})
     if not data or not data.get("records"):
+        logger.warning(f"WHOOP sync_sleep: no records for user {user_id}")
         return None
 
-    rec = data["records"][0]
-    score = rec.get("score", {})
+    # Find first SCORED record
+    rec = None
+    for r in data["records"]:
+        state = r.get("score_state", "unknown")
+        if state == "SCORED" and r.get("score"):
+            rec = r
+            break
 
+    if not rec:
+        states = [r.get("score_state", "?") for r in data["records"]]
+        logger.info(f"WHOOP sync_sleep: no scored records for user {user_id}, states={states}")
+        return None
+
+    score = rec["score"]
     sleep_performance = score.get("sleep_performance_percentage")
     sleep_efficiency = score.get("sleep_efficiency_percentage")
     stage = score.get("stage_summary", {})
@@ -322,8 +364,13 @@ def sync_sleep(user_id: int) -> dict | None:
     if rec.get("created_at"):
         try:
             cycle_date = datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00")).date()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"WHOOP sleep date parse failed: {rec.get('created_at')} — {e}")
+
+    logger.info(
+        f"WHOOP sleep synced: user={user_id} date={cycle_date} "
+        f"perf={sleep_performance}% deep={deep_min}min rem={rem_min}min"
+    )
 
     _upsert_daily(user_id, cycle_date,
                    sleep_performance=sleep_performance,
@@ -345,18 +392,31 @@ def sync_sleep(user_id: int) -> dict | None:
 
 
 def sync_strain(user_id: int) -> dict | None:
-    """Fetch latest cycle/strain data from WHOOP and store."""
+    """Fetch latest scored cycle/strain data from WHOOP and store."""
     token = get_access_token(user_id)
     if not token:
+        logger.warning(f"WHOOP sync_strain: no token for user {user_id}")
         return None
 
-    data = _api_get("/cycle", token, {"limit": 1})
+    data = _api_get("/cycle", token, {"limit": 5})
     if not data or not data.get("records"):
+        logger.warning(f"WHOOP sync_strain: no records for user {user_id}")
         return None
 
-    rec = data["records"][0]
-    score = rec.get("score", {})
+    # Find first SCORED record
+    rec = None
+    for r in data["records"]:
+        state = r.get("score_state", "unknown")
+        if state == "SCORED" and r.get("score"):
+            rec = r
+            break
 
+    if not rec:
+        states = [r.get("score_state", "?") for r in data["records"]]
+        logger.info(f"WHOOP sync_strain: no scored records for user {user_id}, states={states}")
+        return None
+
+    score = rec["score"]
     strain = score.get("strain")
     calories = score.get("kilojoule")
 
@@ -364,8 +424,10 @@ def sync_strain(user_id: int) -> dict | None:
     if rec.get("start"):
         try:
             cycle_date = datetime.fromisoformat(rec["start"].replace("Z", "+00:00")).date()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"WHOOP strain date parse failed: {rec.get('start')} — {e}")
+
+    logger.info(f"WHOOP strain synced: user={user_id} date={cycle_date} strain={strain} cal={calories}")
 
     _upsert_daily(user_id, cycle_date,
                    daily_strain=strain, calories_kj=calories)
@@ -382,6 +444,15 @@ def sync_all(user_id: int) -> dict:
     recovery = sync_recovery(user_id)
     sleep = sync_sleep(user_id)
     strain = sync_strain(user_id)
+
+    synced = sum(1 for x in [recovery, sleep, strain] if x)
+    logger.info(
+        f"WHOOP sync_all: user={user_id} {synced}/3 "
+        f"(recovery={'OK' if recovery else 'MISS'}, "
+        f"sleep={'OK' if sleep else 'MISS'}, "
+        f"strain={'OK' if strain else 'MISS'})"
+    )
+
     return {
         "recovery": recovery,
         "sleep": sleep,

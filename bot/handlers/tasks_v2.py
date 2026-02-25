@@ -589,8 +589,8 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Sync fresh data
     try:
         whoop_service.sync_all(user["id"])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"WHOOP sync failed in /recovery: {type(e).__name__}: {e}")
 
     data = whoop_service.get_today_recovery(user["id"])
     if not data:
@@ -601,7 +601,7 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     zone = whoop_service.get_recovery_zone(recovery)
     zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
 
-    lines = [f"{zone_emoji} **Recovery: {recovery}%** ({zone.upper()})\n"]
+    lines = [f"{zone_emoji} Recovery: {recovery}% ({zone.upper()})\n"]
 
     if data.get("hrv_rmssd") is not None:
         lines.append(f"HRV: {data['hrv_rmssd']}ms")
@@ -619,6 +619,10 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"Strain: {data['daily_strain']}")
     if data.get("spo2") is not None:
         lines.append(f"SpO2: {data['spo2']}%")
+    if data.get("respiratory_rate") is not None:
+        lines.append(f"Respiratory rate: {data['respiratory_rate']}")
+    if data.get("skin_temp") is not None:
+        lines.append(f"Skin temp: {data['skin_temp']}C")
 
     # Add recommendation based on zone
     if zone == "green":
@@ -639,7 +643,7 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
     ])
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
+    await update.message.reply_text("\n".join(lines), reply_markup=keyboard)
 
 
 async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -658,8 +662,8 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         whoop_service.sync_all(user["id"])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"WHOOP sync failed in /whoop: {type(e).__name__}: {e}")
 
     data = whoop_service.get_today_recovery(user["id"])
     trends = whoop_service.get_whoop_trends(user["id"], days=7)
@@ -672,7 +676,7 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     zone = whoop_service.get_recovery_zone(recovery)
     zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
 
-    lines = [f"**WHOOP Dashboard**\n"]
+    lines = [f"WHOOP Dashboard\n"]
 
     # Today
     lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
@@ -687,15 +691,25 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts.append(f"{data['deep_sleep_minutes']}min deep")
         if data.get("rem_sleep_minutes") is not None:
             parts.append(f"{data['rem_sleep_minutes']}min REM")
+        if data.get("light_sleep_minutes") is not None:
+            parts.append(f"{data['light_sleep_minutes']}min light")
         if parts:
             sleep_str += f" ({', '.join(parts)})"
         lines.append(sleep_str)
     if data.get("daily_strain") is not None:
         lines.append(f"Strain: {data['daily_strain']}")
+    if data.get("spo2") is not None:
+        lines.append(f"SpO2: {data['spo2']}%")
+    if data.get("respiratory_rate") is not None:
+        lines.append(f"Respiratory rate: {data['respiratory_rate']}")
+    if data.get("skin_temp") is not None:
+        lines.append(f"Skin temp: {data['skin_temp']}C")
+    if data.get("calories_kj") is not None:
+        lines.append(f"Calories: {round(data['calories_kj'])} kJ")
 
     # 7-day trends
     if trends and trends.get("days", 0) > 2:
-        lines.append("\n**7-Day Trends:**")
+        lines.append("\n7-Day Trends:")
         if trends.get("recovery_avg") is not None:
             arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
                 trends.get("recovery_trend", ""), ""
@@ -719,7 +733,7 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
     ])
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
+    await update.message.reply_text("\n".join(lines), reply_markup=keyboard)
 
 
 async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
