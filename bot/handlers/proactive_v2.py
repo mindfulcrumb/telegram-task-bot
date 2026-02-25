@@ -89,6 +89,37 @@ async def evening_check_in_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Check-in failed for user {user.get('id')}: {e}")
 
 
+# --- End-of-Day Assessment ---
+
+async def daily_assessment_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 15 min. Sends AI-generated daily review to Pro users at assessment_hour."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            if now_user.hour != user.get("assessment_hour", 22):
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "assessment"):
+                continue
+
+            text = _generate_daily_assessment(user)
+
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, "assessment")
+            logger.info(f"Daily assessment sent to user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Assessment failed for user {user.get('id')}: {e}")
+
+
 # --- Smart Nudges ---
 
 async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
@@ -589,6 +620,9 @@ def setup_proactive_jobs(application):
     # Evening check-in scanner: every 15 min
     jq.run_repeating(evening_check_in_job, interval=900, first=120, name="evening_check_in")
 
+    # End-of-day assessment: every 15 min
+    jq.run_repeating(daily_assessment_job, interval=900, first=180, name="daily_assessment")
+
     # Smart nudges: every 2 hours
     jq.run_repeating(smart_nudge_job, interval=7200, first=300, name="smart_nudges")
 
@@ -619,7 +653,7 @@ def setup_proactive_jobs(application):
     # One-time deep content extraction: runs once 5 min after startup, then stops
     jq.run_once(initial_content_extraction_job, when=300, name="initial_content_extraction")
 
-    logger.info("Proactive coaching jobs registered (13 jobs)")
+    logger.info("Proactive coaching jobs registered (14 jobs)")
 
 
 # --- Helpers ---
@@ -757,6 +791,139 @@ def _template_briefing(user, tasks):
     if tasks:
         lines.append(f"\nStart with: {tasks[0]['title']}")
     lines.append("\nWhat are you tackling first?")
+    return "\n".join(lines)
+
+
+def _generate_daily_assessment(user):
+    """Generate end-of-day assessment via AI with template fallback."""
+    try:
+        from bot.ai.brain_v2 import _call_api
+
+        name = user.get("first_name", "friend")
+        daily = coaching_service.get_daily_summary(user["id"])
+        streak = coaching_service.get_streak(user["id"])
+
+        # Fitness data
+        fitness_section = ""
+        try:
+            from bot.services import fitness_service
+            if fitness_service.has_workout_today(user["id"]):
+                workouts = fitness_service.get_recent_workouts(user["id"], days=1)
+                if workouts:
+                    w = workouts[0]
+                    dur = f" ({w['duration_minutes']}min)" if w.get("duration_minutes") else ""
+                    fitness_section = f"Workout: {w['title']}{dur}\n"
+            else:
+                fitness_section = "No workout today\n"
+            ws = fitness_service.get_workout_streak(user["id"])
+            if ws.get("current_streak", 0) > 0:
+                fitness_section += f"Workout streak: {ws['current_streak']} sessions\n"
+        except Exception:
+            pass
+
+        # WHOOP recovery & sleep
+        whoop_section = ""
+        try:
+            from bot.services import whoop_service
+            if whoop_service.is_connected(user["id"]):
+                recovery = whoop_service.get_today_recovery(user["id"])
+                if recovery:
+                    score = recovery.get("recovery_score", "?")
+                    sleep = recovery.get("sleep_performance", "?")
+                    hrv = recovery.get("hrv_rmssd", "?")
+                    whoop_section = f"WHOOP: Recovery {score}%, Sleep {sleep}%, HRV {hrv}ms\n"
+        except Exception:
+            pass
+
+        # Supplement adherence
+        supplement_section = ""
+        try:
+            from bot.services import biohacking_service
+            adherence = biohacking_service.get_supplement_adherence(user["id"], days=1)
+            if adherence.get("overall_rate", 0) > 0:
+                supplement_section = f"Supplement adherence today: {adherence['overall_rate']}%\n"
+        except Exception:
+            pass
+
+        # Protocol doses
+        protocol_section = ""
+        try:
+            from bot.services import biohacking_service as bh
+            protocols = bh.get_protocol_summary(user["id"])
+            if protocols:
+                names = [p["peptide_name"] for p in protocols[:3]]
+                protocol_section = f"Active protocols: {', '.join(names)}\n"
+        except Exception:
+            pass
+
+        # Build data block for AI
+        data_block = (
+            f"Tasks completed today: {daily['completed_today']}\n"
+            f"Due today: {daily['due_today_done']}/{daily['due_today_total']} done\n"
+            f"Overdue tasks: {daily['overdue']}\n"
+            f"Task streak: {streak.get('current_streak', 0)} days\n"
+            + fitness_section
+            + whoop_section
+            + supplement_section
+            + protocol_section
+        )
+
+        prompt = (
+            f"Generate an end-of-day assessment for {name}.\n\n"
+            f"Today's data:\n{data_block}\n"
+            "Write 4-6 lines. Start with a brief assessment of how the day went. "
+            "Acknowledge what went well. If tasks were missed or overdue grew, address it gently. "
+            "Connect fitness and health data to productivity if relevant. "
+            "End with ONE suggestion for tomorrow. "
+            "Be warm and honest, like a coach wrapping up the day. "
+            "No markdown formatting. Under 600 chars."
+        )
+
+        response, error = _call_api(
+            "You are Zoe, a thoughtful fitness and productivity coach. You do end-of-day reviews that are honest, warm, and constructive. Never say 'I'm an AI'. No markdown formatting.",
+            [{"role": "user", "content": prompt}],
+            max_tokens=250,
+        )
+
+        if not error and response and response.content:
+            return response.content[0].text
+
+    except Exception as e:
+        logger.error(f"AI daily assessment failed: {e}")
+
+    # Template fallback
+    return _template_daily_assessment(user)
+
+
+def _template_daily_assessment(user):
+    """Simple template assessment when AI is unavailable."""
+    name = user.get("first_name", "friend")
+    daily = coaching_service.get_daily_summary(user["id"])
+
+    lines = [f"Day wrap, {name}.\n"]
+    completed = daily["completed_today"]
+    if completed > 0:
+        lines.append(f"\u2705 {completed} task{'s' if completed != 1 else ''} completed")
+    else:
+        lines.append("No tasks completed today.")
+
+    due_total = daily["due_today_total"]
+    due_done = daily["due_today_done"]
+    if due_total > 0:
+        lines.append(f"\U0001f4c5 {due_done}/{due_total} due-today tasks done")
+
+    overdue = daily["overdue"]
+    if overdue > 0:
+        lines.append(f"\U0001f534 {overdue} still overdue")
+
+    try:
+        from bot.services import fitness_service
+        if fitness_service.has_workout_today(user["id"]):
+            lines.append("\U0001f4aa Got a workout in")
+    except Exception:
+        pass
+
+    lines.append("\nRest up. Tomorrow's a new day.")
     return "\n".join(lines)
 
 

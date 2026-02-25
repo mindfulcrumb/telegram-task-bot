@@ -146,6 +146,55 @@ def get_check_in_stats(user_id: int, days: int = 7) -> dict:
         return dict(cur.fetchone())
 
 
+def get_daily_summary(user_id: int) -> dict:
+    """Get a summary of today's activity for end-of-day assessment."""
+    with get_cursor() as cur:
+        # Tasks completed today
+        cur.execute(
+            """SELECT COUNT(*) as cnt FROM tasks
+               WHERE user_id = %s AND completed_at >= CURRENT_DATE""",
+            (user_id,)
+        )
+        completed_today = cur.fetchone()["cnt"]
+
+        # Tasks that were due today (completed or not)
+        cur.execute(
+            """SELECT COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE status = 'completed') as done
+               FROM tasks
+               WHERE user_id = %s AND due_date = CURRENT_DATE""",
+            (user_id,)
+        )
+        due_today = dict(cur.fetchone())
+
+        # Tasks still overdue
+        cur.execute(
+            """SELECT COUNT(*) as cnt FROM tasks
+               WHERE user_id = %s AND status = 'active' AND due_date < CURRENT_DATE""",
+            (user_id,)
+        )
+        overdue = cur.fetchone()["cnt"]
+
+        # Check-in response rate today
+        cur.execute(
+            """SELECT COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE completed = TRUE) as done
+               FROM check_ins
+               WHERE user_id = %s AND check_in_date = CURRENT_DATE""",
+            (user_id,)
+        )
+        check_ins_today = dict(cur.fetchone())
+
+    return {
+        "completed_today": completed_today,
+        "due_today_total": due_today["total"],
+        "due_today_done": due_today["done"],
+        "overdue": overdue,
+        "check_ins_total": check_ins_today["total"],
+        "check_ins_done": check_ins_today["done"],
+    }
+
+
 # --- Weekly insights ---
 
 def get_weekly_stats(user_id: int) -> dict:

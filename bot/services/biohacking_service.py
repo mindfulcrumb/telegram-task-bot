@@ -322,6 +322,69 @@ def get_flagged_biomarkers(user_id: int) -> list:
         return [dict(row) for row in cur.fetchall()]
 
 
+def get_enriched_bloodwork(user_id: int) -> dict | None:
+    """Get latest panel enriched with optimal ranges, trends, and protocol connections."""
+    panels = get_bloodwork_history(user_id, limit=2)
+    if not panels:
+        return None
+
+    latest = panels[0]
+    previous = panels[1] if len(panels) > 1 else None
+
+    from bot.services.knowledge_service import get_biomarker_info
+
+    enriched_markers = []
+    for m in latest.get("markers", []):
+        marker_data = {
+            "marker_name": m["marker_name"],
+            "value": m["value"],
+            "unit": m.get("unit", ""),
+            "flag": m.get("flag"),
+            "reference_low": m.get("reference_low"),
+            "reference_high": m.get("reference_high"),
+        }
+
+        # Add optimal ranges from knowledge base
+        info = get_biomarker_info(m["marker_name"])
+        if info:
+            marker_data["optimal_low"] = info.get("optimal_range_low")
+            marker_data["optimal_high"] = info.get("optimal_range_high")
+            # Determine optimal status
+            opt_low = info.get("optimal_range_low")
+            opt_high = info.get("optimal_range_high")
+            if opt_low is not None and opt_high is not None:
+                if m["value"] < opt_low:
+                    marker_data["optimal_status"] = "below"
+                elif m["value"] > opt_high:
+                    marker_data["optimal_status"] = "above"
+                else:
+                    marker_data["optimal_status"] = "optimal"
+
+        # Add trend vs previous panel
+        if previous:
+            for pm in previous.get("markers", []):
+                if pm["marker_name"].lower() == m["marker_name"].lower():
+                    diff = m["value"] - pm["value"]
+                    marker_data["prev_value"] = pm["value"]
+                    marker_data["change"] = diff
+                    marker_data["prev_date"] = previous["test_date"]
+                    break
+
+        enriched_markers.append(marker_data)
+
+    # Get active protocols for connection
+    protocols = get_protocol_summary(user_id)
+
+    return {
+        "panel": latest,
+        "markers": enriched_markers,
+        "previous_date": previous["test_date"] if previous else None,
+        "active_protocols": protocols,
+        "flagged_count": sum(1 for m in enriched_markers if m.get("flag")),
+        "suboptimal_count": sum(1 for m in enriched_markers if m.get("optimal_status") in ("below", "above")),
+    }
+
+
 # --- Full biohacking summary (for AI context) ---
 
 def get_biohacking_summary(user_id: int) -> dict:

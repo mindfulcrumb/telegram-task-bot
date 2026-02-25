@@ -488,32 +488,69 @@ async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /bloodwork command — show latest bloodwork summary."""
+    """Handle /bloodwork command — show latest bloodwork with optimal ranges & trends."""
     user = await _get_user(update, context)
     from bot.services import biohacking_service
-    panels = biohacking_service.get_bloodwork_history(user["id"], limit=1)
-    if not panels:
+    enriched = biohacking_service.get_enriched_bloodwork(user["id"])
+    if not enriched:
         await update.message.reply_text(
             "No bloodwork logged yet.\n\n"
             "Tell me your results:\n"
             '"My testosterone came back at 650 ng/dL, vitamin D at 45 ng/mL"'
         )
         return
-    panel = panels[0]
+    panel = enriched["panel"]
     date_str = panel["test_date"].isoformat() if panel.get("test_date") else "?"
     lab_str = f" ({panel['lab_name']})" if panel.get("lab_name") else ""
     lines = [f"\U0001fa78 **Bloodwork** \u2014 {date_str}{lab_str}\n"]
-    for m in panel.get("markers", []):
-        flag_str = ""
-        if m.get("flag") == "high":
-            flag_str = " \u2b06\ufe0f HIGH"
-        elif m.get("flag") == "low":
-            flag_str = " \u2b07\ufe0f LOW"
+
+    for m in enriched["markers"]:
         unit_str = f" {m['unit']}" if m.get("unit") else ""
-        ref_str = ""
-        if m.get("reference_low") is not None and m.get("reference_high") is not None:
-            ref_str = f" (ref: {m['reference_low']}-{m['reference_high']})"
-        lines.append(f"- {m['marker_name']}: {m['value']}{unit_str}{ref_str}{flag_str}")
+
+        # Status icon based on optimal range (preferred) or lab flag
+        status_icon = ""
+        if m.get("optimal_status") == "below":
+            status_icon = " \u2b07\ufe0f"
+        elif m.get("optimal_status") == "above":
+            status_icon = " \u2b06\ufe0f"
+        elif m.get("flag") == "high":
+            status_icon = " \u2b06\ufe0f"
+        elif m.get("flag") == "low":
+            status_icon = " \u2b07\ufe0f"
+        elif m.get("optimal_status") == "optimal":
+            status_icon = " \u2705"
+
+        # Show optimal range if available, otherwise lab range
+        range_str = ""
+        if m.get("optimal_low") is not None and m.get("optimal_high") is not None:
+            range_str = f" (optimal: {m['optimal_low']}-{m['optimal_high']})"
+        elif m.get("reference_low") is not None and m.get("reference_high") is not None:
+            range_str = f" (ref: {m['reference_low']}-{m['reference_high']})"
+
+        # Trend arrow vs previous panel
+        trend_str = ""
+        if m.get("change") is not None:
+            change = m["change"]
+            if abs(change) > 0.01:
+                arrow = "\u25b2" if change > 0 else "\u25bc"
+                trend_str = f" {arrow}{abs(change):.0f}"
+
+        lines.append(f"- {m['marker_name']}: **{m['value']}**{unit_str}{range_str}{status_icon}{trend_str}")
+
+    # Summary footer
+    flagged = enriched["flagged_count"]
+    suboptimal = enriched["suboptimal_count"]
+    total = len(enriched["markers"])
+    optimal_count = total - suboptimal
+    if total > 0:
+        lines.append(f"\n{optimal_count}/{total} markers in optimal range")
+    if enriched.get("previous_date"):
+        lines.append(f"Compared to: {enriched['previous_date'].isoformat()}")
+    if enriched.get("active_protocols"):
+        protocol_names = [p["peptide_name"] for p in enriched["active_protocols"][:3]]
+        if protocol_names:
+            lines.append(f"Active protocols: {', '.join(protocol_names)}")
+
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 

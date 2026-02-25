@@ -134,6 +134,9 @@ def initialize():
             -- Add check-in hour to users
             ALTER TABLE users ADD COLUMN IF NOT EXISTS check_in_hour INT DEFAULT 20;
 
+            -- Add assessment hour for end-of-day review
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS assessment_hour INT DEFAULT 22;
+
             -- Add recurrence to tasks (daily, weekly, monthly, weekdays, or null)
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recurrence TEXT;
 
