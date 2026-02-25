@@ -374,6 +374,13 @@ def main():
             init_db()
             _db_ready = True
             logger.info("PostgreSQL initialized successfully")
+
+            # Seed knowledge base (idempotent — skips if data exists)
+            try:
+                from bot.data.seed_knowledge import seed_all
+                seed_all()
+            except Exception as e:
+                logger.error(f"Knowledge base seeding failed: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"PostgreSQL init failed: {type(e).__name__}: {e}")
             _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED — degraded mode\n<code>{type(e).__name__}: {e}</code>")

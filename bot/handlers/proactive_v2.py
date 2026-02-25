@@ -452,6 +452,22 @@ async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Streak risk alert failed for user {user.get('id')}: {e}")
 
 
+# --- Research Auto-Update ---
+
+async def research_update_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs weekly (Mondays). Checks podcast RSS feeds for new episodes and summarizes them."""
+    if datetime.now().weekday() != 0:  # Monday = 0
+        return
+
+    try:
+        from bot.services.research_service import check_new_episodes
+        added = check_new_episodes()
+        if added > 0:
+            logger.info(f"Research update: {added} new knowledge base entries added from RSS feeds")
+    except Exception as e:
+        logger.error(f"Research update job failed: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -491,7 +507,10 @@ def setup_proactive_jobs(application):
     # Streak at risk alert: every 2 hours
     jq.run_repeating(streak_at_risk_job, interval=7200, first=600, name="streak_at_risk")
 
-    logger.info("Proactive coaching jobs registered (11 jobs)")
+    # Research auto-update: every 12 hours (self-skips on non-Mondays)
+    jq.run_repeating(research_update_job, interval=43200, first=1800, name="research_update")
+
+    logger.info("Proactive coaching jobs registered (12 jobs)")
 
 
 # --- Helpers ---

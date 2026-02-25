@@ -399,6 +399,137 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_biomarkers_bloodwork ON biomarkers(bloodwork_id);
             CREATE INDEX IF NOT EXISTS idx_workout_sessions_started ON workout_sessions(user_id, started_at);
             CREATE INDEX IF NOT EXISTS idx_workout_exercises_name ON workout_exercises(exercise_name);
+
+            -- ═══════════════════════════════════════════════════════
+            -- KNOWLEDGE BASE SYSTEM
+            -- ═══════════════════════════════════════════════════════
+
+            -- General knowledge base (expert protocols, podcast summaries, research)
+            CREATE TABLE IF NOT EXISTS knowledge_base (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source TEXT,
+                source_episode TEXT,
+                tags TEXT[],
+                evidence_level TEXT DEFAULT 'C',
+                search_vector TSVECTOR,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category);
+            CREATE INDEX IF NOT EXISTS idx_kb_source ON knowledge_base(source);
+            CREATE INDEX IF NOT EXISTS idx_kb_search ON knowledge_base USING GIN(search_vector);
+            CREATE INDEX IF NOT EXISTS idx_kb_tags ON knowledge_base USING GIN(tags);
+
+            -- Peptide reference database (47 compounds)
+            CREATE TABLE IF NOT EXISTS peptide_reference (
+                id SERIAL PRIMARY KEY,
+                slug TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                mechanism TEXT,
+                benefits TEXT[],
+                categories TEXT[],
+                routes TEXT[],
+                standard_dose TEXT,
+                standard_frequency TEXT,
+                standard_duration TEXT,
+                dosage_notes TEXT,
+                stack_suggestions TEXT[],
+                side_effects TEXT[],
+                contraindications TEXT[],
+                evidence_level TEXT DEFAULT 'C',
+                research_summary TEXT,
+                half_life TEXT,
+                beginner_friendly BOOLEAN DEFAULT FALSE,
+                search_vector TSVECTOR,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_peptide_ref_search ON peptide_reference USING GIN(search_vector);
+            CREATE INDEX IF NOT EXISTS idx_peptide_ref_categories ON peptide_reference USING GIN(categories);
+
+            -- Supplement reference database
+            CREATE TABLE IF NOT EXISTS supplement_reference (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                name_normalized TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT NOT NULL,
+                standard_dose TEXT NOT NULL,
+                timing TEXT,
+                benefits TEXT[],
+                mechanism TEXT,
+                interactions TEXT[],
+                side_effects TEXT[],
+                cycle_recommendation TEXT,
+                evidence_level TEXT DEFAULT 'B',
+                notes TEXT,
+                search_vector TSVECTOR,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_supp_ref_search ON supplement_reference USING GIN(search_vector);
+            CREATE INDEX IF NOT EXISTS idx_supp_ref_name ON supplement_reference(name_normalized);
+
+            -- Biomarker reference (optimal vs lab ranges)
+            CREATE TABLE IF NOT EXISTS biomarker_reference (
+                id SERIAL PRIMARY KEY,
+                marker_name TEXT UNIQUE NOT NULL,
+                marker_name_normalized TEXT NOT NULL,
+                unit TEXT NOT NULL,
+                category TEXT NOT NULL,
+                lab_range_low REAL,
+                lab_range_high REAL,
+                optimal_range_low REAL,
+                optimal_range_high REAL,
+                interpretation_low TEXT,
+                interpretation_high TEXT,
+                optimization_tips TEXT,
+                related_markers TEXT[],
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_biomarker_ref_name ON biomarker_reference(marker_name_normalized);
+            CREATE INDEX IF NOT EXISTS idx_biomarker_ref_category ON biomarker_reference(category);
+
+            -- Food reference (blood type diet, 118 foods)
+            CREATE TABLE IF NOT EXISTS food_reference (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                name_normalized TEXT NOT NULL,
+                category TEXT NOT NULL,
+                calories_per_100g REAL NOT NULL,
+                protein_g REAL DEFAULT 0,
+                carbs_g REAL DEFAULT 0,
+                fat_g REAL DEFAULT 0,
+                fiber_g REAL DEFAULT 0,
+                blood_type_o TEXT NOT NULL,
+                blood_type_a TEXT NOT NULL,
+                blood_type_b TEXT NOT NULL,
+                blood_type_ab TEXT NOT NULL,
+                serving_size_g REAL,
+                serving_description TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_food_ref_name ON food_reference(name_normalized);
+            CREATE INDEX IF NOT EXISTS idx_food_ref_category ON food_reference(category);
+
+            -- RSS feed sync tracking (for research auto-updates)
+            CREATE TABLE IF NOT EXISTS knowledge_sync_log (
+                id SERIAL PRIMARY KEY,
+                source TEXT NOT NULL,
+                feed_url TEXT,
+                last_entry_id TEXT,
+                last_sync_at TIMESTAMPTZ DEFAULT NOW(),
+                entries_added INT DEFAULT 0
+            );
         """)
     logger.info("PostgreSQL schema initialized")
 

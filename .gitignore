@@ -44,4 +44,4 @@ Thumbs.db
 *.log
 
 # Accounting data (runtime, per-deployment)
-data/
+/data/

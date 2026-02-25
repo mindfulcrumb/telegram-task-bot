@@ -354,6 +354,30 @@ def get_tool_definitions() -> list:
                 "required": ["content_match"]
             }
         },
+        {
+            "name": "search_knowledge_base",
+            "description": "Search Zoe's health, fitness, and longevity knowledge base. Use when asked about a peptide, supplement interaction, biomarker interpretation, blood type foods, or expert protocols (Huberman, Attia, Sinclair, Lyon). This is your reference library.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search for (e.g. 'BPC-157 dosing', 'foods beneficial for blood type O', 'sauna protocol', 'vitamin D optimal range')"
+                    },
+                    "search_type": {
+                        "type": "string",
+                        "enum": ["general", "peptide", "supplement", "biomarker", "food"],
+                        "description": "Type of knowledge to search. 'general' searches expert protocols and research, others search specific reference tables."
+                    },
+                    "blood_type": {
+                        "type": "string",
+                        "enum": ["O", "A", "B", "AB"],
+                        "description": "For food searches, filter by blood type."
+                    }
+                },
+                "required": ["query"]
+            }
+        },
     ]
 
 
@@ -940,6 +964,81 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if count > 0:
                 return {"success": True, "deleted": count}
             return {"success": False, "message": "No matching memories found."}
+
+        # --- Knowledge base ---
+        elif name == "search_knowledge_base":
+            from bot.services import knowledge_service
+            query = args["query"]
+            search_type = args.get("search_type", "general")
+            blood_type = args.get("blood_type")
+
+            if search_type == "peptide":
+                info = knowledge_service.get_peptide_info(query)
+                if info:
+                    return {"type": "peptide", "result": {
+                        "name": info["name"], "description": info["description"],
+                        "mechanism": info.get("mechanism"),
+                        "dose": info.get("standard_dose"),
+                        "frequency": info.get("standard_frequency"),
+                        "duration": info.get("standard_duration"),
+                        "dosage_notes": info.get("dosage_notes"),
+                        "benefits": info.get("benefits"),
+                        "routes": info.get("routes"),
+                        "side_effects": info.get("side_effects"),
+                        "contraindications": info.get("contraindications"),
+                        "stack_suggestions": info.get("stack_suggestions"),
+                        "evidence_level": info.get("evidence_level"),
+                        "research_summary": info.get("research_summary"),
+                        "half_life": info.get("half_life"),
+                    }}
+                results = knowledge_service.search_peptides(query)
+                return {"type": "peptide_search", "results": results, "count": len(results)}
+
+            elif search_type == "biomarker":
+                info = knowledge_service.get_biomarker_info(query)
+                if info:
+                    return {"type": "biomarker", "result": {
+                        "marker": info["marker_name"], "unit": info["unit"],
+                        "category": info["category"],
+                        "lab_range": f"{info.get('lab_range_low')}-{info.get('lab_range_high')}",
+                        "optimal_range": f"{info.get('optimal_range_low')}-{info.get('optimal_range_high')}",
+                        "interpretation_low": info.get("interpretation_low"),
+                        "interpretation_high": info.get("interpretation_high"),
+                        "tips": info.get("optimization_tips"),
+                        "related": info.get("related_markers"),
+                    }}
+                return {"type": "biomarker", "result": None, "message": f"No reference data for '{query}'"}
+
+            elif search_type == "food":
+                if blood_type:
+                    results = knowledge_service.get_foods_by_blood_type(
+                        blood_type, query=query if query.lower() not in ("all", "list", "foods") else None
+                    )
+                else:
+                    results = knowledge_service.search_foods(query)
+                return {"type": "food", "results": results[:15], "count": len(results)}
+
+            elif search_type == "supplement":
+                info = knowledge_service.get_supplement_info(query)
+                if info:
+                    return {"type": "supplement", "result": {
+                        "name": info["name"], "category": info["category"],
+                        "description": info["description"],
+                        "dose": info["standard_dose"], "timing": info.get("timing"),
+                        "benefits": info.get("benefits"),
+                        "mechanism": info.get("mechanism"),
+                        "interactions": info.get("interactions"),
+                        "side_effects": info.get("side_effects"),
+                        "cycle": info.get("cycle_recommendation"),
+                        "evidence_level": info.get("evidence_level"),
+                        "notes": info.get("notes"),
+                    }}
+                results = knowledge_service.search_supplements(query)
+                return {"type": "supplement_search", "results": results, "count": len(results)}
+
+            else:  # general
+                results = knowledge_service.search_kb(query, limit=5)
+                return {"type": "knowledge", "results": results, "count": len(results)}
 
         else:
             return {"error": f"Unknown tool: {name}"}
