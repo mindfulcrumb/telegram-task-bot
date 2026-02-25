@@ -542,6 +542,81 @@ def initialize():
                 last_sync_at TIMESTAMPTZ DEFAULT NOW(),
                 entries_added INT DEFAULT 0
             );
+
+            -- Content processing log (for deep extraction pipeline)
+            CREATE TABLE IF NOT EXISTS content_processing_log (
+                id SERIAL PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                source_title TEXT,
+                status TEXT DEFAULT 'pending',
+                chunks_total INT DEFAULT 0,
+                chunks_processed INT DEFAULT 0,
+                entries_created INT DEFAULT 0,
+                error_message TEXT,
+                processed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(source, source_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_content_proc_source ON content_processing_log(source, status);
+
+            -- ═══════════════════════════════════════════════════════════
+            -- PEPTIDE ENHANCEMENTS (Feb 2026 — regulatory, interactions, stacking)
+            -- ═══════════════════════════════════════════════════════════
+
+            -- Add regulatory columns to peptide_reference
+            ALTER TABLE peptide_reference ADD COLUMN IF NOT EXISTS fda_status TEXT DEFAULT 'unregulated';
+            ALTER TABLE peptide_reference ADD COLUMN IF NOT EXISTS wada_prohibited BOOLEAN DEFAULT FALSE;
+            ALTER TABLE peptide_reference ADD COLUMN IF NOT EXISTS wada_category TEXT;
+            ALTER TABLE peptide_reference ADD COLUMN IF NOT EXISTS legal_notes TEXT;
+            ALTER TABLE peptide_reference ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ DEFAULT NOW();
+
+            -- Peptide interactions (cross-compound warnings)
+            CREATE TABLE IF NOT EXISTS peptide_interactions (
+                id SERIAL PRIMARY KEY,
+                peptide_a TEXT NOT NULL,
+                peptide_b TEXT NOT NULL,
+                interaction_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                description TEXT NOT NULL,
+                mechanism TEXT,
+                recommendation TEXT,
+                source TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(peptide_a, peptide_b, interaction_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_peptide_interactions_a ON peptide_interactions(peptide_a);
+            CREATE INDEX IF NOT EXISTS idx_peptide_interactions_b ON peptide_interactions(peptide_b);
+
+            -- Stacking protocols (curated compound combinations)
+            CREATE TABLE IF NOT EXISTS stacking_protocols (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                goal TEXT NOT NULL,
+                description TEXT NOT NULL,
+                compounds JSONB NOT NULL,
+                timing_notes TEXT,
+                duration TEXT,
+                contraindications TEXT[],
+                evidence_level TEXT DEFAULT 'C',
+                source TEXT,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_stacking_goal ON stacking_protocols(goal);
+
+            -- Evidence tier definitions
+            CREATE TABLE IF NOT EXISTS evidence_tiers (
+                id SERIAL PRIMARY KEY,
+                tier TEXT UNIQUE NOT NULL,
+                label TEXT NOT NULL,
+                description TEXT NOT NULL,
+                examples TEXT
+            );
         """)
     logger.info("PostgreSQL schema initialized")
 

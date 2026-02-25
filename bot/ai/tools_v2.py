@@ -378,6 +378,55 @@ def get_tool_definitions() -> list:
                 "required": ["query"]
             }
         },
+        {
+            "name": "check_peptide_interactions",
+            "description": "Check known interactions between peptides. Use when a user asks about combining peptides, stacking safety, or whether two compounds interact. Returns synergistic, contraindicated, or cautionary interactions.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "peptide_name": {
+                        "type": "string",
+                        "description": "Peptide name to check interactions for (e.g. 'BPC-157', 'Ipamorelin')"
+                    },
+                    "second_peptide": {
+                        "type": "string",
+                        "description": "Optional: check interaction with a specific second peptide"
+                    }
+                },
+                "required": ["peptide_name"]
+            }
+        },
+        {
+            "name": "get_stacking_protocols",
+            "description": "Get curated peptide stacking protocols for specific goals. Use when user asks about peptide stacks, protocol recommendations, combining compounds for a goal (recovery, GH optimization, cognition, longevity, fat loss, immune, gut healing).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "Goal to filter protocols by (e.g. 'recovery', 'fat loss', 'cognition', 'longevity'). Leave empty for all protocols."
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "Get a specific protocol by slug (e.g. 'recovery-accelerator', 'gh-optimization')"
+                    }
+                }
+            }
+        },
+        {
+            "name": "get_regulatory_status",
+            "description": "Get FDA and WADA regulatory status for a peptide. Use when user asks about legality, FDA status, is it banned, can they use it in competition, or regulatory concerns. Important for harm reduction.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "peptide_name": {
+                        "type": "string",
+                        "description": "Peptide name to check regulatory status for"
+                    }
+                },
+                "required": ["peptide_name"]
+            }
+        },
     ]
 
 
@@ -975,7 +1024,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if search_type == "peptide":
                 info = knowledge_service.get_peptide_info(query)
                 if info:
-                    return {"type": "peptide", "result": {
+                    result = {
                         "name": info["name"], "description": info["description"],
                         "mechanism": info.get("mechanism"),
                         "dose": info.get("standard_dose"),
@@ -990,7 +1039,16 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                         "evidence_level": info.get("evidence_level"),
                         "research_summary": info.get("research_summary"),
                         "half_life": info.get("half_life"),
-                    }}
+                    }
+                    # Include regulatory data if available
+                    if info.get("fda_status"):
+                        result["fda_status"] = info["fda_status"]
+                    if info.get("wada_prohibited") is not None:
+                        result["wada_prohibited"] = info["wada_prohibited"]
+                        result["wada_category"] = info.get("wada_category")
+                    if info.get("legal_notes"):
+                        result["legal_notes"] = info["legal_notes"]
+                    return {"type": "peptide", "result": result}
                 results = knowledge_service.search_peptides(query)
                 return {"type": "peptide_search", "results": results, "count": len(results)}
 
@@ -1039,6 +1097,46 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             else:  # general
                 results = knowledge_service.search_kb(query, limit=5)
                 return {"type": "knowledge", "results": results, "count": len(results)}
+
+        elif name == "check_peptide_interactions":
+            from bot.services import knowledge_service
+            peptide_name = args["peptide_name"]
+            second = args.get("second_peptide")
+
+            if second:
+                pair = knowledge_service.check_interaction_pair(peptide_name, second)
+                if pair:
+                    return {"type": "interaction_pair", "result": pair}
+                return {"type": "interaction_pair", "result": None,
+                        "message": f"No known interaction between {peptide_name} and {second}"}
+            else:
+                interactions = knowledge_service.check_peptide_interactions(peptide_name)
+                return {"type": "interactions", "peptide": peptide_name,
+                        "results": interactions, "count": len(interactions)}
+
+        elif name == "get_stacking_protocols":
+            from bot.services import knowledge_service
+            slug = args.get("slug")
+            goal = args.get("goal")
+
+            if slug:
+                protocol = knowledge_service.get_stacking_protocol_by_slug(slug)
+                if protocol:
+                    return {"type": "stacking_protocol", "result": protocol}
+                return {"type": "stacking_protocol", "result": None,
+                        "message": f"No protocol found with slug '{slug}'"}
+            else:
+                protocols = knowledge_service.get_stacking_protocols(goal)
+                return {"type": "stacking_protocols", "results": protocols, "count": len(protocols)}
+
+        elif name == "get_regulatory_status":
+            from bot.services import knowledge_service
+            peptide_name = args["peptide_name"]
+            status = knowledge_service.get_regulatory_status(peptide_name)
+            if status:
+                return {"type": "regulatory", "result": status}
+            return {"type": "regulatory", "result": None,
+                    "message": f"No regulatory data for '{peptide_name}'"}
 
         else:
             return {"error": f"Unknown tool: {name}"}

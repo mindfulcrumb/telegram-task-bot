@@ -122,9 +122,31 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 
 ## What's NOT Working / TODO
 
-- **STRIPE_PROVIDER_TOKEN not set** — payments show "coming soon"
+- **Payments provider pending approval** — applied via BotFather (Smart Glocal or Unlimint), waiting for approval. Once approved, set `STRIPE_PROVIDER_TOKEN` env var on Railway. Code is ready, no changes needed.
+- **Google Calendar OAuth** — code deployed, env vars set (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`). User needs to test `/calendar` flow. Redirect URI: `https://telegram-task-bot-production-6784.up.railway.app/google/callback`. Google Cloud project is in Testing mode — user's email added as test user.
 - No test suite
 - No referral system yet
+
+## Session Log — Feb 25, 2026 (Session 3)
+
+### What was done:
+1. **Legal disclaimers** — added to onboarding, AI prompt, and bot description (simplified after user feedback)
+2. **Typing indicator fix** — background asyncio loop refreshes every 4s so dots stay visible during API calls
+3. **Voice handler fix** — removed transcription echo, added fallback when AI returns None
+4. **Google Calendar OAuth** — full rewrite from iCal to OAuth 2.0 (following WHOOP pattern). Added `google_calendar_tokens` table, OAuth flow with auto-refresh, `/google/callback` route, inline button in `/calendar` command. iCal kept as fallback.
+5. **Knowledge base system** — 261 seeded entries, RSS auto-updates, research service
+6. **Bot menu updated** — expanded from 10 to 17 commands
+7. **Google Cloud Console setup** — guided user through project creation, OAuth credentials (Web application), Calendar API enablement, test user addition
+8. **Stripe/payments** — Stripe not available in user's region via BotFather. User applying through available providers (Smart Glocal/Unlimint). Code ready, just needs token.
+
+### Commits:
+- `7a782bf` — Knowledge base system with 261 seeded entries and RSS auto-updates
+- `6502f13` — Legal disclaimers for health/wellness content compliance
+- `807292c` — Google Calendar OAuth + typing indicator fix + voice fix
+- `2a7c034` — Telegram bot menu with all key commands
+
+### Railway domain:
+`telegram-task-bot-production-6784.up.railway.app`
 
 ## Session Log — Feb 25, 2026 (Session 2)
 

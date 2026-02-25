@@ -321,3 +321,99 @@ def search_supplements(query: str) -> list:
             (like_q, like_q, like_q),
         )
         return [dict(r) for r in cur.fetchall()]
+
+
+# ─── Peptide Interactions ────────────────────────────────────────────
+
+def check_peptide_interactions(peptide_name: str) -> list:
+    """Get all known interactions for a peptide."""
+    with get_cursor() as cur:
+        like_q = f"%{peptide_name}%"
+        cur.execute(
+            """SELECT peptide_a, peptide_b, interaction_type, severity,
+                      description, mechanism, recommendation, source
+               FROM peptide_interactions
+               WHERE peptide_a ILIKE %s OR peptide_b ILIKE %s
+               ORDER BY severity DESC""",
+            (like_q, like_q),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def check_interaction_pair(peptide_a: str, peptide_b: str) -> dict | None:
+    """Check if two specific peptides have a known interaction."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT peptide_a, peptide_b, interaction_type, severity,
+                      description, mechanism, recommendation, source
+               FROM peptide_interactions
+               WHERE (LOWER(peptide_a) = LOWER(%s) AND LOWER(peptide_b) = LOWER(%s))
+                  OR (LOWER(peptide_a) = LOWER(%s) AND LOWER(peptide_b) = LOWER(%s))""",
+            (peptide_a, peptide_b, peptide_b, peptide_a),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+# ─── Stacking Protocols ─────────────────────────────────────────────
+
+def get_stacking_protocols(goal: str = None) -> list:
+    """Get curated stacking protocols, optionally filtered by goal."""
+    with get_cursor() as cur:
+        if goal:
+            like_q = f"%{goal}%"
+            cur.execute(
+                """SELECT name, slug, goal, description, compounds, timing_notes,
+                          duration, contraindications, evidence_level, source, notes
+                   FROM stacking_protocols
+                   WHERE goal ILIKE %s OR name ILIKE %s OR description ILIKE %s
+                   ORDER BY name""",
+                (like_q, like_q, like_q),
+            )
+        else:
+            cur.execute(
+                """SELECT name, slug, goal, description, compounds, timing_notes,
+                          duration, contraindications, evidence_level, source, notes
+                   FROM stacking_protocols
+                   ORDER BY name"""
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_stacking_protocol_by_slug(slug: str) -> dict | None:
+    """Get a specific stacking protocol by slug."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT name, slug, goal, description, compounds, timing_notes,
+                      duration, contraindications, evidence_level, source, notes
+               FROM stacking_protocols
+               WHERE slug = %s""",
+            (slug,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+# ─── Regulatory Status ───────────────────────────────────────────────
+
+def get_regulatory_status(peptide_name: str) -> dict | None:
+    """Get FDA and WADA regulatory status for a peptide."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT name, fda_status, wada_prohibited, wada_category, legal_notes
+               FROM peptide_reference
+               WHERE LOWER(name) = LOWER(%s) OR slug = %s
+                  OR name ILIKE %s""",
+            (peptide_name, peptide_name.lower().replace(" ", "-"), f"%{peptide_name}%"),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+# ─── Evidence Tiers ──────────────────────────────────────────────────
+
+def get_evidence_tiers() -> list:
+    """Get all evidence tier definitions."""
+    with get_cursor() as cur:
+        cur.execute("SELECT tier, label, description, examples FROM evidence_tiers ORDER BY tier")
+        return [dict(r) for r in cur.fetchall()]

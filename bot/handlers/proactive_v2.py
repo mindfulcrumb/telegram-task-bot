@@ -455,15 +455,43 @@ async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
 # --- Research Auto-Update ---
 
 async def research_update_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs weekly (Mondays). Checks podcast RSS feeds for new episodes and summarizes them."""
+    """Runs weekly (Mondays). Checks podcast RSS, PubMed, ClinicalTrials, YouTube transcripts, and articles."""
     if datetime.now().weekday() != 0:  # Monday = 0
         return
 
     try:
-        from bot.services.research_service import check_new_episodes
+        from bot.services.research_service import (
+            check_new_episodes, check_pubmed_updates, check_clinical_trials,
+            check_youtube_transcripts, check_pubmed_full_abstracts, check_jay_campbell,
+        )
+        total = 0
+
+        # Existing crawlers
         added = check_new_episodes()
-        if added > 0:
-            logger.info(f"Research update: {added} new knowledge base entries added from RSS feeds")
+        total += added
+
+        pubmed_added = check_pubmed_updates()
+        total += pubmed_added
+
+        ct_added = check_clinical_trials()
+        total += ct_added
+
+        # Deep content extraction crawlers
+        yt_added = check_youtube_transcripts()
+        total += yt_added
+
+        pubmed_deep = check_pubmed_full_abstracts()
+        total += pubmed_deep
+
+        jc_added = check_jay_campbell()
+        total += jc_added
+
+        if total > 0:
+            logger.info(
+                f"Research update: {total} new KB entries "
+                f"(RSS={added}, PubMed={pubmed_added}, ClinicalTrials={ct_added}, "
+                f"YouTube={yt_added}, PubMedDeep={pubmed_deep}, JayCampbell={jc_added})"
+            )
     except Exception as e:
         logger.error(f"Research update job failed: {e}")
 

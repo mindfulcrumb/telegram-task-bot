@@ -457,6 +457,20 @@ def main():
                 seed_all()
             except Exception as e:
                 logger.error(f"Knowledge base seeding failed: {type(e).__name__}: {e}")
+
+            # Seed v2 data (regulatory, interactions, stacking protocols, new compounds)
+            try:
+                from bot.data.seed_knowledge_v2 import seed_all_v2
+                seed_all_v2()
+            except Exception as e:
+                logger.error(f"Knowledge v2 seeding failed: {type(e).__name__}: {e}")
+
+            # Seed v3 data (deep expert protocols — Koniver, Jay Campbell, Epitalon+Thymalin, etc.)
+            try:
+                from bot.data.seed_knowledge_v3 import seed_all_v3
+                seed_all_v3()
+            except Exception as e:
+                logger.error(f"Knowledge v3 seeding failed: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"PostgreSQL init failed: {type(e).__name__}: {e}")
             _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED — degraded mode\n<code>{type(e).__name__}: {e}</code>")

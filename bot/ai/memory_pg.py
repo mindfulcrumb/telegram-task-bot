@@ -7,7 +7,7 @@ from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "10"))
+_HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "20"))
 
 
 def get_history(user_id: int, limit: int = None) -> list:

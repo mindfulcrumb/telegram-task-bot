@@ -472,6 +472,9 @@ COACHING STYLE:
         # User memory (what Zoe has learned)
         memory_section = self._build_memory_section(user.get("id", 0))
 
+        # Knowledge base awareness
+        kb_section = self._build_kb_awareness_section()
+
         # First-time user awareness
         first_time_section = ""
         if not task_lines and not coaching_section:
@@ -493,7 +496,7 @@ This user just started. No tasks, no workout history, no data yet.
 {coaching_section}{calendar_section}
 TASKS:
 {task_list}
-{fitness_section}{biohacking_section}{whoop_section}{memory_section}{first_time_section}"""
+{fitness_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""
@@ -731,6 +734,54 @@ TASKS:
                 lines.append(f"- 7d trends: {', '.join(trend_parts)}")
 
         return "\n".join(lines) + "\n" if len(lines) > 1 else ""
+
+    def _build_kb_awareness_section(self) -> str:
+        """Build knowledge base awareness section — tells the brain what reference data is available."""
+        try:
+            from bot.db.database import get_cursor
+            with get_cursor() as cur:
+                # Count reference data
+                cur.execute("SELECT COUNT(*) as c FROM peptide_reference")
+                peptide_count = cur.fetchone()["c"]
+                cur.execute("SELECT COUNT(*) as c FROM supplement_reference")
+                supp_count = cur.fetchone()["c"]
+                cur.execute("SELECT COUNT(*) as c FROM biomarker_reference")
+                bio_count = cur.fetchone()["c"]
+                cur.execute("SELECT COUNT(*) as c FROM food_reference")
+                food_count = cur.fetchone()["c"]
+                cur.execute("SELECT COUNT(*) as c FROM knowledge_base")
+                kb_count = cur.fetchone()["c"]
+
+                # Check for v2 tables
+                interaction_count = 0
+                stack_count = 0
+                try:
+                    cur.execute("SELECT COUNT(*) as c FROM peptide_interactions")
+                    interaction_count = cur.fetchone()["c"]
+                    cur.execute("SELECT COUNT(*) as c FROM stacking_protocols")
+                    stack_count = cur.fetchone()["c"]
+                except Exception:
+                    pass
+
+            lines = ["\nYOUR KNOWLEDGE BASE (use search_knowledge_base tool to access):"]
+            lines.append(f"- {peptide_count} peptide compounds with mechanisms, dosing, side effects, FDA/WADA status")
+            lines.append(f"- {supp_count} supplements with dosing, timing, interactions")
+            lines.append(f"- {bio_count} biomarkers with optimal vs lab ranges")
+            lines.append(f"- {food_count} foods with blood type classifications")
+            lines.append(f"- {kb_count} expert protocol entries (Huberman, Attia, Sinclair, Lyon)")
+            if interaction_count > 0:
+                lines.append(f"- {interaction_count} peptide interaction warnings (use check_peptide_interactions tool)")
+            if stack_count > 0:
+                lines.append(f"- {stack_count} curated stacking protocols (use get_stacking_protocols tool)")
+            lines.append("")
+            lines.append("IMPORTANT: When asked about peptides, supplements, biomarkers, or expert protocols,")
+            lines.append("ALWAYS use search_knowledge_base FIRST to get accurate data from your reference library.")
+            lines.append("When a user is on multiple peptides, check interactions with check_peptide_interactions.")
+            lines.append("Include FDA regulatory status and WADA status when discussing peptide safety.")
+
+            return "\n".join(lines) + "\n"
+        except Exception:
+            return ""
 
     def _select_model(self, user_input):
         """Select model based on request complexity.

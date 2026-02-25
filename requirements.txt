@@ -7,3 +7,4 @@ anthropic>=0.39.0
 psycopg2-binary==2.9.9
 icalendar==5.0.13
 feedparser>=6.0.0
+youtube-transcript-api>=0.6.0
