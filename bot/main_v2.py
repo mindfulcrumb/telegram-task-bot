@@ -422,6 +422,11 @@ def _register_full_handlers(application):
             application.add_handler(CallbackQueryHandler(handle_workout_session_callback, pattern="^ws:"))
         except Exception:
             pass
+        try:
+            from bot.handlers.tasks_v2 import handle_feedback_callback
+            application.add_handler(CallbackQueryHandler(handle_feedback_callback, pattern="^fb:"))
+        except Exception:
+            pass
         application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
         application.add_handler(MessageHandler(filters.LOCATION, handle_location))
         logger.info("Onboarding handlers registered")
@@ -436,7 +441,7 @@ def _register_full_handlers(application):
             cmd_analyze, cmd_streak, cmd_workout, cmd_metrics, cmd_gains,
             cmd_protocols, cmd_supplements, cmd_bloodwork, cmd_dose,
             cmd_connect_whoop, cmd_recovery, cmd_whoop, cmd_disconnect_whoop,
-            handle_whoop_callback, handle_message,
+            handle_whoop_callback, handle_feedback_callback, handle_message,
         )
         application.add_handler(CommandHandler("add", cmd_add))
         application.add_handler(CommandHandler("list", cmd_list))

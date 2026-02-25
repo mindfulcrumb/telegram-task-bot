@@ -356,6 +356,31 @@ def initialize():
 
             CREATE INDEX IF NOT EXISTS idx_workout_sessions_user ON workout_sessions(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_session_exercises_session ON session_exercises(session_id);
+
+            -- User memory (Zoe's persistent knowledge about each user)
+            CREATE TABLE IF NOT EXISTS user_memory (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                category TEXT NOT NULL DEFAULT 'general',
+                content TEXT NOT NULL,
+                source TEXT DEFAULT 'conversation',
+                confidence REAL DEFAULT 1.0,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Response feedback (thumbs up/down on AI responses)
+            CREATE TABLE IF NOT EXISTS response_feedback (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                message_text TEXT,
+                feedback TEXT NOT NULL,
+                context TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_memory_user ON user_memory(user_id, category);
+            CREATE INDEX IF NOT EXISTS idx_response_feedback_user ON response_feedback(user_id, created_at);
         """)
     logger.info("PostgreSQL schema initialized")
 

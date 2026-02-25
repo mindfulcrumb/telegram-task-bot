@@ -326,6 +326,34 @@ def get_tool_definitions() -> list:
             "description": "Generate WHOOP OAuth URL for user to link their WHOOP device. Use when user says 'connect WHOOP', 'link my WHOOP', etc.",
             "input_schema": {"type": "object", "properties": {}}
         },
+        # --- Memory tools ---
+        {
+            "name": "save_user_memory",
+            "description": "Save a fact you learned about the user for future conversations. Use this PROACTIVELY whenever you learn something new: their name, job, goals, preferences, injuries, training style, schedule, likes/dislikes, personal context. This makes you smarter over time. Write memories as concise facts, not full sentences.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "The fact to remember. Concise: 'prefers morning workouts' not 'The user told me they prefer to work out in the morning'"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["preference", "personal", "fitness", "health", "coaching", "goal", "general"],
+                        "description": "Category: preference (likes/dislikes), personal (job, location, life), fitness (training facts), health (conditions, diet), coaching (how they like feedback), goal (what they're working toward), general (anything else)"
+                    }
+                },
+                "required": ["content", "category"]
+            }
+        },
+        {
+            "name": "forget_user_memory",
+            "description": "Delete a memory about the user. Use when they say something is no longer true, or ask you to forget something.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "content_match": {"type": "string", "description": "Substring to match against stored memories. All matching memories will be deleted."}
+                },
+                "required": ["content_match"]
+            }
+        },
     ]
 
 
@@ -893,6 +921,23 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if url:
                 return {"auth_url": url, "message": "Click the link to connect your WHOOP account."}
             return {"error": "Could not generate WHOOP authorization URL."}
+
+        # --- Memory tools ---
+        elif name == "save_user_memory":
+            from bot.services import memory_service
+            result = memory_service.save_memory(
+                user_id=user_id,
+                content=args["content"],
+                category=args.get("category", "general"),
+            )
+            return {"success": True, **result}
+
+        elif name == "forget_user_memory":
+            from bot.services import memory_service
+            count = memory_service.forget_by_content(user_id, args["content_match"])
+            if count > 0:
+                return {"success": True, "deleted": count}
+            return {"success": False, "message": "No matching memories found."}
 
         else:
             return {"error": f"Unknown tool: {name}"}

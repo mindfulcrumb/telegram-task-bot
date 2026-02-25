@@ -12,19 +12,31 @@ from bot.ai.brain_v2 import ai_brain
 logger = logging.getLogger(__name__)
 
 
-async def _send_human(update: Update, text: str):
+async def _send_human(update: Update, text: str, add_feedback: bool = False):
     """Send a response in natural chunks with typing delays.
 
     Splits on double-newlines (paragraph breaks) so each chunk
     feels like a separate message a human would type and send.
     Short responses (<300 chars) are sent as one message.
+
+    If add_feedback=True, the LAST message gets thumbs up/down buttons.
     """
     if not text:
         return
 
+    # Build feedback markup if needed
+    feedback_markup = None
+    if add_feedback:
+        feedback_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("\U0001f44d", callback_data="fb:pos"),
+                InlineKeyboardButton("\U0001f44e", callback_data="fb:neg"),
+            ]
+        ])
+
     # Short responses — send directly, no chunking
     if len(text) <= 300:
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=feedback_markup)
         return
 
     # Split on double-newlines (paragraph breaks)
@@ -70,7 +82,9 @@ async def _send_human(update: Update, text: str):
             await chat.send_action(ChatAction.TYPING)
             await asyncio.sleep(delay)
 
-        await update.message.reply_text(chunk)
+        # Add feedback buttons to the last chunk only
+        markup = feedback_markup if (i == len(merged) - 1) else None
+        await update.message.reply_text(chunk, reply_markup=markup)
 
 
 async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -791,6 +805,44 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await chat.send_message("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
+async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle feedback button callbacks (fb:pos / fb:neg)."""
+    query = update.callback_query
+
+    user = context.user_data.get("db_user")
+    if not user:
+        tg = update.effective_user
+        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+        context.user_data["db_user"] = user
+
+    feedback_type = "positive" if query.data == "fb:pos" else "negative"
+
+    # Get the message text that was rated
+    message_text = query.message.text[:500] if query.message.text else None
+
+    try:
+        from bot.services import memory_service
+        memory_service.save_feedback(
+            user_id=user["id"],
+            feedback=feedback_type,
+            message_text=message_text,
+        )
+    except Exception as e:
+        logger.error(f"Failed to save feedback: {e}")
+
+    # Acknowledge and remove buttons
+    if feedback_type == "positive":
+        await query.answer("\U0001f44d Thanks!")
+    else:
+        await query.answer("Got it — I'll do better.")
+
+    # Remove the feedback buttons from the message
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
     user = await _get_user(update, context)
@@ -812,7 +864,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_session_id = ai_brain._pending_session.pop(user["id"], None)
 
     if response:
-        await _send_human(update, response)
+        # Add feedback buttons on substantive responses (longer than a quick ack)
+        show_feedback = len(response) > 80
+        await _send_human(update, response, add_feedback=show_feedback)
 
     if pending_session_id:
         from bot.handlers.workout_session import send_workout_cards
