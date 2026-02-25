@@ -1,6 +1,7 @@
 """Task command handlers — user-scoped, PostgreSQL-backed."""
 import asyncio
 import logging
+import re
 from datetime import datetime, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -10,6 +11,37 @@ from bot.services import user_service, task_service, tier_service
 from bot.ai.brain_v2 import ai_brain
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_response(text: str) -> str:
+    """Strip markdown formatting characters from AI response.
+
+    The AI is told not to use markdown, but this is a safety net
+    to catch any stray *, **, _, `, # characters that slip through.
+    """
+    if not text:
+        return text
+
+    # Remove bold/italic markers: **text** -> text, *text* -> text, _text_ -> text
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+
+    # Remove backtick code formatting: `text` -> text
+    text = re.sub(r'`(.+?)`', r'\1', text)
+
+    # Remove header markers: ### Header -> Header
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+
+    # Convert markdown bullet lists to clean text: "- item" -> "item"
+    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+
+    # Clean up any leftover stray asterisks at start/end of words
+    # (catches cases the regex above missed)
+    text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
+    text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
+
+    return text.strip()
 
 
 async def _send_human(update: Update, text: str, add_feedback: bool = False):
@@ -23,6 +55,9 @@ async def _send_human(update: Update, text: str, add_feedback: bool = False):
     """
     if not text:
         return
+
+    # Strip any markdown formatting the AI snuck in
+    text = _clean_response(text)
 
     # Build feedback markup if needed
     feedback_markup = None
@@ -728,7 +763,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         pending_session_id = ai_brain._pending_session.pop(user["id"], None)
 
         if response:
-            await chat.send_message(response)
+            await chat.send_message(_clean_response(response))
 
         if pending_session_id:
             from bot.handlers.workout_session import send_current_exercise
