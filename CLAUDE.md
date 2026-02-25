@@ -1,12 +1,15 @@
 # Zoe — Telegram AI Companion Bot (@Meet_Zoe_Bot)
 
-Multi-user SaaS Telegram bot. AI-powered task management, proactive coaching, voice support, Google Calendar integration. Deployed on Railway with PostgreSQL.
+Multi-user SaaS Telegram bot. AI-powered task management, fitness coaching, biohacking concierge, WHOOP integration, proactive coaching. Deployed on Railway with PostgreSQL.
 
 ## Tech Stack
 
 - Python 3.11, python-telegram-bot v21 (async)
 - Claude API (anthropic SDK) with native tool_use for agent loop
-- PostgreSQL on Railway (psycopg2-binary) — all data
+- Prompt caching: static prompt cached (90% cost reduction), dynamic context per-request
+- Model routing: Haiku default ($1/$5/M), Sonnet for complex requests ($3/$15/M)
+- PostgreSQL on Railway (psycopg2-binary) — 23 tables
+- WHOOP API v2 (OAuth2, webhooks, recovery/sleep/strain sync)
 - Groq Whisper for voice transcription
 - iCal parsing for Google Calendar (icalendar library)
 - Deployed on Railway (auto-deploys from GitHub mindfulcrumb/telegram-task-bot)
@@ -16,31 +19,35 @@ Multi-user SaaS Telegram bot. AI-powered task management, proactive coaching, vo
 ```
 User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent loop)
                                                        ↓
-                                            Claude API (tool_use)
+                                            Claude API (tool_use, prompt caching)
                                                        ↓
-                                               bot/ai/tools_v2.py (9 tools)
+                                               bot/ai/tools_v2.py (24 tools)
                                                        ↓
-                                        PostgreSQL (tasks, users, streaks, etc.)
+                                        PostgreSQL (23 tables — tasks, fitness, biohacking, WHOOP, etc.)
 ```
 
 ### Key Files
 
-- `bot/main_v2.py` — Entry point, handler registration, bot menu commands, health check
-- `bot/ai/brain_v2.py` — Zoe AI personality + agent loop (Claude tool_use)
-- `bot/ai/tools_v2.py` — 9 tools: get_tasks, add_task, complete_tasks, delete_tasks, undo, edit_task, update_task, set_reminder
-- `bot/ai/memory_pg.py` — PostgreSQL conversation history
+- `bot/main_v2.py` — Entry point, handler registration, WHOOP OAuth callback + webhook, health check
+- `bot/ai/brain_v2.py` — Zoe AI brain: static prompt (cached), dynamic context, agent loop, model routing
+- `bot/ai/tools_v2.py` — 24 tools: tasks (8), fitness (6), biohacking (6), WHOOP (2), memory (2)
+- `bot/ai/memory_pg.py` — PostgreSQL conversation history (10 turn limit, daily pruning)
 - `bot/handlers/onboarding.py` — /start, /help, /settings, /account, /calendar, /deleteaccount
-- `bot/handlers/tasks_v2.py` — /add, /list, /today, /week, /done, /delete, /edit, /streak, etc.
+- `bot/handlers/tasks_v2.py` — 23 commands: task management, fitness, biohacking, WHOOP
+- `bot/handlers/workout_session.py` — Interactive exercise cards, set tracking, rest timers
 - `bot/handlers/payments.py` — Telegram Payments + Stripe (/upgrade, /terms, /support)
-- `bot/handlers/proactive_v2.py` — Morning briefings, evening check-ins, smart nudges, weekly insights, reminder firing
+- `bot/handlers/proactive_v2.py` — 8 jobs: briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders
 - `bot/handlers/voice_v2.py` — Voice messages via Groq Whisper → AI brain
-- `bot/handlers/admin.py` — /migrate (Notion import), /diagnostics
+- `bot/services/fitness_service.py` — Workout CRUD, pattern balance, PR detection, interactive sessions
+- `bot/services/biohacking_service.py` — Peptide protocols, supplements, bloodwork, biomarker tracking
+- `bot/services/whoop_service.py` — WHOOP OAuth2, data sync (v2 API), webhook handling with HMAC verification
+- `bot/services/coaching_service.py` — Streaks, nudge dedup, check-ins, weekly stats
+- `bot/services/memory_service.py` — User memory (persistent facts Zoe learns), response feedback
 - `bot/services/task_service.py` — Task CRUD, recurring tasks, reminders
 - `bot/services/user_service.py` — User management
-- `bot/services/coaching_service.py` — Streaks, nudge dedup, check-ins, weekly stats
-- `bot/services/calendar_service.py` — Google Calendar via iCal URL
 - `bot/services/tier_service.py` — Free/Pro tier limits and usage tracking
-- `bot/db/database.py` — PostgreSQL schema, connection pool
+- `bot/services/calendar_service.py` — Google Calendar via iCal URL
+- `bot/db/database.py` — PostgreSQL schema (23 tables), connection pool, indexes
 
 ## Current Features
 
@@ -49,80 +56,94 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - Natural language task management (add, complete, edit, delete)
 - Due dates, priorities, categories (auto-inferred by AI)
 - Recurring tasks (daily, weekdays, weekly, monthly)
-- Update tasks via chat ("move dentist to Friday", "make it high priority")
 - Voice messages → transcription → AI processing
 - Google Calendar integration (iCal URL)
+- Basic fitness logging, body metrics
 - Completion streaks
-- Undo support
 
 ### Pro Tier (Zoe Pro)
 - Unlimited everything
-- Personalized morning briefings (AI-generated, timezone-aware)
+- AI fitness coaching, workout programming, PR tracking
+- Interactive workout sessions with set tracking + rest timers
+- Peptide protocol tracking + dose reminders
+- Supplement stack management + adherence tracking
+- Bloodwork intelligence + biomarker trends
+- WHOOP integration + recovery-based training
+- Personalized morning briefings (AI-generated, WHOOP-enhanced)
 - Evening accountability check-ins
-- Smart nudges (overdue 3+ days, high-priority no due date, max 3/day)
-- Weekly performance insights (Sunday)
-- Unlimited reminders
+- Smart nudges + weekly performance insights
+- Dose reminders (morning/evening based on protocol timing)
 
 ## Environment Variables (Railway)
 
 - `TELEGRAM_BOT_TOKEN` — Bot token from BotFather (REQUIRED)
 - `DATABASE_URL` — PostgreSQL connection string (REQUIRED)
 - `ANTHROPIC_API_KEY` — Claude API key (REQUIRED for AI)
+- `WHOOP_CLIENT_ID` — WHOOP OAuth client ID
+- `WHOOP_CLIENT_SECRET` — WHOOP OAuth client secret
+- `WHOOP_REDIRECT_URI` — Or auto-derived from RAILWAY_PUBLIC_DOMAIN
 - `ADMIN_USER_IDS` — Comma-separated Telegram user IDs for admin commands
 - `GROQ_API_KEY` — Groq API key for voice transcription
 - `STRIPE_PROVIDER_TOKEN` — From BotFather Payments → Stripe (NOT SET YET)
-- `RAILWAY_PUBLIC_DOMAIN` — Set to enable webhook mode (optional, polling works fine)
-- `PORT` — Railway sets this automatically
+- `RAILWAY_PUBLIC_DOMAIN` — telegram-task-bot-production-6784.up.railway.app
+- `CLAUDE_MODEL` — Default model (claude-haiku-4-5-20251001)
+- `CONVERSATION_HISTORY_LIMIT` — Default 10 turns
+- `AGENT_MAX_TURNS` — Default 5
 
 ## Code Conventions
 
 - Async everywhere (python-telegram-bot v21 requires it)
 - Lazy imports inside functions to avoid circular dependencies
-- All service layer (task_service, coaching_service, etc.) is synchronous using `get_cursor()` context manager
-- Error messages to users should be warm/thoughtful (Zoe's personality)
+- All service layer is synchronous using `get_cursor()` context manager
+- NO markdown formatting in Telegram messages (plain text only, no parse_mode for AI text)
 - Zoe personality: thoughtful, warm, calm, human — not bubbly, not robotic, not corporate
 
 ## What's Working
 
-- Full task management via chat and commands
+- Full task management via chat and 23 commands
 - Zoe AI personality with coaching context (streaks, patterns)
+- Prompt caching (static prompt cached, 90% cost reduction)
+- Model routing (Haiku default, Sonnet for complex requests)
+- 24 AI tools (tasks, fitness, biohacking, WHOOP, memory)
+- Interactive workout sessions (exercise cards, set tracking, rest timers)
+- Fitness tracking (workouts, exercises, pattern balance, PR detection)
+- Biohacking tracking (peptide protocols, supplements, bloodwork)
+- WHOOP integration (OAuth2, recovery/sleep/strain sync, v2 API)
 - Voice messages transcription
 - Recurring tasks (auto-spawn next on completion)
-- Update task tool (change due date, priority, category via AI)
-- Reminders (set via AI + firing job every 60s)
-- Google Calendar read (iCal URL, events in AI prompt + briefings)
-- Interactive onboarding with inline buttons
-- Proactive coaching jobs (briefing, check-in, nudges, insights)
-- Completion streaks
-- Free/Pro tier gating
-- Bot menu commands (setMyCommands on startup)
-- Health check server for Railway polling mode
-- Degraded mode when DB unavailable
+- Google Calendar read (iCal URL)
+- User memory system (Zoe learns facts about users)
+- Response feedback (thumbs up/down)
+- 8 proactive jobs (briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders)
+- Webhook HMAC signature verification for WHOOP
+- Conversation pruning (daily, 7-day retention)
+- Stale workout session cleanup (3-hour timeout)
+- Health check server for Railway
 
 ## What's NOT Working / TODO
 
 - **STRIPE_PROVIDER_TOKEN not set** — payments show "coming soon"
-- **Bot token needs to be swapped** to @Meet_Zoe_Bot (waiting for user to provide token)
-- **ADMIN_USER_IDS** may not be set in Railway (user's Telegram ID: 1631254047)
 - No test suite
-- No auto-detect timezone on first use
 - No referral system yet
 
-## Session Log — Feb 24, 2026
+## Session Log — Feb 25, 2026 (Session 2)
 
 ### What was done:
-1. Rebranded entire bot to "Zoe" (AI personality, all user-facing text, proactive messages)
-2. Added `update_task` tool — AI can now change due dates, priority, category
-3. Added recurring tasks — daily/weekdays/weekly/monthly with auto-spawn on completion
-4. Added Google Calendar integration via iCal URL
-5. Built better onboarding with interactive inline buttons
-6. Added reminders — AI tool + firing job
-7. Added bot menu commands (setMyCommands)
+1. Comprehensive 5-agent system audit (database, services, tools/brain, handlers, WHOOP API)
+2. **WHOOP v1 → v2 migration**: Updated API base URL from deprecated v1 to v2, added webhook HMAC-SHA256 signature verification, whitelisted _upsert_daily fields, wrapped token storage in try/except
+3. **Brain optimizations**: Increased max_tokens to 2048 for Sonnet complex requests, expanded model routing triggers (recovery, protocol, progressing, diagnose, etc.), fixed duplicate conversation saves on error path, added max_tokens stop reason handling
+4. **Proactive fixes**: Fixed _call_api positional args (was using keyword system_prompt=), removed parse_mode="Markdown" from all proactive messages (AI text was showing literal asterisks), stripped markdown from template fallbacks, fixed prompts to say "no markdown"
+5. **New jobs**: Conversation pruning (daily, 7d retention), stale session cleanup (2h), dose reminder job (4h, morning/evening based on protocol timing)
+6. **Database**: Added 7 performance indexes (tasks due_date, conversations created_at, peptide_logs protocol, supplement_logs supplement, biomarkers bloodwork, workout sessions, exercise names)
+7. **Memory**: Fixed prune_old SQL (INTERVAL with make_interval), added deletion count logging
 
-### Previous session:
-- Fixed deployment failures (old imports, health check, degraded mode)
-- Built coaching service (streaks, nudges, check-ins, insights)
-- Built proactive coaching jobs
-- Built voice handler
-- Built payments system
-- Built admin commands (/migrate, /diagnostics)
+### Previous session (Feb 25, Session 1):
+- Cost optimization: Split system prompt into static (cached) + dynamic blocks, added model routing (Haiku default, Sonnet for complex), reduced projected costs 88-91%
+- WHOOP data fix: Added score_state checking, fetch limit=5, comprehensive logging
+- Fixed /recovery and /whoop commands (removed parse_mode="Markdown")
+- Memory system implementation (commit e55e0b0)
+- Workout UX refactor (commit 53a9a48)
+
+### Commits this session:
+- `7b9113a` — Comprehensive audit fixes (WHOOP v2, brain optimizations, proactive improvements)
+- Previous: `1ae9e7f` (WHOOP fix), `f107bd5` (cost optimization)
