@@ -298,6 +298,160 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Dose reminder failed for user {user.get('id')}: {e}")
 
 
+# --- Workout Reminder (pre-workout nudge) ---
+
+async def workout_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 15 min. Sends pre-workout nudge the evening before a likely training day."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            if now_user.hour != user.get("check_in_hour", 20):
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "workout_reminder"):
+                continue
+
+            from bot.services import fitness_service
+            training_days = fitness_service.get_typical_training_days(user["id"])
+            if not training_days:
+                continue
+
+            # Tomorrow's PG DOW (0=Sun..6=Sat)
+            # Python weekday: Mon=0..Sun=6 → PG DOW: Sun=0..Sat=6
+            tomorrow_python = (now_user.weekday() + 1) % 7
+            tomorrow_dow = (tomorrow_python + 1) % 7
+
+            if tomorrow_dow not in training_days:
+                continue
+
+            # Suggest what to train based on pattern balance
+            patterns = fitness_service.get_movement_pattern_balance(user["id"], days=14)
+            suggestion = ""
+            if patterns:
+                push = patterns.get("horizontal_push", 0) + patterns.get("vertical_push", 0)
+                pull = patterns.get("horizontal_pull", 0) + patterns.get("vertical_pull", 0)
+                squat = patterns.get("squat", 0)
+                hinge = patterns.get("hinge", 0)
+                candidates = [("pull", pull), ("push", push), ("legs (squat)", squat), ("hinge", hinge)]
+                weakest = min(candidates, key=lambda x: x[1])
+                suggestion = f" {weakest[0].title()} is due based on your recent balance."
+
+            name = user.get("first_name", "friend")
+            day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+            text = (
+                f"Hey {name}, {day_names[tomorrow_dow]} is usually a training day for you.{suggestion}\n\n"
+                "Got your gym bag ready?"
+            )
+
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, "workout_reminder")
+            logger.info(f"Workout reminder sent to user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Workout reminder failed for user {user.get('id')}: {e}")
+
+
+# --- Weekly Fitness Report ---
+
+async def weekly_fitness_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 6 hours. On Sundays, sends weekly fitness summary to Pro users."""
+    if datetime.now().weekday() != 6:
+        return
+
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "weekly_fitness"):
+                continue
+
+            from bot.services import fitness_service
+            summary = fitness_service.get_fitness_summary(user["id"])
+            workouts_this_week = fitness_service.get_workouts_this_week(user["id"])
+
+            if not workouts_this_week:
+                continue
+
+            text = _generate_weekly_fitness_report(user, summary, workouts_this_week)
+
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, "weekly_fitness")
+            logger.info(f"Weekly fitness report sent to user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Weekly fitness report failed for user {user.get('id')}: {e}")
+
+
+# --- Streak at Risk Alert ---
+
+async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 2 hours. Alerts Pro users if their workout streak might break."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            # Only alert in the evening (6pm-10pm)
+            if now_user.hour < 18 or now_user.hour > 22:
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "streak_risk"):
+                continue
+
+            from bot.services import fitness_service
+            streak = fitness_service.get_workout_streak(user["id"])
+            current = streak.get("current_streak", 0)
+
+            if current < 2:
+                continue
+
+            # Already worked out today — no risk
+            if fitness_service.has_workout_today(user["id"]):
+                continue
+
+            # Check gap: streak allows 2-day gap, alert when it's getting tight
+            last_workout = streak.get("last_workout_date")
+            if not last_workout:
+                continue
+            gap_days = (date.today() - last_workout).days
+            if gap_days < 1:
+                continue  # Worked out today (shouldn't reach here, but safety)
+
+            name = user.get("first_name", "friend")
+            text = (
+                f"Hey {name}, your workout streak is at {current} sessions. "
+                f"No workout logged today — even 20 min of mobility counts.\n\n"
+                "Want me to give you something quick?"
+            )
+
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, "streak_risk")
+            logger.info(f"Streak risk alert sent to user {user['id']} (streak: {current})")
+
+        except Exception as e:
+            logger.error(f"Streak risk alert failed for user {user.get('id')}: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -328,7 +482,16 @@ def setup_proactive_jobs(application):
     # Dose reminders: every 4 hours
     jq.run_repeating(dose_reminder_job, interval=14400, first=900, name="dose_reminders")
 
-    logger.info("Proactive coaching jobs registered (8 jobs including reminders, pruning, dose reminders)")
+    # Workout reminder (pre-workout nudge): every 15 min
+    jq.run_repeating(workout_reminder_job, interval=900, first=180, name="workout_reminder")
+
+    # Weekly fitness report: every 6 hours (self-skips on non-Sundays)
+    jq.run_repeating(weekly_fitness_report_job, interval=21600, first=900, name="weekly_fitness_report")
+
+    # Streak at risk alert: every 2 hours
+    jq.run_repeating(streak_at_risk_job, interval=7200, first=600, name="streak_at_risk")
+
+    logger.info("Proactive coaching jobs registered (11 jobs)")
 
 
 # --- Helpers ---
@@ -511,3 +674,112 @@ def _generate_weekly_insight(user, stats):
         f"Currently overdue: {stats.get('current_overdue', 0)}\n\n"
         "Keep it up!"
     )
+
+
+def _generate_weekly_fitness_report(user, summary, workouts_this_week):
+    """Generate weekly fitness report via AI with template fallback."""
+    try:
+        from bot.ai.brain_v2 import _call_api
+
+        patterns = summary.get("pattern_balance", {})
+        volume = summary.get("volume_trend", {})
+        prs = summary.get("recent_prs", [])
+        metrics = summary.get("latest_metrics", {})
+        streak = summary.get("streak", {})
+        profile = summary.get("profile")
+
+        target = profile.get("training_days_per_week", 3) if profile else 3
+
+        # Pattern balance lines
+        pattern_labels = {
+            "horizontal_push": "Push(H)", "horizontal_pull": "Pull(H)",
+            "vertical_push": "Push(V)", "vertical_pull": "Pull(V)",
+            "squat": "Squat", "hinge": "Hinge", "carry_rotation": "Carry/Rot",
+        }
+        pattern_lines = []
+        for key, label in pattern_labels.items():
+            count = patterns.get(key, 0)
+            pattern_lines.append(f"  {label}: {count}")
+
+        # Workout list
+        workout_lines = []
+        for w in workouts_this_week[:5]:
+            ex_names = ", ".join(e["exercise_name"] for e in w.get("exercises", [])[:3])
+            dur = f" {w['duration_minutes']}min" if w.get("duration_minutes") else ""
+            workout_lines.append(f"  - {w['title']}{dur}: {ex_names}")
+
+        pr_lines = [f"  - {p['exercise']}: {p['new_weight']}kg (was {p['previous_best']}kg)" for p in prs[:5]]
+
+        metric_lines = []
+        for mt, data in metrics.items():
+            label = mt.replace("_", " ").title()
+            unit = data.get("unit", "")
+            metric_lines.append(f"  {label}: {data['value']}{unit}")
+
+        prompt = (
+            f"Weekly fitness report for {user.get('first_name', 'friend')}.\n\n"
+            f"Workouts: {len(workouts_this_week)} (target: {target}/week)\n"
+            + "\n".join(workout_lines) + "\n\n"
+            f"Pattern balance (14d):\n" + "\n".join(pattern_lines) + "\n\n"
+            f"Volume: {volume.get('trend', 'n/a')} ({volume.get('this_week_sets', 0)} sets this week vs {volume.get('last_week_sets', 0)} last week)\n"
+            f"Streak: {streak.get('current_streak', 0)} sessions (best: {streak.get('longest_streak', 0)})\n"
+            f"PRs:\n" + ("\n".join(pr_lines) if pr_lines else "  None this period") + "\n"
+            f"Metrics:\n" + ("\n".join(metric_lines) if metric_lines else "  None logged") + "\n\n"
+            "Write 4-6 lines. Summarize the week. Note pattern imbalances. Celebrate PRs. "
+            "Give ONE specific suggestion for next week. "
+            "No markdown formatting. Under 600 chars."
+        )
+
+        response, error = _call_api(
+            "You are Zoe, a thoughtful and warm fitness coach. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting.",
+            [{"role": "user", "content": prompt}],
+            max_tokens=250,
+        )
+
+        if not error and response and response.content:
+            return response.content[0].text
+
+    except Exception as e:
+        logger.error(f"AI weekly fitness report failed: {e}")
+
+    return _template_weekly_fitness(user, summary, workouts_this_week)
+
+
+def _template_weekly_fitness(user, summary, workouts_this_week):
+    """Template fallback for weekly fitness report."""
+    name = user.get("first_name", "friend")
+    streak = summary.get("streak", {})
+    patterns = summary.get("pattern_balance", {})
+    volume = summary.get("volume_trend", {})
+    prs = summary.get("recent_prs", [])
+    profile = summary.get("profile")
+    target = profile.get("training_days_per_week", 3) if profile else 3
+
+    lines = [f"Weekly fitness recap, {name}!\n"]
+    lines.append(f"Workouts: {len(workouts_this_week)} this week (target: {target})")
+
+    if streak.get("current_streak", 0) > 0:
+        lines.append(f"Streak: {streak['current_streak']} sessions")
+
+    if patterns:
+        push = patterns.get("horizontal_push", 0) + patterns.get("vertical_push", 0)
+        pull = patterns.get("horizontal_pull", 0) + patterns.get("vertical_pull", 0)
+        lines.append(f"Push:Pull (14d): {push}:{pull}")
+        if push > pull + 2:
+            lines.append("Pull is lagging — add some rows or pullups next week.")
+        elif pull > push + 2:
+            lines.append("Push is lagging — add pressing next week.")
+
+    trend = volume.get("trend", "")
+    if trend == "up":
+        lines.append(f"Volume up ({volume.get('this_week_sets', 0)} vs {volume.get('last_week_sets', 0)} sets)")
+    elif trend == "down":
+        lines.append(f"Volume down ({volume.get('this_week_sets', 0)} vs {volume.get('last_week_sets', 0)} sets)")
+
+    if prs:
+        lines.append("\nPRs this period:")
+        for p in prs[:3]:
+            lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
+
+    lines.append("\nKeep building next week!")
+    return "\n".join(lines)

@@ -756,3 +756,35 @@ def cleanup_stale_sessions(hours: int = 3):
                WHERE status = 'active' AND started_at < NOW() - INTERVAL '%s hours'""",
             (hours,)
         )
+
+
+# --- Proactive helpers ---
+
+def get_typical_training_days(user_id: int, weeks: int = 4) -> list:
+    """Detect which days of the week (PG DOW: 0=Sun..6=Sat) the user typically trains.
+    Returns days that have at least 2 workouts in the window."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT EXTRACT(DOW FROM created_at)::int as dow, COUNT(*) as cnt
+               FROM workouts WHERE user_id = %s
+               AND created_at >= NOW() - make_interval(weeks => %s)
+               GROUP BY dow HAVING COUNT(*) >= 2
+               ORDER BY cnt DESC""",
+            (user_id, weeks)
+        )
+        return [row["dow"] for row in cur.fetchall()]
+
+
+def has_workout_today(user_id: int) -> bool:
+    """Check if user logged a workout today."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM workouts WHERE user_id = %s AND created_at::date = CURRENT_DATE",
+            (user_id,)
+        )
+        return cur.fetchone() is not None
+
+
+def get_workouts_this_week(user_id: int) -> list:
+    """Get workouts from the last 7 days with exercises."""
+    return get_recent_workouts(user_id, days=7)
