@@ -479,3 +479,237 @@ def get_fitness_summary(user_id: int) -> dict:
         "recent_prs": prs,
         "active_training_weeks": active_training_weeks,
     }
+
+
+# --- Interactive Workout Sessions ---
+
+def create_workout_session(user_id: int, title: str, exercises: list, chat_id: int = 0) -> dict:
+    """Create an active workout session with exercises. Auto-abandons any existing active session."""
+    with get_cursor() as cur:
+        # Abandon any existing active session for this user
+        cur.execute(
+            "UPDATE workout_sessions SET status = 'abandoned', completed_at = NOW() WHERE user_id = %s AND status = 'active'",
+            (user_id,)
+        )
+
+        cur.execute(
+            """INSERT INTO workout_sessions (user_id, chat_id, title, total_exercises)
+               VALUES (%s, %s, %s, %s) RETURNING *""",
+            (user_id, chat_id, title, len(exercises))
+        )
+        session = dict(cur.fetchone())
+
+        session_exercises = []
+        for i, ex in enumerate(exercises):
+            pattern = infer_movement_pattern(ex.get("exercise_name", ""))
+            cur.execute(
+                """INSERT INTO session_exercises
+                   (session_id, exercise_name, movement_pattern, target_sets, target_reps,
+                    target_weight, weight_unit, target_rpe, sort_order, notes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+                (
+                    session["id"],
+                    ex.get("exercise_name", ""),
+                    pattern,
+                    ex.get("sets", 4),
+                    str(ex.get("reps", "8")),
+                    ex.get("weight"),
+                    ex.get("weight_unit", "kg"),
+                    ex.get("rpe"),
+                    i,
+                    ex.get("notes"),
+                )
+            )
+            session_exercises.append(dict(cur.fetchone()))
+
+        session["exercises"] = session_exercises
+    return session
+
+
+def get_active_session(user_id: int) -> dict | None:
+    """Get the user's current active workout session with exercises."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT * FROM workout_sessions
+               WHERE user_id = %s AND status = 'active'
+               ORDER BY started_at DESC LIMIT 1""",
+            (user_id,)
+        )
+        session = cur.fetchone()
+        if not session:
+            return None
+        session = dict(session)
+
+        cur.execute(
+            "SELECT * FROM session_exercises WHERE session_id = %s ORDER BY sort_order",
+            (session["id"],)
+        )
+        session["exercises"] = [dict(row) for row in cur.fetchall()]
+    return session
+
+
+def get_session_by_id(session_id: int) -> dict | None:
+    """Get a workout session by ID with exercises."""
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM workout_sessions WHERE id = %s", (session_id,))
+        session = cur.fetchone()
+        if not session:
+            return None
+        session = dict(session)
+
+        cur.execute(
+            "SELECT * FROM session_exercises WHERE session_id = %s ORDER BY sort_order",
+            (session["id"],)
+        )
+        session["exercises"] = [dict(row) for row in cur.fetchall()]
+    return session
+
+
+def get_session_exercise(exercise_id: int) -> dict | None:
+    """Get a single session exercise by ID."""
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM session_exercises WHERE id = %s", (exercise_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_session_exercise_message_id(exercise_id: int, message_id: int):
+    """Store the Telegram message_id on a session exercise for later editing."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE session_exercises SET message_id = %s WHERE id = %s",
+            (message_id, exercise_id)
+        )
+
+
+def update_session_chat_id(session_id: int, chat_id: int):
+    """Set the chat_id on a session (needed for timer callbacks)."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE workout_sessions SET chat_id = %s WHERE id = %s",
+            (chat_id, session_id)
+        )
+
+
+def complete_set(exercise_id: int) -> dict:
+    """Increment sets_completed for an exercise. Returns updated exercise."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE session_exercises
+               SET sets_completed = LEAST(sets_completed + 1, target_sets)
+               WHERE id = %s RETURNING *""",
+            (exercise_id,)
+        )
+        ex = dict(cur.fetchone())
+
+        # Update session completed_exercises count if this exercise just finished
+        if ex["sets_completed"] >= ex["target_sets"]:
+            cur.execute(
+                """UPDATE workout_sessions
+                   SET completed_exercises = (
+                       SELECT COUNT(*) FROM session_exercises
+                       WHERE session_id = %s AND sets_completed >= target_sets
+                   )
+                   WHERE id = %s""",
+                (ex["session_id"], ex["session_id"])
+            )
+    return ex
+
+
+def undo_set(exercise_id: int) -> dict:
+    """Decrement sets_completed. Returns updated exercise."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE session_exercises
+               SET sets_completed = GREATEST(0, sets_completed - 1)
+               WHERE id = %s RETURNING *""",
+            (exercise_id,)
+        )
+        ex = dict(cur.fetchone())
+
+        # Recount completed exercises on the session
+        cur.execute(
+            """UPDATE workout_sessions
+               SET completed_exercises = (
+                   SELECT COUNT(*) FROM session_exercises
+                   WHERE session_id = %s AND sets_completed >= target_sets
+               )
+               WHERE id = %s""",
+            (ex["session_id"], ex["session_id"])
+        )
+    return ex
+
+
+def finish_session(session_id: int) -> dict:
+    """Complete a session and log it as a real workout."""
+    from datetime import datetime, timezone
+
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM workout_sessions WHERE id = %s", (session_id,))
+        session = dict(cur.fetchone())
+
+        cur.execute(
+            "SELECT * FROM session_exercises WHERE session_id = %s ORDER BY sort_order",
+            (session_id,)
+        )
+        exercises = [dict(row) for row in cur.fetchall()]
+
+        # Calculate duration
+        started = session["started_at"]
+        now = datetime.now(timezone.utc)
+        duration = max(1, int((now - started).total_seconds() / 60))
+
+        # Build exercises list for log_workout (only exercises with completed sets)
+        workout_exercises = []
+        for ex in exercises:
+            if ex["sets_completed"] > 0:
+                workout_exercises.append({
+                    "exercise_name": ex["exercise_name"],
+                    "movement_pattern": ex["movement_pattern"],
+                    "sets": ex["sets_completed"],
+                    "reps": ex["target_reps"],
+                    "weight": ex["target_weight"],
+                    "weight_unit": ex["weight_unit"],
+                    "rpe": ex.get("target_rpe"),
+                })
+
+        # Log as a real workout
+        workout = log_workout(
+            user_id=session["user_id"],
+            title=session["title"],
+            duration_minutes=duration,
+            rpe=None,
+            notes=None,
+            exercises=workout_exercises if workout_exercises else None,
+        )
+
+        # Mark session complete
+        cur.execute(
+            """UPDATE workout_sessions
+               SET status = 'completed', completed_at = NOW(), workout_id = %s
+               WHERE id = %s""",
+            (workout["id"], session_id)
+        )
+
+    session["workout"] = workout
+    session["duration_minutes"] = duration
+    return session
+
+
+def abandon_session(session_id: int):
+    """Mark a session as abandoned."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE workout_sessions SET status = 'abandoned', completed_at = NOW() WHERE id = %s",
+            (session_id,)
+        )
+
+
+def cleanup_stale_sessions(hours: int = 3):
+    """Abandon sessions older than N hours."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE workout_sessions SET status = 'abandoned', completed_at = NOW()
+               WHERE status = 'active' AND started_at < NOW() - INTERVAL '%s hours'""",
+            (hours,)
+        )

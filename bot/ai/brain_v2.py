@@ -65,6 +65,11 @@ def _user_now(user: dict) -> datetime:
 class AIBrain:
     """AI Brain with agent loop — user-scoped."""
 
+    def __init__(self):
+        # Tracks pending interactive sessions: user_id -> session_id
+        # Set during tool execution, consumed by handler after process() returns
+        self._pending_session = {}
+
     def _build_system_prompt(self, user: dict, tasks: list) -> str:
         """Build system prompt from user data and their tasks."""
         # Use user's timezone for time awareness
@@ -353,7 +358,8 @@ TOOL USE GUIDELINES:
 FITNESS TOOL USE:
 - "I did chest today" / "just finished training" -> log_workout. Infer exercises if possible, ask for details if vague.
 - "bench pressed 80kg for 5 reps" -> log_workout with exercise details (weight, reps, sets)
-- "What should I train?" / "program my week" -> call get_fitness_context first, then reason with pattern balance data
+- "What should I train?" / "program me a session" / "give me a workout" -> call get_fitness_context first, reason about patterns, then call start_workout_session. This sends interactive cards with set tracking and rest timers. Keep your text to 1-2 lines of coaching context.
+- ONLY use start_workout_session for sessions to do NOW. For logging PAST workouts, use log_workout.
 - "I weigh 82kg" / "body fat is 15%" -> log_body_metric
 - "How's my bench progressing?" -> get_exercise_history for bench press
 - "I want to build muscle" / "my goal is strength" -> update_fitness_profile
@@ -683,6 +689,11 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach wh
                     logger.info(f"Tool call: {call.name}({json.dumps(call.input)[:200]})")
                     result = await execute_tool(call.name, call.input, user_id)
                     logger.info(f"Tool result: {call.name} -> {json.dumps(result)[:200]}")
+
+                    # Detect interactive workout session creation
+                    if isinstance(result, dict) and result.get("_interactive_session"):
+                        self._pending_session[user_id] = result["session_id"]
+
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": call.id,

@@ -411,10 +411,15 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("account", cmd_account))
         application.add_handler(CommandHandler("calendar", cmd_calendar))
         application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
-        # WHOOP callbacks must be registered BEFORE the catch-all onboarding handler
+        # Pattern-specific callbacks must be registered BEFORE the catch-all onboarding handler
         try:
             from bot.handlers.tasks_v2 import handle_whoop_callback
             application.add_handler(CallbackQueryHandler(handle_whoop_callback, pattern="^whoop_"))
+        except Exception:
+            pass
+        try:
+            from bot.handlers.workout_session import handle_workout_session_callback
+            application.add_handler(CallbackQueryHandler(handle_workout_session_callback, pattern="^ws:"))
         except Exception:
             pass
         application.add_handler(CallbackQueryHandler(handle_onboarding_callback))

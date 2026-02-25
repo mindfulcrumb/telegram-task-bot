@@ -192,6 +192,35 @@ def get_tool_definitions() -> list:
                 "required": ["exercise_name"]
             }
         },
+        # --- Interactive workout session ---
+        {
+            "name": "start_workout_session",
+            "description": "Start an interactive workout session with tappable set tracking and rest timers. Use this when you are prescribing a specific workout for the user to do RIGHT NOW. Each exercise becomes a card with buttons to mark sets done and start rest timers. Do NOT use this for logging past workouts (use log_workout instead). Keep your text response to 1-2 lines of coaching context — the interactive cards will appear automatically after your message.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Session title (e.g., 'Upper Pull', 'Leg Day', 'Full Body')"},
+                    "exercises": {
+                        "type": "array",
+                        "description": "Exercises in order. Each becomes an interactive card with set tracking.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "exercise_name": {"type": "string", "description": "Exercise name"},
+                                "sets": {"type": "integer", "description": "Number of sets"},
+                                "reps": {"type": "string", "description": "Target reps (e.g., '6', '8-10', '12')"},
+                                "weight": {"type": "number", "description": "Target weight. Use their last known weight for this exercise if available."},
+                                "weight_unit": {"type": "string", "enum": ["kg", "lbs"], "description": "Weight unit (default: kg)"},
+                                "rpe": {"type": "number", "description": "Target RPE for this exercise"},
+                                "notes": {"type": "string", "description": "Coaching cue (e.g., '3s eccentric', 'pause at bottom', 'explosive concentric')"}
+                            },
+                            "required": ["exercise_name", "sets", "reps"]
+                        }
+                    }
+                },
+                "required": ["title", "exercises"]
+            }
+        },
         # --- Biohacking tools ---
         {
             "name": "manage_peptide_protocol",
@@ -592,6 +621,22 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     "rpe": h.get("rpe"),
                 })
             return {"exercise": args["exercise_name"], "history": entries, "count": len(entries)}
+
+        # --- Interactive workout session ---
+        elif name == "start_workout_session":
+            from bot.services import fitness_service
+            session = fitness_service.create_workout_session(
+                user_id=user_id,
+                title=args["title"],
+                exercises=args["exercises"],
+            )
+            return {
+                "success": True,
+                "session_id": session["id"],
+                "title": args["title"],
+                "exercise_count": len(args["exercises"]),
+                "_interactive_session": True,
+            }
 
         # --- Biohacking tools ---
         elif name == "manage_peptide_protocol":

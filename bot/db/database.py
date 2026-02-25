@@ -321,6 +321,41 @@ def initialize():
             );
 
             CREATE INDEX IF NOT EXISTS idx_whoop_daily_user ON whoop_daily(user_id, cycle_date);
+
+            -- Active workout sessions (interactive tracking)
+            CREATE TABLE IF NOT EXISTS workout_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                chat_id BIGINT NOT NULL DEFAULT 0,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                total_exercises INT DEFAULT 0,
+                completed_exercises INT DEFAULT 0,
+                started_at TIMESTAMPTZ DEFAULT NOW(),
+                completed_at TIMESTAMPTZ,
+                rpe REAL,
+                workout_id INT REFERENCES workouts(id)
+            );
+
+            -- Exercises within an active session
+            CREATE TABLE IF NOT EXISTS session_exercises (
+                id SERIAL PRIMARY KEY,
+                session_id INT NOT NULL REFERENCES workout_sessions(id) ON DELETE CASCADE,
+                exercise_name TEXT NOT NULL,
+                movement_pattern TEXT,
+                target_sets INT NOT NULL DEFAULT 4,
+                target_reps TEXT NOT NULL DEFAULT '8',
+                target_weight REAL,
+                weight_unit TEXT DEFAULT 'kg',
+                target_rpe REAL,
+                sets_completed INT DEFAULT 0,
+                message_id BIGINT,
+                sort_order INT DEFAULT 0,
+                notes TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workout_sessions_user ON workout_sessions(user_id, status);
+            CREATE INDEX IF NOT EXISTS idx_session_exercises_session ON session_exercises(session_id);
         """)
     logger.info("PostgreSQL schema initialized")
 

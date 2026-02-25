@@ -312,8 +312,15 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = task_service.get_tasks(user["id"])
     prompt = f"Log this workout: {text}"
     response = await ai_brain.process(prompt, user, tasks, typing_callback=_keep_typing)
+
+    pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+
     if response:
         await _send_human(update, response)
+
+    if pending_session_id:
+        from bot.handlers.workout_session import send_workout_cards
+        await send_workout_cards(update, context, pending_session_id)
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -703,8 +710,15 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             "Based on my WHOOP recovery, what should I train today? Give me a specific session.",
             user, tasks, typing_callback=_keep_typing,
         )
+
+        pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+
         if response:
             await chat.send_message(response)
+
+        if pending_session_id:
+            from bot.handlers.workout_session import send_workout_cards
+            await send_workout_cards(chat, context, pending_session_id)
 
     elif query.data == "whoop_log":
         await chat.send_message("What did you do? e.g. 'Push day — bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
@@ -794,8 +808,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = task_service.get_tasks(user["id"])
     response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
 
+    # Check for pending interactive workout session
+    pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+
     if response:
         await _send_human(update, response)
+
+    if pending_session_id:
+        from bot.handlers.workout_session import send_workout_cards
+        await send_workout_cards(update, context, pending_session_id)
 
 
 def _format_tasks(tasks: list) -> str:
