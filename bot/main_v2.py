@@ -242,7 +242,26 @@ class _HealthCheck(BaseHTTPRequestHandler):
 
 
 async def _post_init(application):
-    """Set bot commands so users see the menu in Telegram."""
+    """Set bot commands, description, and profile on startup."""
+    bot = application.bot
+
+    # ── Bot description (shown on "What can this bot do?" screen) ──
+    try:
+        await bot.set_my_description(
+            description=(
+                "Zoe is your AI performance coach \u2014 she manages your tasks, "
+                "programs your training, tracks your protocols, and keeps everything moving.\n\n"
+                "Talk naturally, send voice notes, or use commands. Tap Start to begin."
+            )
+        )
+        await bot.set_my_short_description(
+            short_description="AI coach for training, tasks, and biohacking."
+        )
+        logger.info("Bot description and short description set")
+    except Exception as e:
+        logger.error(f"Failed to set bot description: {type(e).__name__}: {e}")
+
+    # ── Bot menu commands ──
     try:
         commands = [
             BotCommand("workout", "Log a workout"),
@@ -256,7 +275,7 @@ async def _post_init(application):
             BotCommand("upgrade", "Unlock Zoe Pro"),
             BotCommand("help", "All commands"),
         ]
-        await application.bot.set_my_commands(commands)
+        await bot.set_my_commands(commands)
         logger.info(f"Bot menu commands set ({len(commands)} commands)")
     except Exception as e:
         logger.error(f"Failed to set bot commands: {type(e).__name__}: {e}")
