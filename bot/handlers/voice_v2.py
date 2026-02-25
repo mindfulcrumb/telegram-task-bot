@@ -2,11 +2,32 @@
 import asyncio
 import logging
 import os
+import re
 import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_response(text: str) -> str:
+    """Strip markdown formatting characters from AI response."""
+    if not text:
+        return text
+    # Remove bold/italic markers
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+    # Remove backtick code formatting
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    # Remove header markers
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Convert markdown bullet lists to clean text
+    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+    # Clean leftover stray asterisks
+    text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
+    text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
+    return text.strip()
 
 
 def is_voice_configured() -> bool:
@@ -83,6 +104,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if response:
+            # Strip any markdown formatting the AI snuck in (same as text handler)
+            response = _clean_response(response)
             if len(response) <= 4096:
                 await update.message.reply_text(response)
             else:

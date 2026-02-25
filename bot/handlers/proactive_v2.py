@@ -454,112 +454,122 @@ async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
 
 # --- Research Auto-Update ---
 
+def _run_research_update_sync():
+    """Synchronous research update — runs in a thread to avoid blocking the event loop."""
+    from bot.services.research_service import (
+        check_new_episodes, check_pubmed_updates, check_clinical_trials,
+        check_youtube_transcripts, check_pubmed_full_abstracts, check_jay_campbell,
+    )
+    total = 0
+
+    added = check_new_episodes()
+    total += added
+
+    pubmed_added = check_pubmed_updates()
+    total += pubmed_added
+
+    ct_added = check_clinical_trials()
+    total += ct_added
+
+    yt_added = check_youtube_transcripts()
+    total += yt_added
+
+    pubmed_deep = check_pubmed_full_abstracts()
+    total += pubmed_deep
+
+    jc_added = check_jay_campbell()
+    total += jc_added
+
+    if total > 0:
+        logger.info(
+            f"Research update: {total} new KB entries "
+            f"(RSS={added}, PubMed={pubmed_added}, ClinicalTrials={ct_added}, "
+            f"YouTube={yt_added}, PubMedDeep={pubmed_deep}, JayCampbell={jc_added})"
+        )
+    return total
+
+
 async def research_update_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs weekly (Mondays). Checks podcast RSS, PubMed, ClinicalTrials, YouTube transcripts, and articles."""
+    """Runs weekly (Mondays). Runs all crawlers in a background thread so the bot stays responsive."""
+    import asyncio
     if datetime.now().weekday() != 0:  # Monday = 0
         return
 
     try:
-        from bot.services.research_service import (
-            check_new_episodes, check_pubmed_updates, check_clinical_trials,
-            check_youtube_transcripts, check_pubmed_full_abstracts, check_jay_campbell,
-        )
-        total = 0
-
-        # Existing crawlers
-        added = check_new_episodes()
-        total += added
-
-        pubmed_added = check_pubmed_updates()
-        total += pubmed_added
-
-        ct_added = check_clinical_trials()
-        total += ct_added
-
-        # Deep content extraction crawlers
-        yt_added = check_youtube_transcripts()
-        total += yt_added
-
-        pubmed_deep = check_pubmed_full_abstracts()
-        total += pubmed_deep
-
-        jc_added = check_jay_campbell()
-        total += jc_added
-
-        if total > 0:
-            logger.info(
-                f"Research update: {total} new KB entries "
-                f"(RSS={added}, PubMed={pubmed_added}, ClinicalTrials={ct_added}, "
-                f"YouTube={yt_added}, PubMedDeep={pubmed_deep}, JayCampbell={jc_added})"
-            )
+        await asyncio.to_thread(_run_research_update_sync)
     except Exception as e:
         logger.error(f"Research update job failed: {e}")
 
 
 # --- One-Time Deep Content Extraction ---
 
-async def initial_content_extraction_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs once after startup. Extracts deep content from YouTube, PubMed, and Jay Campbell.
-    Checks content_processing_log to avoid re-processing — safe to run on every deploy."""
-    try:
-        from bot.db.database import get_cursor
+def _run_content_extraction_sync():
+    """Synchronous content extraction — runs in a thread to avoid blocking the event loop."""
+    from bot.db.database import get_cursor
 
-        # Check how many items we've already processed
-        with get_cursor() as cur:
-            cur.execute("SELECT COUNT(*) as cnt FROM content_processing_log WHERE status = 'completed'")
-            row = cur.fetchone()
-            already_done = row["cnt"] if row else 0
+    # Check how many items we've already processed
+    with get_cursor() as cur:
+        cur.execute("SELECT COUNT(*) as cnt FROM content_processing_log WHERE status = 'completed'")
+        row = cur.fetchone()
+        already_done = row["cnt"] if row else 0
 
-        # Determine batch size: first run = bigger batch, subsequent deploys = just new content
-        if already_done == 0:
-            logger.info("Initial content extraction: first run — processing up to 15 videos + PubMed + articles")
-            yt_limit = 15
-            pubmed_per_term = 2
-            jc_limit = 10
-        else:
-            logger.info(f"Initial content extraction: {already_done} items already done — checking for new content only")
-            yt_limit = 5
-            pubmed_per_term = 1
-            jc_limit = 5
+    # Determine batch size: first run = bigger batch, subsequent deploys = just new content
+    if already_done == 0:
+        logger.info("Initial content extraction: first run — processing up to 15 videos + PubMed + articles")
+        yt_limit = 15
+        pubmed_per_term = 2
+        jc_limit = 10
+    else:
+        logger.info(f"Initial content extraction: {already_done} items already done — checking for new content only")
+        yt_limit = 5
+        pubmed_per_term = 1
+        jc_limit = 5
 
-        from bot.services.content_extractor import (
-            process_youtube_channel, process_pubmed_deep, process_rss_articles,
-            PRIORITY_KEYWORDS,
-        )
+    from bot.services.content_extractor import (
+        process_youtube_channel, process_pubmed_deep, process_rss_articles,
+        PRIORITY_KEYWORDS,
+    )
 
-        total = 0
+    total = 0
 
-        # YouTube transcripts (priority episodes first)
-        for channel in ["huberman", "attia", "doac"]:
-            try:
-                added = process_youtube_channel(
-                    channel, max_videos=yt_limit, priority_keywords=PRIORITY_KEYWORDS,
-                )
-                total += added
-                logger.info(f"Content extraction [{channel}]: {added} KB entries")
-            except Exception as e:
-                logger.error(f"Content extraction [{channel}] failed: {e}")
-
-        # PubMed full abstracts
+    # YouTube transcripts (priority episodes first)
+    for channel in ["huberman", "attia", "doac"]:
         try:
-            added = process_pubmed_deep(max_per_term=pubmed_per_term)
-            total += added
-            logger.info(f"Content extraction [PubMed]: {added} KB entries")
-        except Exception as e:
-            logger.error(f"Content extraction [PubMed] failed: {e}")
-
-        # Jay Campbell articles
-        try:
-            added = process_rss_articles(
-                "https://jaycampbell.com/feed/", "jay_campbell", max_articles=jc_limit,
+            added = process_youtube_channel(
+                channel, max_videos=yt_limit, priority_keywords=PRIORITY_KEYWORDS,
             )
             total += added
-            logger.info(f"Content extraction [Jay Campbell]: {added} KB entries")
+            logger.info(f"Content extraction [{channel}]: {added} KB entries")
         except Exception as e:
-            logger.error(f"Content extraction [Jay Campbell] failed: {e}")
+            logger.error(f"Content extraction [{channel}] failed: {e}")
 
-        logger.info(f"Initial content extraction complete: {total} total new KB entries")
+    # PubMed full abstracts
+    try:
+        added = process_pubmed_deep(max_per_term=pubmed_per_term)
+        total += added
+        logger.info(f"Content extraction [PubMed]: {added} KB entries")
+    except Exception as e:
+        logger.error(f"Content extraction [PubMed] failed: {e}")
 
+    # Jay Campbell articles
+    try:
+        added = process_rss_articles(
+            "https://jaycampbell.com/feed/", "jay_campbell", max_articles=jc_limit,
+        )
+        total += added
+        logger.info(f"Content extraction [Jay Campbell]: {added} KB entries")
+    except Exception as e:
+        logger.error(f"Content extraction [Jay Campbell] failed: {e}")
+
+    logger.info(f"Initial content extraction complete: {total} total new KB entries")
+    return total
+
+
+async def initial_content_extraction_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs once after startup. Runs extraction in a background thread so the bot stays responsive."""
+    import asyncio
+    try:
+        await asyncio.to_thread(_run_content_extraction_sync)
     except Exception as e:
         logger.error(f"Initial content extraction job failed: {e}")
 
