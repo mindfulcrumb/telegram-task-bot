@@ -1,4 +1,5 @@
 """Voice message handler v2 — transcribe via Groq Whisper, feed into AI brain."""
+import asyncio
 import logging
 import os
 import tempfile
@@ -33,7 +34,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not voice:
         return
 
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    chat_id = update.effective_chat.id
+
+    # Keep typing dots alive the entire time
+    typing_active = True
+
+    async def _typing_loop():
+        while typing_active:
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(_typing_loop())
 
     tmp_path = None
     try:
@@ -51,16 +65,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = text.strip()
 
-        # Show user what we heard
-        await update.message.reply_text(f"\U0001f399\ufe0f _{text}_", parse_mode="Markdown")
-
         # Feed into AI brain (same path as text messages)
-        chat_id = update.effective_chat.id
-
         async def _keep_typing():
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         tasks = task_service.get_tasks(user["id"])
         response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
 
@@ -70,11 +78,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 for i in range(0, len(response), 4096):
                     await update.message.reply_text(response[i:i + 4096])
+        else:
+            await update.message.reply_text("Something went wrong processing that. Try again or type it out.")
 
     except Exception as e:
         logger.error(f"Voice handling failed: {type(e).__name__}: {e}")
         await update.message.reply_text("Had trouble with that voice message. Try again or type it out.")
     finally:
+        typing_active = False
+        typing_task.cancel()
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)

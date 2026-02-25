@@ -56,6 +56,8 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self._handle_whoop_callback()
         elif self.path == "/whoop/debug":
             self._handle_whoop_debug()
+        elif self.path.startswith("/google/callback"):
+            self._handle_google_callback()
         elif self.path.startswith("/timer"):
             self._handle_timer()
         else:
@@ -123,6 +125,71 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             self.wfile.write(f"Timer error: {e}".encode())
+
+    def _handle_google_callback(self):
+        """Handle Google Calendar OAuth callback — exchange code for tokens."""
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+
+            error = params.get("error", [None])[0]
+            if error:
+                error_desc = params.get("error_description", ["Unknown"])[0]
+                logger.error(f"Google OAuth error: {error} — {error_desc}")
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Calendar Authorization Failed</h1>"
+                    f"<p>{error_desc}</p>"
+                    f"<p>Please try /calendar again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
+                return
+
+            code = params.get("code", [None])[0]
+            state = params.get("state", [None])[0]
+
+            if not code or not state or not state.startswith("uid_"):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing code or state. Please try /calendar again in Telegram.")
+                return
+
+            user_id = int(state.replace("uid_", ""))
+
+            from bot.services import calendar_service
+            success, error_msg = calendar_service.exchange_code(user_id, code)
+
+            if success:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    b"<h1>Google Calendar Connected!</h1>"
+                    b"<p>You can close this window and go back to Telegram.</p>"
+                    b"<p>Zoe now has access to your calendar for scheduling and morning briefings.</p>"
+                    b"</body></html>"
+                )
+            else:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Failed to Connect Calendar</h1>"
+                    f"<p>{error_msg}</p>"
+                    f"<p>Please try /calendar again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
+
+        except Exception as e:
+            logger.error(f"Google callback error: {e}")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"Internal error during Google Calendar connection")
 
     def _handle_whoop_callback(self):
         """Handle WHOOP OAuth callback — exchange code for tokens."""

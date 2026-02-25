@@ -894,6 +894,8 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
+    import asyncio
+
     # Guard: don't pass to AI during onboarding flow
     if context.user_data.get("ob") is not None:
         await update.message.reply_text(
@@ -906,15 +908,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # Show "typing..." while AI processes (refreshed between agent turns)
+    # Keep typing dots alive the entire time AI is processing
     chat = update.message.chat
-    await chat.send_action(ChatAction.TYPING)
+    typing_active = True
 
-    async def _keep_typing():
-        await chat.send_action(ChatAction.TYPING)
+    async def _typing_loop():
+        while typing_active:
+            try:
+                await chat.send_action(ChatAction.TYPING)
+            except Exception:
+                pass
+            await asyncio.sleep(4)
 
-    tasks = task_service.get_tasks(user["id"])
-    response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
+    typing_task = asyncio.create_task(_typing_loop())
+
+    try:
+        async def _keep_typing():
+            await chat.send_action(ChatAction.TYPING)
+
+        tasks = task_service.get_tasks(user["id"])
+        response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
+    finally:
+        typing_active = False
+        typing_task.cancel()
 
     # Check for pending interactive workout session
     pending_session_id = ai_brain._pending_session.pop(user["id"], None)
@@ -923,6 +939,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Add feedback buttons on substantive responses (longer than a quick ack)
         show_feedback = len(response) > 80
         await _send_human(update, response, add_feedback=show_feedback)
+    elif not pending_session_id:
+        await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
 
     if pending_session_id:
         from bot.handlers.workout_session import send_current_exercise

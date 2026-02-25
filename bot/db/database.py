@@ -322,6 +322,18 @@ def initialize():
 
             CREATE INDEX IF NOT EXISTS idx_whoop_daily_user ON whoop_daily(user_id, cycle_date);
 
+            -- Google Calendar OAuth tokens
+            CREATE TABLE IF NOT EXISTS google_calendar_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                scopes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
             -- Active workout sessions (interactive tracking)
             CREATE TABLE IF NOT EXISTS workout_sessions (
                 id SERIAL PRIMARY KEY,

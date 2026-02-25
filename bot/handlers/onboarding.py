@@ -80,28 +80,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["ob"] = {}
 
     # Step 1: Welcome + disclaimer + phone verification
-    await update.message.reply_text(
-        f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
-        "Your AI coach for training, tasks, and everything in between.\n\n"
-        "Before we get started:\n\n"
-        "Zoe is an AI wellness assistant, not a medical professional. "
-        "All information provided is for educational and informational purposes only "
-        "and is not intended to diagnose, treat, cure, or prevent any disease.\n\n"
-        "Peptide and supplement information reflects published research — many compounds "
-        "discussed are not FDA-approved for human use. Bloodwork interpretations are "
-        "informational reference ranges, not clinical diagnoses.\n\n"
-        "Always consult a qualified healthcare provider before starting any new supplement, "
-        "peptide, or training protocol.\n\n"
-        "By continuing, you acknowledge these terms."
-    )
-
     phone_keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
         one_time_keyboard=True,
         resize_keyboard=True,
     )
     await update.message.reply_text(
-        "Tap below to connect your account.",
+        f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
+        "Your AI coach for training, tasks, and everything in between.\n\n"
+        "Quick note: I'm here to educate and track, not to give medical advice. "
+        "Always check with your doctor before starting anything new.\n\n"
+        "Tap below to get started.",
         reply_markup=phone_keyboard,
     )
 
@@ -561,7 +550,7 @@ async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ── /calendar ─────────────────────────────────────────────────────────
 
 async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Connect or disconnect Google Calendar via iCal URL."""
+    """Connect or disconnect Google Calendar."""
     user = await _ensure_user(update, context)
     if not user:
         return
@@ -569,11 +558,14 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot.services import calendar_service
 
     args = context.args
+
+    # Disconnect
     if args and args[0].lower() == "disconnect":
-        calendar_service.remove_calendar_url(user["id"])
+        calendar_service.revoke_access(user["id"])
         await update.message.reply_text("Calendar disconnected.")
         return
 
+    # Legacy iCal URL support (if OAuth not configured)
     if args and args[0].startswith("http"):
         url = args[0]
         if "calendar.google.com" not in url and ".ics" not in url:
@@ -600,23 +592,49 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # No args — show instructions
-    current = calendar_service.get_calendar_url(user["id"])
-    if current:
-        await update.message.reply_text(
-            "Your Google Calendar is connected.\n\n"
-            "I check it for your morning briefings and when you ask about your schedule.\n\n"
-            "To disconnect: /calendar disconnect"
-        )
-    else:
-        await update.message.reply_text(
-            "Connect your Google Calendar so I can see your schedule.\n\n"
-            "1. Open Google Calendar on desktop\n"
-            "2. Settings (gear icon) > your calendar name\n"
-            "3. Scroll to 'Secret address in iCal format'\n"
-            "4. Copy the URL and send it to me:\n\n"
-            "/calendar https://calendar.google.com/calendar/ical/..."
-        )
+    # Already connected — show status
+    if calendar_service.is_connected(user["id"]):
+        events = calendar_service.fetch_upcoming_events(user["id"], days=3)
+        if events:
+            lines = ["Your Google Calendar is connected.\n"]
+            for e in events[:5]:
+                dt = e["start"]
+                time_str = dt.strftime("%b %d") if e.get("all_day") else dt.strftime("%b %d %I:%M %p")
+                lines.append(f"  {e['title']} \u2014 {time_str}")
+            lines.append("\nTo disconnect: /calendar disconnect")
+            await update.message.reply_text("\n".join(lines))
+        else:
+            await update.message.reply_text(
+                "Your Google Calendar is connected.\n\n"
+                "No upcoming events in the next 3 days.\n\n"
+                "To disconnect: /calendar disconnect"
+            )
+        return
+
+    # Not connected — show OAuth button or iCal instructions
+    if calendar_service.is_configured():
+        url = calendar_service.get_auth_url(user["id"])
+        if url:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Connect Google Calendar", url=url)]
+            ])
+            await update.message.reply_text(
+                "Connect your Google Calendar so I can see your schedule "
+                "for morning briefings and planning.\n\n"
+                "Tap below, sign in with Google, and authorize.",
+                reply_markup=keyboard,
+            )
+            return
+
+    # Fallback: iCal instructions
+    await update.message.reply_text(
+        "Connect your Google Calendar so I can see your schedule.\n\n"
+        "1. Open Google Calendar on desktop\n"
+        "2. Settings (gear icon) > your calendar name\n"
+        "3. Scroll to 'Secret address in iCal format'\n"
+        "4. Copy the URL and send it to me:\n\n"
+        "/calendar https://calendar.google.com/calendar/ical/..."
+    )
 
 
 # ── Location handler ──────────────────────────────────────────────────
