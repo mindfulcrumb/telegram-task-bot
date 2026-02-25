@@ -453,6 +453,19 @@ COACHING STYLE:
         # User memory (what Zoe has learned)
         memory_section = self._build_memory_section(user.get("id", 0))
 
+        # First-time user awareness
+        first_time_section = ""
+        if not task_lines and not coaching_section:
+            first_time_section = """
+FIRST-TIME USER:
+This user just started. No tasks, no workout history, no data yet.
+- Be warm but not over-the-top
+- Don't reference data you don't have (no "based on your history")
+- If they ask "what should I train?" and have a fitness profile, program a solid first session
+- Keep early responses short and encouraging
+- Don't explain what you can do — just respond to what they say
+"""
+
         return f"""RIGHT NOW:
 - It's {time_of_day} on {now.strftime('%A, %B %d')}
 - Today's date: {now.strftime('%Y-%m-%d')}
@@ -461,7 +474,7 @@ COACHING STYLE:
 {coaching_section}{calendar_section}
 TASKS:
 {task_list}
-{fitness_section}{biohacking_section}{whoop_section}{memory_section}"""
+{fitness_section}{biohacking_section}{whoop_section}{memory_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""

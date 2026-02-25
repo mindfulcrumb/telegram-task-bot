@@ -117,6 +117,40 @@ def get_all_active_users() -> list:
         return [dict(row) for row in cur.fetchall()]
 
 
+def set_phone_number(user_id: int, phone: str):
+    """Store user's verified phone number."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE users SET phone_number = %s WHERE id = %s",
+            (phone, user_id),
+        )
+
+
+def phone_number_exists(phone: str, exclude_user_id: int = None) -> bool:
+    """Check if a phone number is already linked to another account."""
+    with get_cursor() as cur:
+        if exclude_user_id:
+            cur.execute(
+                "SELECT 1 FROM users WHERE phone_number = %s AND id != %s",
+                (phone, exclude_user_id),
+            )
+        else:
+            cur.execute(
+                "SELECT 1 FROM users WHERE phone_number = %s",
+                (phone,),
+            )
+        return cur.fetchone() is not None
+
+
+def mark_onboarding_complete(user_id: int):
+    """Mark user's onboarding as complete."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE users SET onboarding_completed = TRUE WHERE id = %s",
+            (user_id,),
+        )
+
+
 def delete_user(user_id: int):
     """Delete a user and all their data (GDPR compliance)."""
     with get_cursor() as cur:

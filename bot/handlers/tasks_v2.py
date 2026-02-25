@@ -894,6 +894,13 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle free-text messages — pass to AI brain."""
+    # Guard: don't pass to AI during onboarding flow
+    if context.user_data.get("ob") is not None:
+        await update.message.reply_text(
+            "Tap one of the buttons above to finish setup \u2014 almost done!"
+        )
+        return
+
     user = await _get_user(update, context)
     text = update.message.text
     if not text:

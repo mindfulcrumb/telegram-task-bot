@@ -428,7 +428,7 @@ def _register_full_handlers(application):
     try:
         from bot.handlers.onboarding import (
             cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-            cmd_calendar, handle_onboarding_callback, handle_location,
+            cmd_calendar, handle_onboarding_callback, handle_location, handle_contact,
         )
         application.add_handler(CommandHandler("start", cmd_start))
         application.add_handler(CommandHandler("help", cmd_help))
@@ -454,6 +454,7 @@ def _register_full_handlers(application):
             pass
         application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
         application.add_handler(MessageHandler(filters.LOCATION, handle_location))
+        application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
         logger.info("Onboarding handlers registered")
     except Exception as e:
         logger.error(f"Failed to register onboarding handlers: {type(e).__name__}: {e}")
