@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rest Timer</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+            background: #0f0f1a;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 28px;
+            padding: 20px;
+        }
+        .ring-wrap {
+            position: relative;
+            width: 240px;
+            height: 240px;
+        }
+        .ring {
+            transform: rotate(-90deg);
+            width: 100%;
+            height: 100%;
+        }
+        .ring-bg {
+            fill: none;
+            stroke: rgba(255,255,255,0.08);
+            stroke-width: 6;
+        }
+        .ring-fg {
+            fill: none;
+            stroke: #4a9eff;
+            stroke-width: 6;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 1s linear, stroke 0.3s;
+        }
+        .time {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 56px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -1px;
+        }
+        .status {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: rgba(255,255,255,0.4);
+        }
+        .btn {
+            padding: 14px 56px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 14px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: opacity 0.15s, transform 0.15s;
+        }
+        .btn:active { opacity: 0.7; transform: scale(0.97); }
+        .btn-close {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+        }
+        .btn-done {
+            background: #4aff8a;
+            color: #0f0f1a;
+        }
+        .done .ring-fg { stroke: #4aff8a; }
+        .done .time { color: #4aff8a; }
+        .done .status {
+            color: #4aff8a;
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="root">
+        <div class="ring-wrap">
+            <svg class="ring" viewBox="0 0 240 240">
+                <circle class="ring-bg" cx="120" cy="120" r="112" />
+                <circle class="ring-fg" id="fg" cx="120" cy="120" r="112" />
+            </svg>
+            <div class="time" id="time">0:00</div>
+        </div>
+        <div class="status" id="status">REST</div>
+        <button class="btn btn-close" id="btn">Close</button>
+    </div>
+    <script>
+        // Telegram Mini App init
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            if (tg.themeParams && tg.themeParams.bg_color) {
+                document.body.style.background = tg.themeParams.bg_color;
+            }
+        }
+
+        // Parse duration from query string
+        var params = new URLSearchParams(location.search);
+        var total = Math.max(1, parseInt(params.get('s') || '120'));
+        var left = total;
+
+        // SVG ring setup
+        var R = 112;
+        var C = 2 * Math.PI * R;
+        var fg = document.getElementById('fg');
+        var timeEl = document.getElementById('time');
+        var statusEl = document.getElementById('status');
+        var btnEl = document.getElementById('btn');
+        var rootEl = document.getElementById('root');
+
+        fg.style.strokeDasharray = C;
+        fg.style.strokeDashoffset = 0;
+
+        // Unlock Web Audio immediately — page opens from user tap (counts as gesture)
+        var ctx;
+        try {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            var buf = ctx.createBuffer(1, 1, 22050);
+            var src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(ctx.destination);
+            src.start(0);
+        } catch(e) {}
+
+        function fmt(s) {
+            return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        }
+
+        function render() {
+            timeEl.textContent = fmt(left);
+            var pct = (total - left) / total;
+            fg.style.strokeDashoffset = C * (1 - pct);
+        }
+
+        function playAlarm() {
+            if (!ctx) return;
+            if (ctx.state === 'suspended') ctx.resume();
+
+            var notes = [659, 784, 880, 988, 1047];
+            for (var round = 0; round < 3; round++) {
+                for (var i = 0; i < notes.length; i++) {
+                    (function(f, t) {
+                        var o = ctx.createOscillator();
+                        var g = ctx.createGain();
+                        o.connect(g);
+                        g.connect(ctx.destination);
+                        o.type = 'sine';
+                        o.frequency.value = f;
+                        g.gain.setValueAtTime(0.5, t);
+                        g.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+                        o.start(t);
+                        o.stop(t + 0.1);
+                    })(notes[i], ctx.currentTime + round * 0.9 + i * 0.12);
+                }
+            }
+        }
+
+        function vibrate() {
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+        }
+
+        function finish() {
+            rootEl.classList.add('done');
+            timeEl.textContent = '0:00';
+            statusEl.textContent = "TIME'S UP!";
+            fg.style.strokeDashoffset = C;
+            btnEl.textContent = 'Close';
+            btnEl.className = 'btn btn-done';
+
+            playAlarm();
+            vibrate();
+
+            // Repeat alarm a few times so user notices
+            var count = 0;
+            var iv = setInterval(function() {
+                count++;
+                if (count >= 4) { clearInterval(iv); return; }
+                playAlarm();
+                vibrate();
+            }, 2500);
+        }
+
+        // Close handler
+        btnEl.addEventListener('click', function() {
+            if (tg) tg.close();
+            else window.close();
+        });
+
+        // Initial render
+        render();
+
+        // Countdown
+        var timer = setInterval(function() {
+            left--;
+            if (left <= 0) {
+                clearInterval(timer);
+                left = 0;
+                render();
+                finish();
+                return;
+            }
+            render();
+        }, 1000);
+    </script>
+</body>
+</html>

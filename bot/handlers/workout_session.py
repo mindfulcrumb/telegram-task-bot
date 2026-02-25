@@ -1,11 +1,15 @@
 """Interactive workout session handler — one exercise at a time, set tracking, rest timers."""
 import logging
+import os
 from datetime import datetime, timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.services import user_service, fitness_service
+
+# Railway domain for Mini App timer URL
+_RAILWAY_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +20,7 @@ _rest_state = {}
 
 def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
                          total_exercises: int, is_resting: bool = False,
-                         rest_label: str = "") -> tuple:
+                         rest_label: str = "", rest_seconds: int = 0) -> tuple:
     """Render a single exercise card with inline buttons.
 
     Returns (text, reply_markup) tuple.
@@ -68,11 +72,20 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
     buttons = []
 
     if is_resting:
-        # While resting: only show skip button
-        buttons.append([InlineKeyboardButton(
+        # While resting: skip button + Mini App timer for sound
+        row = [InlineKeyboardButton(
             "\u23ed Skip Rest",
             callback_data=f"ws:k:{session_id}",
-        )])
+        )]
+        buttons.append(row)
+
+        # Add Mini App timer button (plays sound through media channel, bypasses silent mode)
+        if _RAILWAY_DOMAIN and rest_seconds > 0:
+            timer_url = f"https://{_RAILWAY_DOMAIN}/timer?s={rest_seconds}"
+            buttons.append([InlineKeyboardButton(
+                "\U0001f514 Open Timer with Sound",
+                web_app=WebAppInfo(url=timer_url),
+            )])
 
     elif all_done:
         # All sets complete
@@ -162,10 +175,11 @@ async def send_current_exercise(chat, context, session_id: int):
     exercise = exercises[idx]
     is_resting = session_id in _rest_state
     rest_label = _rest_state[session_id]["label"] if is_resting else ""
+    rest_seconds = _rest_state[session_id]["seconds"] if is_resting else 0
 
     text, markup = render_exercise_card(
         exercise, session_id, idx, total,
-        is_resting=is_resting, rest_label=rest_label,
+        is_resting=is_resting, rest_label=rest_label, rest_seconds=rest_seconds,
     )
 
     # Check if we already have a card message to edit
@@ -404,10 +418,11 @@ async def _refresh_card(query, context, session_id: int):
     exercise = exercises[idx]
     is_resting = session_id in _rest_state
     rest_label = _rest_state[session_id]["label"] if is_resting else ""
+    rest_seconds = _rest_state[session_id]["seconds"] if is_resting else 0
 
     text, markup = render_exercise_card(
         exercise, session_id, idx, total,
-        is_resting=is_resting, rest_label=rest_label,
+        is_resting=is_resting, rest_label=rest_label, rest_seconds=rest_seconds,
     )
 
     try:

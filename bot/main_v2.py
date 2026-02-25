@@ -44,15 +44,20 @@ _db_ready = False
 
 _startup_status = "starting"
 
+# Cache for timer HTML (loaded once)
+_timer_html_cache = None
+
 
 class _HealthCheck(BaseHTTPRequestHandler):
-    """Health check + WHOOP OAuth callback + webhook endpoint."""
+    """Health check + WHOOP OAuth callback + timer Mini App + webhook endpoint."""
 
     def do_GET(self):
         if self.path.startswith("/whoop/callback"):
             self._handle_whoop_callback()
         elif self.path == "/whoop/debug":
             self._handle_whoop_debug()
+        elif self.path.startswith("/timer"):
+            self._handle_timer()
         else:
             self.send_response(200)
             self.end_headers()
@@ -96,6 +101,28 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             self.wfile.write(f"Debug error: {e}".encode())
+
+    def _handle_timer(self):
+        """Serve the rest timer Mini App HTML page."""
+        global _timer_html_cache
+        try:
+            if _timer_html_cache is None:
+                html_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "static", "timer.html"
+                )
+                with open(html_path, "r") as f:
+                    _timer_html_cache = f.read()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(_timer_html_cache.encode())
+        except Exception as e:
+            logger.error(f"Timer page error: {e}")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f"Timer error: {e}".encode())
 
     def _handle_whoop_callback(self):
         """Handle WHOOP OAuth callback — exchange code for tokens."""
