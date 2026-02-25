@@ -931,6 +931,21 @@ TASKS:
 
             final_text = "\n".join(text_parts) if text_parts else None
 
+            # If agent exhausted all turns with tool calls but no text response,
+            # force a final text-only API call so the user always gets a reply
+            if not final_text and response and response.stop_reason == "tool_use":
+                logger.warning(f"Agent exhausted {max_turns} turns without text response — forcing final reply")
+                messages.append({
+                    "role": "user",
+                    "content": "Please provide your final response to the user based on the tool results above. Be concise."
+                })
+                final_resp, final_err = _call_api(system, messages, tools=None, model=model, max_tokens=max_tokens)
+                if final_resp and final_resp.content:
+                    for block in final_resp.content:
+                        if hasattr(block, "text") and block.text:
+                            text_parts.append(block.text)
+                    final_text = "\n".join(text_parts) if text_parts else None
+
             # Save to persistent memory
             memory.save_turn(user_id, "user", user_input)
             if final_text:

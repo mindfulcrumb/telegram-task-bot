@@ -70,7 +70,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
         tasks = task_service.get_tasks(user["id"])
-        response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
+
+        # Timeout safety: if brain takes >120s, return a fallback instead of hanging
+        try:
+            response = await asyncio.wait_for(
+                ai_brain.process(text, user, tasks, typing_callback=_keep_typing),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Voice brain processing timed out for user {user['id']}")
+            await update.message.reply_text("That took too long to process. Try sending it again or type it out.")
+            return
 
         if response:
             if len(response) <= 4096:
@@ -95,17 +105,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _transcribe(file_path: str, api_key: str) -> str:
-    """Transcribe audio via Groq Whisper API."""
+    """Transcribe audio via Groq Whisper API (async to avoid blocking event loop)."""
     import httpx
 
-    with open(file_path, "rb") as audio_file:
-        response = httpx.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": ("voice.ogg", audio_file, "audio/ogg")},
-            data={"model": "whisper-large-v3"},
-            timeout=30.0,
-        )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        with open(file_path, "rb") as audio_file:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": ("voice.ogg", audio_file, "audio/ogg")},
+                data={"model": "whisper-large-v3"},
+            )
 
     if response.status_code != 200:
         logger.error(f"Groq Whisper error {response.status_code}: {response.text[:200]}")

@@ -927,7 +927,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await chat.send_action(ChatAction.TYPING)
 
         tasks = task_service.get_tasks(user["id"])
-        response = await ai_brain.process(text, user, tasks, typing_callback=_keep_typing)
+
+        # Timeout safety: if brain takes >120s, return a fallback instead of hanging
+        try:
+            response = await asyncio.wait_for(
+                ai_brain.process(text, user, tasks, typing_callback=_keep_typing),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Brain processing timed out for user {user['id']}")
+            response = "That took too long — try again or break your question into something simpler."
     finally:
         typing_active = False
         typing_task.cancel()
