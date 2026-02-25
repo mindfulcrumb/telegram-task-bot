@@ -496,6 +496,74 @@ async def research_update_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Research update job failed: {e}")
 
 
+# --- One-Time Deep Content Extraction ---
+
+async def initial_content_extraction_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs once after startup. Extracts deep content from YouTube, PubMed, and Jay Campbell.
+    Checks content_processing_log to avoid re-processing — safe to run on every deploy."""
+    try:
+        from bot.db.database import get_cursor
+
+        # Check how many items we've already processed
+        with get_cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM content_processing_log WHERE status = 'completed'")
+            row = cur.fetchone()
+            already_done = row["cnt"] if row else 0
+
+        # Determine batch size: first run = bigger batch, subsequent deploys = just new content
+        if already_done == 0:
+            logger.info("Initial content extraction: first run — processing up to 15 videos + PubMed + articles")
+            yt_limit = 15
+            pubmed_per_term = 2
+            jc_limit = 10
+        else:
+            logger.info(f"Initial content extraction: {already_done} items already done — checking for new content only")
+            yt_limit = 5
+            pubmed_per_term = 1
+            jc_limit = 5
+
+        from bot.services.content_extractor import (
+            process_youtube_channel, process_pubmed_deep, process_rss_articles,
+            PRIORITY_KEYWORDS,
+        )
+
+        total = 0
+
+        # YouTube transcripts (priority episodes first)
+        for channel in ["huberman", "attia", "doac"]:
+            try:
+                added = process_youtube_channel(
+                    channel, max_videos=yt_limit, priority_keywords=PRIORITY_KEYWORDS,
+                )
+                total += added
+                logger.info(f"Content extraction [{channel}]: {added} KB entries")
+            except Exception as e:
+                logger.error(f"Content extraction [{channel}] failed: {e}")
+
+        # PubMed full abstracts
+        try:
+            added = process_pubmed_deep(max_per_term=pubmed_per_term)
+            total += added
+            logger.info(f"Content extraction [PubMed]: {added} KB entries")
+        except Exception as e:
+            logger.error(f"Content extraction [PubMed] failed: {e}")
+
+        # Jay Campbell articles
+        try:
+            added = process_rss_articles(
+                "https://jaycampbell.com/feed/", "jay_campbell", max_articles=jc_limit,
+            )
+            total += added
+            logger.info(f"Content extraction [Jay Campbell]: {added} KB entries")
+        except Exception as e:
+            logger.error(f"Content extraction [Jay Campbell] failed: {e}")
+
+        logger.info(f"Initial content extraction complete: {total} total new KB entries")
+
+    except Exception as e:
+        logger.error(f"Initial content extraction job failed: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -538,7 +606,10 @@ def setup_proactive_jobs(application):
     # Research auto-update: every 12 hours (self-skips on non-Mondays)
     jq.run_repeating(research_update_job, interval=43200, first=1800, name="research_update")
 
-    logger.info("Proactive coaching jobs registered (12 jobs)")
+    # One-time deep content extraction: runs once 5 min after startup, then stops
+    jq.run_once(initial_content_extraction_job, when=300, name="initial_content_extraction")
+
+    logger.info("Proactive coaching jobs registered (13 jobs)")
 
 
 # --- Helpers ---
