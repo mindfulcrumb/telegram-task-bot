@@ -354,6 +354,10 @@ def initialize():
                 notes TEXT
             );
 
+            -- Track current exercise position and the single card message
+            ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS current_exercise_idx INT DEFAULT 0;
+            ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS card_message_id BIGINT;
+
             CREATE INDEX IF NOT EXISTS idx_workout_sessions_user ON workout_sessions(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_session_exercises_session ON session_exercises(session_id);
 

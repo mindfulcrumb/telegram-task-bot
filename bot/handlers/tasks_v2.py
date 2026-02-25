@@ -333,8 +333,8 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_human(update, response)
 
     if pending_session_id:
-        from bot.handlers.workout_session import send_workout_cards
-        await send_workout_cards(update, context, pending_session_id)
+        from bot.handlers.workout_session import send_current_exercise
+        await send_current_exercise(update.message.chat, context, pending_session_id)
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -731,8 +731,8 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await chat.send_message(response)
 
         if pending_session_id:
-            from bot.handlers.workout_session import send_workout_cards
-            await send_workout_cards(chat, context, pending_session_id)
+            from bot.handlers.workout_session import send_current_exercise
+            await send_current_exercise(chat, context, pending_session_id)
 
     elif query.data == "whoop_log":
         await chat.send_message("What did you do? e.g. 'Push day — bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
@@ -869,8 +869,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_human(update, response, add_feedback=show_feedback)
 
     if pending_session_id:
-        from bot.handlers.workout_session import send_workout_cards
-        await send_workout_cards(update, context, pending_session_id)
+        from bot.handlers.workout_session import send_current_exercise
+        await send_current_exercise(update.message.chat, context, pending_session_id)
 
 
 def _format_tasks(tasks: list) -> str:

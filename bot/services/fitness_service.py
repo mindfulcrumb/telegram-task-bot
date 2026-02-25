@@ -705,6 +705,49 @@ def abandon_session(session_id: int):
         )
 
 
+def get_current_exercise(session_id: int) -> dict | None:
+    """Get the exercise at the session's current_exercise_idx."""
+    with get_cursor() as cur:
+        cur.execute("SELECT current_exercise_idx FROM workout_sessions WHERE id = %s", (session_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        idx = row["current_exercise_idx"] or 0
+
+        cur.execute(
+            "SELECT * FROM session_exercises WHERE session_id = %s AND sort_order = %s",
+            (session_id, idx)
+        )
+        ex = cur.fetchone()
+        return dict(ex) if ex else None
+
+
+def set_current_exercise_idx(session_id: int, idx: int):
+    """Set the current exercise index on a session."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE workout_sessions SET current_exercise_idx = %s WHERE id = %s",
+            (idx, session_id)
+        )
+
+
+def set_card_message_id(session_id: int, message_id: int):
+    """Store the Telegram message_id of the active card for this session."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE workout_sessions SET card_message_id = %s WHERE id = %s",
+            (message_id, session_id)
+        )
+
+
+def get_card_message_id(session_id: int) -> int | None:
+    """Get the stored card message_id for a session."""
+    with get_cursor() as cur:
+        cur.execute("SELECT card_message_id FROM workout_sessions WHERE id = %s", (session_id,))
+        row = cur.fetchone()
+        return row["card_message_id"] if row else None
+
+
 def cleanup_stale_sessions(hours: int = 3):
     """Abandon sessions older than N hours."""
     with get_cursor() as cur:
