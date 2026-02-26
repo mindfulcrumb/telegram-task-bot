@@ -55,7 +55,7 @@ async def send_otp(phone: str, code: str) -> bool:
                 data={
                     "From": f"whatsapp:{from_num}",
                     "To": f"whatsapp:{phone}",
-                    "Body": f"Your Zoe verification code: {code}. It expires in 5 minutes.",
+                    "Body": f"Your Zoe code is {code}",
                 },
                 timeout=15.0,
             )
