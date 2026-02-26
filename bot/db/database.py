@@ -420,6 +420,9 @@ def initialize():
             ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number) WHERE phone_number IS NOT NULL;
 
+            -- Equipment field on fitness profile (onboarding v2)
+            ALTER TABLE fitness_profiles ADD COLUMN IF NOT EXISTS equipment TEXT;
+
             -- Additional performance indexes (audit Feb 2026)
             CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date) WHERE status = 'active' AND due_date IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_conv_created ON conversations(user_id, created_at);

@@ -773,6 +773,8 @@ TASKS:
                 parts.append(f"Limitations: {profile['limitations']}")
             if profile.get("preferred_style"):
                 parts.append(f"Style: {profile['preferred_style']}")
+            if profile.get("equipment"):
+                parts.append(f"Equipment: {profile['equipment'].replace('_', ' ')}")
             if parts:
                 lines.append(f"- Profile: {', '.join(parts)}")
 

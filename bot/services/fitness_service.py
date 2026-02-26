@@ -415,7 +415,7 @@ def update_fitness_profile(user_id: int, **kwargs) -> dict:
         if profile:
             sets = []
             vals = []
-            for key in ("fitness_goal", "experience_level", "training_days_per_week", "limitations", "preferred_style"):
+            for key in ("fitness_goal", "experience_level", "training_days_per_week", "limitations", "preferred_style", "equipment"):
                 if key in kwargs and kwargs[key] is not None:
                     sets.append(f"{key} = %s")
                     vals.append(kwargs[key])
@@ -431,8 +431,8 @@ def update_fitness_profile(user_id: int, **kwargs) -> dict:
         else:
             cur.execute(
                 """INSERT INTO fitness_profiles (user_id, fitness_goal, experience_level,
-                   training_days_per_week, limitations, preferred_style)
-                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+                   training_days_per_week, limitations, preferred_style, equipment)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
                 (
                     user_id,
                     kwargs.get("fitness_goal"),
@@ -440,6 +440,7 @@ def update_fitness_profile(user_id: int, **kwargs) -> dict:
                     kwargs.get("training_days_per_week", 3),
                     kwargs.get("limitations"),
                     kwargs.get("preferred_style"),
+                    kwargs.get("equipment"),
                 )
             )
             return dict(cur.fetchone())

@@ -18,6 +18,7 @@ GOAL_MAP = {
     "strength": "strength",
     "cut": "fat_loss",
     "health": "general_health",
+    "athletic": "athletic_performance",
 }
 
 GOAL_DISPLAY = {
@@ -25,12 +26,41 @@ GOAL_DISPLAY = {
     "strength": "getting stronger",
     "fat_loss": "cutting fat",
     "general_health": "staying healthy",
+    "athletic_performance": "athletic performance",
 }
 
 EXP_MAP = {
     "beg": "beginner",
     "int": "intermediate",
     "adv": "advanced",
+}
+
+EQUIP_MAP = {
+    "full": "full_gym",
+    "home": "home_gym",
+    "bw": "bodyweight_only",
+    "kb": "kettlebells_dumbbells",
+}
+
+EQUIP_DISPLAY = {
+    "full_gym": "full gym",
+    "home_gym": "home gym setup",
+    "bodyweight_only": "bodyweight only",
+    "kettlebells_dumbbells": "kettlebells & dumbbells",
+}
+
+STYLE_MAP = {
+    "power": "powerlifting",
+    "bb": "bodybuilding",
+    "func": "functional",
+    "hybrid": "hybrid",
+}
+
+STYLE_DISPLAY = {
+    "powerlifting": "powerlifting",
+    "bodybuilding": "bodybuilding",
+    "functional": "functional training",
+    "hybrid": "a mix of everything",
 }
 
 
@@ -203,8 +233,9 @@ async def _send_goal(message, context):
         ],
         [
             InlineKeyboardButton("Lose fat", callback_data="ob:goal:cut"),
-            InlineKeyboardButton("Stay healthy", callback_data="ob:goal:health"),
+            InlineKeyboardButton("Athletic performance", callback_data="ob:goal:athletic"),
         ],
+        [InlineKeyboardButton("Stay healthy", callback_data="ob:goal:health")],
     ])
     await message.reply_text(
         "What's your main goal right now?",
@@ -241,8 +272,72 @@ async def _send_frequency(message, context):
     )
 
 
+async def _send_equipment(message, context):
+    """Step 6: What equipment do they have access to?"""
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Full gym", callback_data="ob:equip:full"),
+            InlineKeyboardButton("Home gym", callback_data="ob:equip:home"),
+        ],
+        [
+            InlineKeyboardButton("KBs & dumbbells", callback_data="ob:equip:kb"),
+            InlineKeyboardButton("Bodyweight only", callback_data="ob:equip:bw"),
+        ],
+    ])
+    await message.reply_text(
+        "What equipment do you have access to?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_style(message, context):
+    """Step 7: Preferred training style."""
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Powerlifting", callback_data="ob:style:power"),
+            InlineKeyboardButton("Bodybuilding", callback_data="ob:style:bb"),
+        ],
+        [
+            InlineKeyboardButton("Functional", callback_data="ob:style:func"),
+            InlineKeyboardButton("Mix of everything", callback_data="ob:style:hybrid"),
+        ],
+    ])
+    await message.reply_text(
+        "What kind of training do you prefer?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_injuries(message, context):
+    """Step 8: Any injuries or limitations?"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Shoulder issues", callback_data="ob:injury:shoulder")],
+        [InlineKeyboardButton("Knee issues", callback_data="ob:injury:knee")],
+        [InlineKeyboardButton("Back issues", callback_data="ob:injury:back")],
+        [InlineKeyboardButton("Nope, I'm good", callback_data="ob:injury:none")],
+    ])
+    await message.reply_text(
+        "Any injuries or limitations I should know about?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_biohacking(message, context):
+    """Step 9: Do they track peptides/supplements/bloodwork?"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Peptides", callback_data="ob:bio:peptides")],
+        [InlineKeyboardButton("Supplements", callback_data="ob:bio:supps")],
+        [InlineKeyboardButton("Both", callback_data="ob:bio:both")],
+        [InlineKeyboardButton("Neither", callback_data="ob:bio:none")],
+    ])
+    await message.reply_text(
+        "Do you track peptides or supplements?",
+        reply_markup=keyboard,
+    )
+
+
 async def _send_timezone(message, context):
-    """Step 6: Timezone via location share."""
+    """Step 10: Timezone via location share."""
     # Inline skip button
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Skip for now", callback_data="ob:tz:skip")],
@@ -266,7 +361,7 @@ async def _send_timezone(message, context):
 
 
 async def _complete_onboarding(message, context, user):
-    """Step 7: Save data and send personalized done message."""
+    """Final step: Save all data, seed memories, send personalized done message."""
     ob = context.user_data.get("ob", {})
     user_id = user["id"]
     first_name = user.get("first_name", "friend")
@@ -280,6 +375,9 @@ async def _complete_onboarding(message, context, user):
             fitness_goal=ob.get("goal"),
             experience_level=ob.get("experience", "intermediate"),
             training_days_per_week=ob.get("days", 3),
+            equipment=ob.get("equipment"),
+            preferred_style=ob.get("style"),
+            limitations=ob.get("injury"),
         )
 
     # Mark onboarding complete
@@ -287,14 +385,96 @@ async def _complete_onboarding(message, context, user):
     user["onboarding_completed"] = True
     context.user_data["db_user"] = user
 
-    # Build personalized done message
+    # ── Seed initial memories from onboarding data ──
+    try:
+        from bot.services import memory_service
+        memories = []
+
+        # Fitness-related memories
+        if focus in ("fit", "all"):
+            goal_text = GOAL_DISPLAY.get(ob.get("goal"), "general fitness")
+            exp = ob.get("experience", "intermediate")
+            days = ob.get("days", 3)
+            memories.append((f"Main goal: {goal_text}", "goal"))
+            memories.append((f"Experience level: {exp}, trains {days}x/week", "fitness"))
+
+            equip = ob.get("equipment")
+            if equip:
+                equip_text = EQUIP_DISPLAY.get(equip, equip)
+                memories.append((f"Equipment access: {equip_text}", "fitness"))
+
+            style = ob.get("style")
+            if style:
+                style_text = STYLE_DISPLAY.get(style, style)
+                memories.append((f"Preferred training style: {style_text}", "preference"))
+
+            injury = ob.get("injury")
+            if injury and injury != "none":
+                memories.append((f"Has {injury} issues — program around this", "health"))
+
+        # Biohacking detection
+        bio = ob.get("biohacking")
+        if bio and bio != "none":
+            if bio == "peptides":
+                memories.append(("Tracks peptide protocols", "health"))
+            elif bio == "supps":
+                memories.append(("Tracks supplements", "health"))
+            elif bio == "both":
+                memories.append(("Tracks both peptides and supplements", "health"))
+
+        # Focus area
+        if focus == "tasks":
+            memories.append(("Primarily uses Zoe for task management", "preference"))
+        elif focus == "fit":
+            memories.append(("Primarily uses Zoe for fitness coaching", "preference"))
+        elif focus == "all":
+            memories.append(("Uses Zoe for both fitness and task management", "preference"))
+
+        for content, category in memories:
+            memory_service.save_memory(
+                user_id=user_id,
+                content=content,
+                category=category,
+                source="onboarding",
+                confidence=1.0,
+            )
+        if memories:
+            logger.info(f"Seeded {len(memories)} memories from onboarding for user {user_id}")
+
+    except Exception as e:
+        logger.warning(f"Failed to seed onboarding memories for user {user_id}: {e}")
+
+    # ── Build personalized done message ──
     if focus in ("fit", "all"):
         goal_text = GOAL_DISPLAY.get(ob.get("goal"), "getting stronger")
         days = ob.get("days", 3)
         exp = ob.get("experience", "intermediate")
+        equip = EQUIP_DISPLAY.get(ob.get("equipment"), "")
+        style = STYLE_DISPLAY.get(ob.get("style"), "")
+
+        profile_line = f"I've got you down for {goal_text}, {days}x a week, {exp} level."
+        if equip:
+            profile_line += f"\n{equip.title()} access."
+        if style:
+            profile_line += f" {style.title()} style."
+
+        bio = ob.get("biohacking")
+        bio_line = ""
+        if bio == "peptides":
+            bio_line = "\n\nI can track your peptide protocols and doses too \u2014 just tell me what you're running."
+        elif bio == "supps":
+            bio_line = "\n\nI can track your supplement stack \u2014 just tell me what you take."
+        elif bio == "both":
+            bio_line = "\n\nI'll track your peptides and supplements \u2014 just tell me what you're running."
+
+        injury = ob.get("injury")
+        injury_line = ""
+        if injury and injury != "none":
+            injury_line = f"\n\nI'll program around your {injury} \u2014 every session will account for it."
+
         text = (
             f"You're all set, {first_name}.\n\n"
-            f"I've got you down for {goal_text}, {days}x a week, {exp} level.\n\n"
+            f"{profile_line}{injury_line}{bio_line}\n\n"
             "Try \"What should I train today?\" or "
             "\"I did bench 4x8 at 80kg\" and I'll take it from there."
         )
@@ -355,10 +535,10 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
         elif step == "focus":
             ob["focus"] = value
             if value == "tasks":
-                # Tasks-only track — skip fitness, go to timezone
+                # Tasks-only track — skip fitness questions, go to timezone
                 await _send_timezone(query.message, context)
             else:
-                # Fitness track (fit or all) — ask goal
+                # Fitness track (fit or all) — start fitness questions
                 await _send_goal(query.message, context)
 
         elif step == "goal":
@@ -371,6 +551,22 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
 
         elif step == "days":
             ob["days"] = int(value)
+            await _send_equipment(query.message, context)
+
+        elif step == "equip":
+            ob["equipment"] = EQUIP_MAP.get(value, "full_gym")
+            await _send_style(query.message, context)
+
+        elif step == "style":
+            ob["style"] = STYLE_MAP.get(value, "hybrid")
+            await _send_injuries(query.message, context)
+
+        elif step == "injury":
+            ob["injury"] = value if value != "none" else None
+            await _send_biohacking(query.message, context)
+
+        elif step == "bio":
+            ob["biohacking"] = value if value != "none" else None
             await _send_timezone(query.message, context)
 
         elif step == "tz":
