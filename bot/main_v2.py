@@ -630,9 +630,10 @@ def _register_full_handlers(application):
 
     # Admin
     try:
-        from bot.handlers.admin import cmd_migrate_notion, cmd_diagnostics
+        from bot.handlers.admin import cmd_migrate_notion, cmd_diagnostics, cmd_audit
         application.add_handler(CommandHandler("migrate", cmd_migrate_notion))
         application.add_handler(CommandHandler("diagnostics", cmd_diagnostics))
+        application.add_handler(CommandHandler("audit", cmd_audit))
         logger.info("Admin handlers registered")
     except Exception as e:
         logger.error(f"Failed to register admin handlers: {type(e).__name__}: {e}")

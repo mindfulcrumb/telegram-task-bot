@@ -159,6 +159,156 @@ async def cmd_diagnostics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Audit conversations, KB, memories — sends a text file. Admin only."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+
+    await update.message.reply_text("Running audit... give me a sec.")
+
+    import json
+    import tempfile
+    from bot.db.database import get_cursor
+
+    lines = []
+    try:
+        with get_cursor() as cur:
+            # 1. User count
+            cur.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM conversations")
+            total = cur.fetchone()["cnt"]
+            lines.append(f"=== CONVERSATION AUDIT ===\n")
+            lines.append(f"Total users with conversations: {total}\n")
+
+            # 2. Active users (7 days)
+            cur.execute("""
+                SELECT c.user_id, u.first_name, u.telegram_username,
+                       COUNT(*) as msg_count,
+                       MAX(c.created_at) as last_msg
+                FROM conversations c
+                LEFT JOIN users u ON c.user_id = u.id
+                WHERE c.created_at > NOW() - INTERVAL '7 days'
+                GROUP BY c.user_id, u.first_name, u.telegram_username
+                ORDER BY msg_count DESC
+            """)
+            lines.append("--- Active Users (7 days) ---")
+            for row in cur.fetchall():
+                lines.append(f"  User {row['user_id']} ({row['first_name'] or '?'} / @{row['telegram_username'] or 'n/a'}): {row['msg_count']} msgs, last: {row['last_msg']}")
+            lines.append("")
+
+            # 3. Full conversations (14 days)
+            cur.execute("""
+                SELECT c.user_id, u.first_name, c.role, c.content, c.created_at
+                FROM conversations c
+                LEFT JOIN users u ON c.user_id = u.id
+                WHERE c.created_at > NOW() - INTERVAL '14 days'
+                ORDER BY c.user_id, c.created_at ASC
+            """)
+            rows = cur.fetchall()
+            lines.append(f"--- All Messages (14 days): {len(rows)} total ---\n")
+
+            current_user = None
+            for row in rows:
+                uid = row["user_id"]
+                if uid != current_user:
+                    current_user = uid
+                    lines.append(f"\n{'='*50}")
+                    lines.append(f"USER: {row['first_name'] or '?'} (id={uid})")
+                    lines.append(f"{'='*50}\n")
+
+                content = row["content"] or ""
+                try:
+                    parsed = json.loads(content) if content.startswith('[') or content.startswith('{') else content
+                    if isinstance(parsed, list):
+                        texts = [p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") == "text"]
+                        display = " ".join(texts) if texts else str(parsed)[:200]
+                    elif isinstance(parsed, dict):
+                        display = parsed.get("text", str(parsed)[:200])
+                    else:
+                        display = str(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    display = str(content)
+
+                if row["role"] == "assistant" and len(display) > 300:
+                    display = display[:300] + "..."
+
+                prefix = "YOU" if row["role"] == "user" else "ZOE"
+                lines.append(f"[{row['created_at']}] {prefix}: {display}\n")
+
+            # 4. User memories
+            lines.append(f"\n{'='*50}")
+            lines.append("USER MEMORIES")
+            lines.append(f"{'='*50}\n")
+            cur.execute("SELECT user_id, category, content FROM user_memory ORDER BY user_id, category")
+            for row in cur.fetchall():
+                lines.append(f"  [{row['user_id']}] {row['category']}: {row['content']}")
+
+            # 5. KB stats
+            lines.append(f"\n{'='*50}")
+            lines.append("KNOWLEDGE BASE")
+            lines.append(f"{'='*50}\n")
+            cur.execute("SELECT COUNT(*) as cnt, AVG(LENGTH(content)) as avg_len FROM knowledge_base")
+            r = cur.fetchone()
+            lines.append(f"  Entries: {r['cnt']}, Avg length: {int(r['avg_len'] or 0)} chars")
+            cur.execute("SELECT category, COUNT(*) as cnt FROM knowledge_base GROUP BY category ORDER BY cnt DESC")
+            for row in cur.fetchall():
+                lines.append(f"    {row['category']}: {row['cnt']}")
+
+            # 6. Content extraction
+            lines.append(f"\n{'='*50}")
+            lines.append("CONTENT EXTRACTION LOG")
+            lines.append(f"{'='*50}\n")
+            try:
+                cur.execute("SELECT source, status, COUNT(*) as cnt, COALESCE(SUM(entries_created),0) as entries FROM content_processing_log GROUP BY source, status ORDER BY source")
+                for row in cur.fetchall():
+                    lines.append(f"  {row['source']} [{row['status']}]: {row['cnt']} items, {row['entries']} entries")
+            except Exception:
+                lines.append("  (table not created yet)")
+
+            # 7. Bloodwork
+            lines.append(f"\n{'='*50}")
+            lines.append("BLOODWORK")
+            lines.append(f"{'='*50}\n")
+            try:
+                cur.execute("""
+                    SELECT bp.user_id, bp.test_date, bp.lab_name, COUNT(bm.id) as mc
+                    FROM bloodwork_panels bp
+                    LEFT JOIN biomarkers bm ON bp.id = bm.panel_id
+                    GROUP BY bp.id, bp.user_id, bp.test_date, bp.lab_name
+                    ORDER BY bp.test_date DESC
+                """)
+                for row in cur.fetchall():
+                    lines.append(f"  User {row['user_id']}: {row['test_date']} ({row['lab_name'] or '?'}) — {row['mc']} markers")
+            except Exception:
+                lines.append("  (none)")
+
+    except Exception as e:
+        lines.append(f"\nERROR: {type(e).__name__}: {e}")
+
+    # Send as file
+    report = "\n".join(lines)
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="audit_")
+    tmp.write(report)
+    tmp.close()
+
+    try:
+        with open(tmp.name, "rb") as f:
+            await update.message.reply_document(f, filename="conversation_audit.txt", caption=f"Audit complete. {len(rows)} messages from {total} users.")
+    except Exception as e:
+        # Fallback: send as text chunks
+        if len(report) <= 4096:
+            await update.message.reply_text(report)
+        else:
+            for i in range(0, len(report), 4096):
+                await update.message.reply_text(report[i:i+4096])
+    finally:
+        import os as _os
+        try:
+            _os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
 def _get_notion_title(props: dict) -> str:
     """Extract title from Notion properties."""
     for key, val in props.items():
