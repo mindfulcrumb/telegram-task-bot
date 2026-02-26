@@ -1,15 +1,23 @@
-"""User onboarding — /start, /help, /settings, /account, /deleteaccount."""
+"""User onboarding — /start, /help, /settings, /account, /deleteaccount, /memory."""
+import asyncio
 import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
 )
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.services import user_service
 from bot.services import referral_service
 
 logger = logging.getLogger(__name__)
+
+
+async def _typing_pause(chat, seconds: float = 0.8):
+    """Show typing indicator and pause — makes the bot feel human."""
+    await chat.send_action(ChatAction.TYPING)
+    await asyncio.sleep(seconds)
 
 # ── Onboarding mappings ──────────────────────────────────────────────
 
@@ -129,19 +137,25 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── New user — start conversational onboarding ──
     context.user_data["ob"] = {}
+    chat = update.message.chat
 
-    # Step 1: Welcome + disclaimer + phone verification
+    # Step 1: Welcome — split into 2 messages with typing pause
+    await update.message.reply_text(
+        f"Hey {tg_user.first_name}, I'm Zoe."
+    )
+
+    await _typing_pause(chat, 1.0)
+
     phone_keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
         one_time_keyboard=True,
         resize_keyboard=True,
     )
     await update.message.reply_text(
-        f"Hey {tg_user.first_name}, I'm Zoe.\n\n"
-        "Your AI coach for training, tasks, and everything in between.\n\n"
-        "Quick note: I'm here to educate and track, not to give medical advice. "
-        "Always check with your doctor before starting anything new.\n\n"
-        "Tap below to get started.",
+        "I'm your AI coach for training, biohacking, and getting things done. "
+        "Quick heads up — I track and educate, but I'm not a doctor. "
+        "Always check with yours before starting something new.\n\n"
+        "Tap below and let's get you set up.",
         reply_markup=phone_keyboard,
     )
 
@@ -297,8 +311,9 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Store phone number
     user_service.set_phone_number(user["id"], phone)
 
+    await _typing_pause(update.message.chat, 0.6)
     await update.message.reply_text(
-        "Connected.",
+        "Got it.",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -310,19 +325,21 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _send_segmentation(message, context):
     """Step 2: Ask what brings them here."""
+    await _typing_pause(message.chat, 0.8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Training & fitness", callback_data="ob:focus:fit")],
         [InlineKeyboardButton("Tasks & productivity", callback_data="ob:focus:tasks")],
         [InlineKeyboardButton("All of it", callback_data="ob:focus:all")],
     ])
     await message.reply_text(
-        "What are you most interested in?",
+        "So what brings you here?",
         reply_markup=keyboard,
     )
 
 
 async def _send_goal(message, context):
     """Step 3: Fitness goal."""
+    await _typing_pause(message.chat, 0.7)
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Build muscle", callback_data="ob:goal:muscle"),
@@ -335,13 +352,14 @@ async def _send_goal(message, context):
         [InlineKeyboardButton("Stay healthy", callback_data="ob:goal:health")],
     ])
     await message.reply_text(
-        "What's your main goal right now?",
+        "Nice. What's the main thing you're working towards?",
         reply_markup=keyboard,
     )
 
 
 async def _send_experience(message, context):
     """Step 4: Training experience."""
+    await _typing_pause(message.chat, 0.6)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Under a year", callback_data="ob:exp:beg")],
         [InlineKeyboardButton("1\u20133 years", callback_data="ob:exp:int")],
@@ -355,6 +373,7 @@ async def _send_experience(message, context):
 
 async def _send_frequency(message, context):
     """Step 5: Training frequency."""
+    await _typing_pause(message.chat, 0.6)
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("2\u20133", callback_data="ob:days:3"),
@@ -364,13 +383,14 @@ async def _send_frequency(message, context):
         ],
     ])
     await message.reply_text(
-        "How many days a week do you usually train?",
+        "How many days a week do you usually hit it?",
         reply_markup=keyboard,
     )
 
 
 async def _send_equipment(message, context):
     """Step 6: What equipment do they have access to?"""
+    await _typing_pause(message.chat, 0.7)
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Full gym", callback_data="ob:equip:full"),
@@ -382,13 +402,14 @@ async def _send_equipment(message, context):
         ],
     ])
     await message.reply_text(
-        "What equipment do you have access to?",
+        "What are you working with equipment-wise?",
         reply_markup=keyboard,
     )
 
 
 async def _send_style(message, context):
     """Step 7: Preferred training style."""
+    await _typing_pause(message.chat, 0.6)
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Powerlifting", callback_data="ob:style:power"),
@@ -400,27 +421,29 @@ async def _send_style(message, context):
         ],
     ])
     await message.reply_text(
-        "What kind of training do you prefer?",
+        "What kind of training are you into?",
         reply_markup=keyboard,
     )
 
 
 async def _send_injuries(message, context):
     """Step 8: Any injuries or limitations?"""
+    await _typing_pause(message.chat, 0.7)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Shoulder issues", callback_data="ob:injury:shoulder")],
-        [InlineKeyboardButton("Knee issues", callback_data="ob:injury:knee")],
-        [InlineKeyboardButton("Back issues", callback_data="ob:injury:back")],
-        [InlineKeyboardButton("Nope, I'm good", callback_data="ob:injury:none")],
+        [InlineKeyboardButton("Shoulder stuff", callback_data="ob:injury:shoulder")],
+        [InlineKeyboardButton("Knee stuff", callback_data="ob:injury:knee")],
+        [InlineKeyboardButton("Back stuff", callback_data="ob:injury:back")],
+        [InlineKeyboardButton("Nah, I'm good", callback_data="ob:injury:none")],
     ])
     await message.reply_text(
-        "Any injuries or limitations I should know about?",
+        "Anything I should work around? Injuries, tight spots, old stuff that flares up?",
         reply_markup=keyboard,
     )
 
 
 async def _send_biohacking(message, context):
     """Step 9: Do they track peptides/supplements/bloodwork?"""
+    await _typing_pause(message.chat, 0.8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Peptides", callback_data="ob:bio:peptides")],
         [InlineKeyboardButton("Supplements", callback_data="ob:bio:supps")],
@@ -428,22 +451,26 @@ async def _send_biohacking(message, context):
         [InlineKeyboardButton("Neither", callback_data="ob:bio:none")],
     ])
     await message.reply_text(
-        "Do you track peptides or supplements?",
+        "Last one on the health side — are you running any peptides or supplements?",
         reply_markup=keyboard,
     )
 
 
 async def _send_timezone(message, context):
     """Step 10: Timezone via location share."""
+    await _typing_pause(message.chat, 0.8)
+
     # Inline skip button
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Skip for now", callback_data="ob:tz:skip")],
     ])
     await message.reply_text(
-        "Last thing \u2014 share your location so reminders hit at the right time.\n\n"
-        "You can always set it later with /settings.",
+        "Almost done \u2014 share your location so I can time your reminders right. "
+        "You can always change it later.",
         reply_markup=keyboard,
     )
+
+    await _typing_pause(message.chat, 0.5)
 
     # Reply keyboard for location share
     location_keyboard = ReplyKeyboardMarkup(
@@ -452,7 +479,7 @@ async def _send_timezone(message, context):
         resize_keyboard=True,
     )
     await message.reply_text(
-        "Tap below to share your location.",
+        "Tap below.",
         reply_markup=location_keyboard,
     )
 
@@ -541,7 +568,11 @@ async def _complete_onboarding(message, context, user):
     except Exception as e:
         logger.warning(f"Failed to seed onboarding memories for user {user_id}: {e}")
 
-    # ── Build personalized done message ──
+    # ── Build personalized done message — delivered in 2-3 messages ──
+    chat = message.chat
+
+    await _typing_pause(chat, 1.0)
+
     if focus in ("fit", "all"):
         goal_text = GOAL_DISPLAY.get(ob.get("goal"), "getting stronger")
         days = ob.get("days", 3)
@@ -549,45 +580,54 @@ async def _complete_onboarding(message, context, user):
         equip = EQUIP_DISPLAY.get(ob.get("equipment"), "")
         style = STYLE_DISPLAY.get(ob.get("style"), "")
 
-        profile_line = f"I've got you down for {goal_text}, {days}x a week, {exp} level."
+        # Message 1: confirmation
+        profile_parts = [f"{goal_text}, {days}x a week, {exp}"]
         if equip:
-            profile_line += f"\n{equip.title()} access."
+            profile_parts.append(f"{equip}")
         if style:
-            profile_line += f" {style.title()} style."
+            profile_parts.append(f"{style}")
+
+        await message.reply_text(
+            f"Got it, {first_name}. {', '.join(profile_parts)}.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        # Message 2: injury/bio acknowledgments
+        extra_lines = []
+        injury = ob.get("injury")
+        if injury and injury != "none":
+            extra_lines.append(f"I'll work around your {injury} \u2014 every session I program will account for it.")
 
         bio = ob.get("biohacking")
-        bio_line = ""
         if bio == "peptides":
-            bio_line = "\n\nI can track your peptide protocols and doses too \u2014 just tell me what you're running."
+            extra_lines.append("Tell me what peptides you're running and I'll track everything.")
         elif bio == "supps":
-            bio_line = "\n\nI can track your supplement stack \u2014 just tell me what you take."
+            extra_lines.append("Tell me what supplements you take and I'll track your stack.")
         elif bio == "both":
-            bio_line = "\n\nI'll track your peptides and supplements \u2014 just tell me what you're running."
+            extra_lines.append("Tell me what you're running \u2014 peptides, supplements, all of it. I'll track everything.")
 
-        injury = ob.get("injury")
-        injury_line = ""
-        if injury and injury != "none":
-            injury_line = f"\n\nI'll program around your {injury} \u2014 every session will account for it."
+        if extra_lines:
+            await _typing_pause(chat, 0.8)
+            await message.reply_text("\n\n".join(extra_lines))
 
-        text = (
-            f"You're all set, {first_name}.\n\n"
-            f"{profile_line}{injury_line}{bio_line}\n\n"
-            "Try \"What should I train today?\" or "
-            "\"I did bench 4x8 at 80kg\" and I'll take it from there."
-        )
+        # Message 3: what to do next
+        await _typing_pause(chat, 1.0)
+        next_text = "Try asking \"what should I train today?\" or just tell me what you did \u2014 \"bench 4x8 at 80kg\" and I'll take it from there."
         if focus == "all":
-            text += (
-                "\n\nFor tasks, just tell me naturally \u2014 "
-                "\"Buy groceries tomorrow\" or \"Remind me about X at 3pm.\""
-            )
-    else:
-        text = (
-            f"You're all set, {first_name}.\n\n"
-            "Try \"Buy groceries tomorrow\" or "
-            "\"What should I focus on today?\" and I'll handle it."
-        )
+            next_text += "\n\nFor tasks, just talk to me \u2014 \"buy groceries tomorrow\" or \"remind me to call the clinic at 3pm.\""
+        await message.reply_text(next_text)
 
-    await message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+    else:
+        # Tasks-only track
+        await message.reply_text(
+            f"You're good to go, {first_name}.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await _typing_pause(chat, 0.8)
+        await message.reply_text(
+            "Just talk to me \u2014 \"buy groceries tomorrow\" or "
+            "\"what should I focus on today?\" and I'll handle it."
+        )
 
     # Clean up transient state
     context.user_data.pop("ob", None)
@@ -623,8 +663,9 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
 
         if step == "phone":
             # Phone skip
+            await _typing_pause(query.message.chat, 0.5)
             await query.message.reply_text(
-                "No problem \u2014 you can always add it later.",
+                "No worries.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             await _send_segmentation(query.message, context)
