@@ -104,11 +104,9 @@ async def handle_otp_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _typing_pause(chat, 0.6)
         sent = await _send_otp(phone, ob, chat)
         if not sent:
-            err = whatsapp_service.get_last_error()
-            debug = f"\n\n(Debug: {err})" if err else ""
             await update.message.reply_text(
                 "Couldn't reach that number on WhatsApp. "
-                "Make sure it's active on WhatsApp and try again." + debug
+                "Make sure it's active on WhatsApp and try again."
             )
             return
 
