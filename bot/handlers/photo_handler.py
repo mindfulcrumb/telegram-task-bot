@@ -163,7 +163,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if response:
                     response = _clean_response(response)
-                    await update.message.reply_text(response)
+                    # If paywall was hit, attach subscribe button
+                    reply_markup = None
+                    if ai_brain._paywall_hit:
+                        from bot.handlers.payments import get_subscribe_keyboard
+                        reply_markup = get_subscribe_keyboard(update.effective_user.id)
+                    await update.message.reply_text(response, reply_markup=reply_markup)
             # No caption and not a blood test — just ignore silently
             return
 

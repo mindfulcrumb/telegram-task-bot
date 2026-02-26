@@ -106,11 +106,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if response:
             # Strip any markdown formatting the AI snuck in (same as text handler)
             response = _clean_response(response)
+
+            # If paywall was hit, attach subscribe button
+            reply_markup = None
+            if ai_brain._paywall_hit:
+                from bot.handlers.payments import get_subscribe_keyboard
+                reply_markup = get_subscribe_keyboard(update.effective_user.id)
+
             if len(response) <= 4096:
-                await update.message.reply_text(response)
+                await update.message.reply_text(response, reply_markup=reply_markup)
             else:
-                for i in range(0, len(response), 4096):
-                    await update.message.reply_text(response[i:i + 4096])
+                chunks = [response[i:i + 4096] for i in range(0, len(response), 4096)]
+                for i, chunk in enumerate(chunks):
+                    # Attach button to last chunk only
+                    markup = reply_markup if i == len(chunks) - 1 else None
+                    await update.message.reply_text(chunk, reply_markup=markup)
         else:
             await update.message.reply_text("Something went wrong processing that. Try again or type it out.")
 
