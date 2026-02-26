@@ -472,6 +472,13 @@ def main():
                 seed_all_v3()
             except Exception as e:
                 logger.error(f"Knowledge v3 seeding failed: {type(e).__name__}: {e}")
+
+            # Seed owner's training program into user memories
+            try:
+                from bot.data.seed_owner_program import seed_all_owner
+                seed_all_owner()
+            except Exception as e:
+                logger.error(f"Owner program seeding failed: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"PostgreSQL init failed: {type(e).__name__}: {e}")
             _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED — degraded mode\n<code>{type(e).__name__}: {e}</code>")
