@@ -89,7 +89,7 @@ def check_limit(
             if current >= max_tasks:
                 if _check_supabase_upgrade(user_id, telegram_user_id):
                     return True, None
-                return False, f"You've hit the free tier limit of {max_tasks} active tasks. Complete some tasks or /upgrade to Pro for unlimited!"
+                return False, f"You're running a tight ship — {max_tasks} active tasks. Unlock unlimited with /upgrade."
         return True, None
 
     elif action == "ai_message":
@@ -99,7 +99,7 @@ def check_limit(
             if used >= max_msgs:
                 if _check_supabase_upgrade(user_id, telegram_user_id):
                     return True, None
-                return False, f"You've used all {max_msgs} AI messages for today. They reset at midnight, or /upgrade to Pro for unlimited!"
+                return False, f"That's a wrap for today — {max_msgs} messages used. Go unlimited with /upgrade, or they reset at midnight."
         return True, None
 
     elif action == "set_reminder":
@@ -110,7 +110,7 @@ def check_limit(
             if current >= max_reminders:
                 if _check_supabase_upgrade(user_id, telegram_user_id):
                     return True, None
-                return False, f"Free tier allows {max_reminders} active reminders. /upgrade to Pro for unlimited!"
+                return False, f"{max_reminders} reminders maxed out. Unlock unlimited with /upgrade."
         return True, None
 
     elif action == "daily_briefing":

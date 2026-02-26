@@ -350,6 +350,7 @@ async def _post_init(application):
             BotCommand("account", "Account info"),
             BotCommand("referral", "Your referral link & stats"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
+            BotCommand("billing", "Manage your subscription"),
             BotCommand("help", "All commands"),
         ]
         await bot.set_my_commands(commands)
@@ -580,6 +581,11 @@ def _register_full_handlers(application):
             application.add_handler(CallbackQueryHandler(handle_feedback_callback, pattern="^fb:"))
         except Exception:
             pass
+        try:
+            from bot.handlers.payments import callback_upgrade_dismiss
+            application.add_handler(CallbackQueryHandler(callback_upgrade_dismiss, pattern="^upgrade:dismiss$"))
+        except Exception:
+            pass
         application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
         application.add_handler(MessageHandler(filters.LOCATION, handle_location))
         application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
@@ -628,10 +634,12 @@ def _register_full_handlers(application):
     # Payments
     try:
         from bot.handlers.payments import (
-            cmd_upgrade, handle_pre_checkout, handle_successful_payment,
+            cmd_upgrade, cmd_billing,
+            handle_pre_checkout, handle_successful_payment,
             cmd_terms, cmd_support,
         )
         application.add_handler(CommandHandler("upgrade", cmd_upgrade))
+        application.add_handler(CommandHandler("billing", cmd_billing))
         application.add_handler(CommandHandler("terms", cmd_terms))
         application.add_handler(CommandHandler("support", cmd_support))
         application.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))

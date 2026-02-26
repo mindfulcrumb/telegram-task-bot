@@ -1,4 +1,4 @@
-"""Telegram Payments — /upgrade, /terms, /support."""
+"""Telegram Payments — /upgrade, /billing, /terms, /support."""
 import logging
 import os
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -14,6 +14,7 @@ PRO_PRICE = int(os.getenv("PRO_PRICE_CENTS", "999"))  # $9.99 default
 PRO_CURRENCY = os.getenv("PRO_CURRENCY", "USD")
 STRIPE_PROVIDER_TOKEN = os.getenv("STRIPE_PROVIDER_TOKEN", "")
 SUBSCRIBE_BASE_URL = os.getenv("SUBSCRIBE_URL", "https://meetzoe.app/subscribe")
+BILLING_BASE_URL = os.getenv("BILLING_URL", "https://meetzoe.app/billing")
 
 
 def get_subscribe_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
@@ -29,6 +30,18 @@ def get_subscribe_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def get_upgrade_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
+    """Build the upgrade inline keyboard with Subscribe + Not now buttons."""
+    subscribe_url = f"{SUBSCRIBE_BASE_URL}?tgid={telegram_user_id}"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "Subscribe — $9.99/mo",
+            web_app=WebAppInfo(url=subscribe_url),
+        )],
+        [InlineKeyboardButton("Not now", callback_data="upgrade:dismiss")],
+    ])
+
+
 async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a payment invoice for Pro upgrade."""
     from bot.handlers.onboarding import _ensure_user
@@ -42,20 +55,16 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not STRIPE_PROVIDER_TOKEN:
         # Open subscribe page inside Telegram WebView
         tg_id = update.effective_user.id
-        subscribe_url = f"{SUBSCRIBE_BASE_URL}?tgid={tg_id}"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(
-                "Subscribe — $9.99/mo",
-                web_app=WebAppInfo(url=subscribe_url),
-            )
-        ]])
+        keyboard = get_upgrade_keyboard(tg_id)
         await typing_pause(update.message.chat, 0.8)
         await update.message.reply_text(
-            "Zoe Pro \u2014 $9.99/mo\n\n"
-            "Unlimited AI conversations, fitness coaching, workout programming, "
-            "peptide tracking, supplement management, bloodwork intelligence, "
-            "WHOOP integration, morning briefings, and weekly reports.\n\n"
-            "Basically everything, no limits.",
+            "Zoe Pro — $9.99/mo\n\n"
+            "→ Unlimited AI conversations\n"
+            "→ Unlimited tasks and reminders\n"
+            "→ Morning briefings and weekly insights\n"
+            "→ Fitness coaching and workout programming\n"
+            "→ WHOOP integration and bloodwork tracking\n\n"
+            "Cancel anytime.",
             reply_markup=keyboard,
         )
         return
@@ -69,6 +78,43 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency=PRO_CURRENCY,
         prices=[LabeledPrice("Zoe Pro (monthly)", PRO_PRICE)],
     )
+
+
+async def callback_upgrade_dismiss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'Not now' button on upgrade prompt — delete the message."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass  # Message may already be gone
+
+
+async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show subscription status and billing management."""
+    from bot.handlers.onboarding import _ensure_user
+    user = await _ensure_user(update, context)
+
+    if user.get("tier") == "pro":
+        tg_id = update.effective_user.id
+        billing_url = f"{BILLING_BASE_URL}?tgid={tg_id}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "Manage Subscription",
+                web_app=WebAppInfo(url=billing_url),
+            )
+        ]])
+        await typing_pause(update.message.chat, 0.5)
+        await update.message.reply_text(
+            "Your plan: Zoe Pro ($9.99/mo)\n"
+            "Status: Active",
+            reply_markup=keyboard,
+        )
+    else:
+        await typing_pause(update.message.chat, 0.5)
+        await update.message.reply_text(
+            "You're on the free plan. /upgrade to unlock everything."
+        )
 
 
 async def handle_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,9 +150,10 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
 
         await typing_pause(update.message.chat, 1.0)
         await update.message.reply_text(
-            "You're on Pro now. Unlimited everything \u2014 AI conversations, fitness coaching, "
-            "peptide tracking, bloodwork intelligence, WHOOP integration, morning briefings, all of it.\n\n"
-            "I'll start learning your patterns and coaching you proactively. Let's go."
+            "Welcome to Pro ✨\n\n"
+            "Everything's unlocked — unlimited conversations, fitness coaching, "
+            "morning briefings, all of it.\n\n"
+            "Send me anything to get started."
         )
 
 
