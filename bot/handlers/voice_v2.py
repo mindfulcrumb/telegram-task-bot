@@ -2,35 +2,13 @@
 import asyncio
 import logging
 import os
-import re
 import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from bot.handlers.message_utils import send_chunked
+
 logger = logging.getLogger(__name__)
-
-
-def _clean_response(text: str) -> str:
-    """Strip markdown formatting characters from AI response."""
-    if not text:
-        return text
-    # Remove bold markers (DOTALL for multi-line)
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
-    # Remove italic markers
-    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
-    # Remove backtick code formatting
-    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'```[\s\S]*?```', '', text)
-    # Remove header markers
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    # Convert markdown bullet lists to clean text
-    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
-    # Clean leftover stray asterisks
-    text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
-    text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
-    text = re.sub(r'\*\*', '', text)
-    return text.strip()
 
 
 def is_voice_configured() -> bool:
@@ -84,6 +62,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = await _transcribe(tmp_path, groq_key)
 
         if not text or not text.strip():
+            logger.warning(
+                f"Empty transcription for user {user['id']} "
+                f"(duration={voice.duration}s, file_size={voice.file_size})"
+            )
             await update.message.reply_text("Couldn't catch that \u2014 try again?")
             return
 
@@ -107,23 +89,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if response:
-            # Strip any markdown formatting the AI snuck in (same as text handler)
-            response = _clean_response(response)
-
             # If paywall was hit, attach subscribe button
             reply_markup = None
             if ai_brain._paywall_hit:
                 from bot.handlers.payments import get_subscribe_keyboard
                 reply_markup = get_subscribe_keyboard(update.effective_user.id)
 
-            if len(response) <= 4096:
-                await update.message.reply_text(response, reply_markup=reply_markup)
-            else:
-                chunks = [response[i:i + 4096] for i in range(0, len(response), 4096)]
-                for i, chunk in enumerate(chunks):
-                    # Attach button to last chunk only
-                    markup = reply_markup if i == len(chunks) - 1 else None
-                    await update.message.reply_text(chunk, reply_markup=markup)
+            await send_chunked(
+                bot=context.bot,
+                chat_id=chat_id,
+                text=response,
+                reply_markup=reply_markup,
+            )
         else:
             await update.message.reply_text("Something went wrong processing that. Try again or type it out.")
 

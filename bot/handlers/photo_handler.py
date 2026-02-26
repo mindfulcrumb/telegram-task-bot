@@ -10,6 +10,8 @@ import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from bot.handlers.message_utils import clean_response as _clean_response, send_chunked
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,23 +41,6 @@ Rules:
 5. Values must be numbers (convert "6.5" to 6.5, not "6.5")
 6. Include the unit exactly as shown (ng/dL, mg/L, mIU/L, etc.)
 7. Return ONLY the JSON object, nothing else"""
-
-
-def _clean_response(text: str) -> str:
-    """Strip markdown formatting characters from AI response."""
-    if not text:
-        return text
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'```[\s\S]*?```', '', text)
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
-    text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
-    text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
-    text = re.sub(r'\*\*', '', text)
-    return text.strip()
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -164,13 +149,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     response = "That took too long — try again."
 
                 if response:
-                    response = _clean_response(response)
                     # If paywall was hit, attach subscribe button
                     reply_markup = None
                     if ai_brain._paywall_hit:
                         from bot.handlers.payments import get_subscribe_keyboard
                         reply_markup = get_subscribe_keyboard(update.effective_user.id)
-                    await update.message.reply_text(response, reply_markup=reply_markup)
+                    await send_chunked(
+                        bot=context.bot,
+                        chat_id=update.effective_chat.id,
+                        text=response,
+                        reply_markup=reply_markup,
+                    )
             # No caption and not a blood test — just ignore silently
             return
 

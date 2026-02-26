@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from bot.services import user_service, task_service
 from bot.services import coaching_service
 from bot.utils import typing_pause_bot
+from bot.handlers.message_utils import send_chunked
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,11 @@ async def morning_briefing_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_briefing(user, tasks, streak, patterns)
 
-            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
-            await context.bot.send_message(
+            await send_chunked(
+                bot=context.bot,
                 chat_id=user["telegram_user_id"],
                 text=text,
+                proactive=True,
             )
             coaching_service.record_nudge(user["id"], 0, "briefing")
             logger.info(f"Briefing sent to user {user['id']}")
@@ -112,10 +114,11 @@ async def daily_assessment_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_daily_assessment(user)
 
-            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
-            await context.bot.send_message(
+            await send_chunked(
+                bot=context.bot,
                 chat_id=user["telegram_user_id"],
                 text=text,
+                proactive=True,
             )
             coaching_service.record_nudge(user["id"], 0, "assessment")
             logger.info(f"Daily assessment sent to user {user['id']}")
@@ -205,10 +208,11 @@ async def weekly_insights_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_weekly_insight(user, stats)
 
-            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
-            await context.bot.send_message(
+            await send_chunked(
+                bot=context.bot,
                 chat_id=user["telegram_user_id"],
                 text=text,
+                proactive=True,
             )
             coaching_service.record_nudge(user["id"], 0, "weekly_insight")
             logger.info(f"Weekly insight sent to user {user['id']}")
@@ -424,10 +428,11 @@ async def weekly_fitness_report_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_weekly_fitness_report(user, summary, workouts_this_week)
 
-            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
-            await context.bot.send_message(
+            await send_chunked(
+                bot=context.bot,
                 chat_id=user["telegram_user_id"],
                 text=text,
+                proactive=True,
             )
             coaching_service.record_nudge(user["id"], 0, "weekly_fitness")
             logger.info(f"Weekly fitness report sent to user {user['id']}")
@@ -759,14 +764,21 @@ def _generate_briefing(user, tasks, streak, patterns):
             + f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
             f"Most productive: {patterns.get('most_productive_day', 'varies')}\n"
             f"Best time: {patterns.get('preferred_time', 'varies')}\n\n"
-            "Write 3-5 lines. If WHOOP data is available, mention recovery zone and suggest training intensity accordingly. "
-            "Mention calendar events if any. Say which task to start with and why. "
-            "Mention streak if > 0. Be warm and thoughtful, like Zoe. "
-            "No markdown formatting. Under 500 chars."
+            "Write 2-3 SHORT paragraphs separated by blank lines (double newline).\n"
+            "Each paragraph is 1-2 sentences. Under 15 words per sentence.\n"
+            "Total under 400 chars.\n\n"
+            "If WHOOP data is available, mention recovery zone and suggest training intensity.\n"
+            "Mention calendar events if any. Say which task to start with.\n"
+            "Mention streak if > 0.\n\n"
+            "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block.\n"
+            "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
         response, error = _call_api(
-            "You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting. Sign off as Zoe if it feels natural.",
+            "You are Zoe, a warm productivity companion. Brief, specific, calm. "
+            "Structure responses as short paragraphs separated by blank lines. "
+            "Each paragraph is 1-2 sentences. Never write one continuous block. "
+            "Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
             max_tokens=200,
         )
@@ -881,16 +893,21 @@ def _generate_daily_assessment(user):
         prompt = (
             f"Generate an end-of-day assessment for {name}.\n\n"
             f"Today's data:\n{data_block}\n"
-            "Write 4-6 lines. Start with a brief assessment of how the day went. "
-            "Acknowledge what went well. If tasks were missed or overdue grew, address it gently. "
-            "Connect fitness and health data to productivity if relevant. "
-            "End with ONE suggestion for tomorrow. "
-            "Be warm and honest, like a coach wrapping up the day. "
-            "No markdown formatting. Under 600 chars."
+            "Write 3-4 SHORT paragraphs separated by blank lines (double newline).\n"
+            "Each paragraph is 1-2 sentences MAX. Under 15 words per sentence.\n"
+            "Total under 400 chars.\n\n"
+            "Start with how the day went. Acknowledge what went well.\n"
+            "If tasks were missed or overdue grew, address it gently.\n"
+            "End with ONE suggestion for tomorrow.\n\n"
+            "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block of text.\n"
+            "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
         response, error = _call_api(
-            "You are Zoe, a thoughtful fitness and productivity coach. You do end-of-day reviews that are honest, warm, and constructive. Never say 'I'm an AI'. No markdown formatting.",
+            "You are Zoe, a thoughtful coach. End-of-day reviews: honest, warm, brief. "
+            "Structure responses as short paragraphs separated by blank lines. "
+            "Each paragraph is 1-2 sentences. Never write one continuous block. "
+            "Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
             max_tokens=250,
         )
@@ -949,12 +966,18 @@ def _generate_weekly_insight(user, stats):
             f"Categories: {stats.get('by_category', {})}\n"
             f"Best day: {stats.get('most_productive_day', 'varies')}\n"
             f"Currently overdue: {stats.get('current_overdue', 0)}\n\n"
-            "Write 3-4 lines. Compare weeks. Give ONE actionable tip. "
-            "Be encouraging. No markdown formatting. Under 400 chars."
+            "Write 2-3 SHORT paragraphs separated by blank lines (double newline).\n"
+            "Each paragraph is 1-2 sentences. Under 15 words per sentence.\n"
+            "Compare weeks. Give ONE actionable tip. Under 350 chars total.\n\n"
+            "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block.\n"
+            "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
         response, error = _call_api(
-            "You are Zoe, a thoughtful and warm productivity companion. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting. Sign off as Zoe if it feels natural.",
+            "You are Zoe, a warm productivity companion. Brief, specific, calm. "
+            "Structure responses as short paragraphs separated by blank lines. "
+            "Each paragraph is 1-2 sentences. Never write one continuous block. "
+            "Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
             max_tokens=200,
         )
@@ -1030,13 +1053,19 @@ def _generate_weekly_fitness_report(user, summary, workouts_this_week):
             f"Streak: {streak.get('current_streak', 0)} sessions (best: {streak.get('longest_streak', 0)})\n"
             f"PRs:\n" + ("\n".join(pr_lines) if pr_lines else "  None this period") + "\n"
             f"Metrics:\n" + ("\n".join(metric_lines) if metric_lines else "  None logged") + "\n\n"
-            "Write 4-6 lines. Summarize the week. Note pattern imbalances. Celebrate PRs. "
-            "Give ONE specific suggestion for next week. "
-            "No markdown formatting. Under 600 chars."
+            "Write 3-4 SHORT paragraphs separated by blank lines (double newline).\n"
+            "Each paragraph is 1-2 sentences. Under 15 words per sentence.\n"
+            "Summarize the week. Note pattern imbalances. Celebrate PRs.\n"
+            "Give ONE specific suggestion for next week. Under 500 chars total.\n\n"
+            "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block.\n"
+            "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
         response, error = _call_api(
-            "You are Zoe, a thoughtful and warm fitness coach. Brief, specific, calm. Never say 'I'm an AI'. No markdown formatting.",
+            "You are Zoe, a warm fitness coach. Brief, specific, calm. "
+            "Structure responses as short paragraphs separated by blank lines. "
+            "Each paragraph is 1-2 sentences. Never write one continuous block. "
+            "Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
             max_tokens=250,
         )

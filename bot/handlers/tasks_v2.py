@@ -10,63 +10,16 @@ from telegram.ext import ContextTypes
 from bot.services import user_service, task_service, tier_service
 from bot.ai.brain_v2 import ai_brain
 from bot.utils import typing_pause
+from bot.handlers.message_utils import clean_response as _clean_response, send_chunked
 
 logger = logging.getLogger(__name__)
 
 
-def _clean_response(text: str) -> str:
-    """Strip markdown formatting characters from AI response.
-
-    The AI is told not to use markdown, but this is a safety net
-    to catch any stray *, **, _, `, # characters that slip through.
-    """
-    if not text:
-        return text
-
-    # Remove bold markers: **text** -> text (DOTALL for multi-line spans)
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
-    # Remove italic markers: *text* -> text (DOTALL for multi-line spans)
-    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
-    # Remove underscore emphasis: _text_ -> text
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
-
-    # Remove backtick code formatting: `text` -> text
-    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
-    # Remove triple-backtick code blocks
-    text = re.sub(r'```[\s\S]*?```', '', text)
-
-    # Remove header markers: ### Header -> Header
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-
-    # Convert markdown bullet lists to clean text: "- item" -> "item", "* item" -> "item"
-    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
-
-    # Clean up any leftover stray asterisks at start/end of words
-    text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
-    text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
-
-    # Remove stray double asterisks (e.g., orphaned ** at line boundaries)
-    text = re.sub(r'\*\*', '', text)
-
-    return text.strip()
-
-
 async def _send_human(update: Update, text: str, add_feedback: bool = False):
-    """Send a response in natural chunks with typing delays.
-
-    Splits on double-newlines (paragraph breaks) so each chunk
-    feels like a separate message a human would type and send.
-    Short responses (<300 chars) are sent as one message.
-
-    If add_feedback=True, the LAST message gets thumbs up/down buttons.
-    """
+    """Send a response in natural chunks with typing delays."""
     if not text:
         return
 
-    # Strip any markdown formatting the AI snuck in
-    text = _clean_response(text)
-
-    # Build feedback markup if needed
     feedback_markup = None
     if add_feedback:
         feedback_markup = InlineKeyboardMarkup([
@@ -76,57 +29,12 @@ async def _send_human(update: Update, text: str, add_feedback: bool = False):
             ]
         ])
 
-    # Short responses — send directly, no chunking
-    if len(text) <= 300:
-        await update.message.reply_text(text, reply_markup=feedback_markup)
-        return
-
-    # Split on double-newlines (paragraph breaks)
-    chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
-
-    # If splitting produced only 1 chunk or chunks are very small, try single newline
-    if len(chunks) <= 1:
-        chunks = [c.strip() for c in text.split("\n") if c.strip()]
-
-    # Merge tiny chunks (under 80 chars) with the next one to avoid spammy 1-liners
-    merged = []
-    buffer = ""
-    for chunk in chunks:
-        if buffer:
-            combined = buffer + "\n\n" + chunk
-            if len(combined) <= 600:
-                buffer = combined
-            else:
-                merged.append(buffer)
-                buffer = chunk
-        else:
-            if len(chunk) < 80 and chunks.index(chunk) < len(chunks) - 1:
-                buffer = chunk
-            else:
-                merged.append(chunk)
-    if buffer:
-        merged.append(buffer)
-
-    # Cap at 4 messages max — combine remainder into last chunk
-    if len(merged) > 4:
-        merged = merged[:3] + ["\n\n".join(merged[3:])]
-
-    chat = update.message.chat
-
-    for i, chunk in enumerate(merged):
-        # Telegram limit
-        if len(chunk) > 4096:
-            chunk = chunk[:4096]
-
-        if i > 0:
-            # Typing delay between chunks — scales with chunk length
-            delay = min(0.4 + len(chunk) * 0.002, 1.8)
-            await chat.send_action(ChatAction.TYPING)
-            await asyncio.sleep(delay)
-
-        # Add feedback buttons to the last chunk only
-        markup = feedback_markup if (i == len(merged) - 1) else None
-        await update.message.reply_text(chunk, reply_markup=markup)
+    await send_chunked(
+        bot=update.effective_chat.bot,
+        chat_id=update.effective_chat.id,
+        text=text,
+        reply_markup=feedback_markup,
+    )
 
 
 async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict | None:
