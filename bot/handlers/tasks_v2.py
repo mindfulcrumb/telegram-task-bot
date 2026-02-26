@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 from bot.services import user_service, task_service, tier_service
 from bot.ai.brain_v2 import ai_brain
+from bot.utils import typing_pause
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     task_service.add_task(user["id"], title=text)
+    await typing_pause(update.message.chat, 0.3)
     await update.message.reply_text(f"Added: {text}")
 
 
@@ -166,6 +168,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         await update.message.reply_text("No tasks! Add one with /add or just tell me.")
         return
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(_format_tasks(tasks))
 
 
@@ -176,6 +179,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         await update.message.reply_text("Nothing due today!")
         return
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(f"Due today:\n\n{_format_tasks(tasks)}")
 
 
@@ -186,6 +190,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         await update.message.reply_text("Nothing due this week!")
         return
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(f"This week:\n\n{_format_tasks(tasks)}")
 
 
@@ -196,6 +201,7 @@ async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         await update.message.reply_text("Nothing overdue!")
         return
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(f"Overdue:\n\n{_format_tasks(tasks)}")
 
 
@@ -214,6 +220,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     completed, not_found = task_service.complete_tasks(user["id"], nums)
     parts = []
+    await typing_pause(update.message.chat, 0.3)
     if completed:
         titles = ", ".join(t["title"] for t in completed)
         parts.append(f"Done: {titles}")
@@ -247,6 +254,7 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     deleted, not_found = task_service.delete_tasks(user["id"], nums)
+    await typing_pause(update.message.chat, 0.3)
     parts = []
     if deleted:
         titles = ", ".join(t["title"] for t in deleted)
@@ -271,6 +279,7 @@ async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     new_title = " ".join(context.args[1:])
     result = task_service.update_task_title(user["id"], num, new_title)
+    await typing_pause(update.message.chat, 0.3)
     if result:
         await update.message.reply_text(f"Updated: \"{result[0]}\" → \"{result[1]}\"")
     else:
@@ -299,6 +308,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await _get_user(update, context)
     from bot.ai import memory_pg
     memory_pg.clear_history(user["id"])
+    await typing_pause(update.message.chat, 0.3)
     await update.message.reply_text("Conversation history cleared.")
 
 
@@ -324,6 +334,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"High priority: {high}\n"
         f"Business: {biz} | Personal: {personal}"
     )
+    await typing_pause(update.message.chat, 0.6)
     await update.message.reply_text(text)
 
 
@@ -344,6 +355,7 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Best ever: {longest} day{'s' if longest != 1 else ''}\n"
             f"Last completed: {last.strftime('%b %d') if last else 'never'}"
         )
+    await typing_pause(update.message.chat, 0.6)
     await update.message.reply_text(text)
 
 
@@ -395,6 +407,7 @@ async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         val = data["value"]
         date_str = data["recorded_at"].strftime("%b %d") if data.get("recorded_at") else ""
         lines.append(f"{label}: {val}{unit} ({date_str})")
+    await typing_pause(update.message.chat, 0.7)
     await update.message.reply_text("\n".join(lines))
 
 
@@ -440,6 +453,7 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for p in prs[:5]:
             lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
 
+    await typing_pause(update.message.chat, 0.8)
     await update.message.reply_text("\n".join(lines))
 
 
@@ -466,6 +480,7 @@ async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 line += f" ({p['days_remaining']}d remaining)"
         line += f"\n  Doses (7d): {p.get('doses_last_7d', 0)}"
         lines.append(line)
+    await typing_pause(update.message.chat, 0.8)
     await update.message.reply_text("\n\n".join(lines))
 
 
@@ -490,6 +505,7 @@ async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     adherence = biohacking_service.get_supplement_adherence(user["id"], days=7)
     if adherence["overall_rate"] > 0:
         lines.append(f"\n7-day adherence: {adherence['overall_rate']}%")
+    await typing_pause(update.message.chat, 0.7)
     await update.message.reply_text("\n".join(lines))
 
 
@@ -557,6 +573,7 @@ async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if protocol_names:
             lines.append(f"Active protocols: {', '.join(protocol_names)}")
 
+    await typing_pause(update.message.chat, 1.0)
     await update.message.reply_text("\n".join(lines))
 
 
@@ -677,6 +694,8 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         lines.append("\nRed zone — recovery day. Mobility or rest.")
 
+    await typing_pause(update.message.chat, 0.8)
+
     # Inline action buttons
     keyboard = InlineKeyboardMarkup([
         [
@@ -770,6 +789,8 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if trends.get("strain_avg") is not None:
             lines.append(f"Strain avg: {trends['strain_avg']}")
 
+    await typing_pause(update.message.chat, 1.0)
+
     # Inline action buttons
     keyboard = InlineKeyboardMarkup([
         [
@@ -791,6 +812,7 @@ async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     whoop_service.revoke_access(user["id"])
+    await typing_pause(update.message.chat, 0.4)
     await update.message.reply_text("WHOOP disconnected. All WHOOP data removed.")
 
 
@@ -822,6 +844,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         pending_session_id = ai_brain._pending_session.pop(user["id"], None)
 
         if response:
+            await typing_pause(chat, 0.6)
             await chat.send_message(_clean_response(response))
 
         if pending_session_id:
@@ -896,6 +919,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             ],
         ])
 
+        await typing_pause(chat, 1.0)
         await chat.send_message("\n".join(lines), reply_markup=keyboard)
 
 
@@ -943,6 +967,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Guard: don't pass to AI during onboarding flow
     if context.user_data.get("ob") is not None:
+        otp_phase = context.user_data["ob"].get("otp_phase")
+        if otp_phase in ("awaiting_phone", "awaiting_code"):
+            from bot.handlers.onboarding import handle_otp_text
+            await handle_otp_text(update, context)
+            return
         await update.message.reply_text(
             "Tap one of the buttons above to finish setup \u2014 almost done!"
         )

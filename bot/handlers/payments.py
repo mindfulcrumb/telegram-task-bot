@@ -5,6 +5,7 @@ from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardM
 from telegram.ext import ContextTypes
 
 from bot.services import user_service
+from bot.utils import typing_pause
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await _ensure_user(update, context)
 
     if user.get("tier") == "pro":
+        await typing_pause(update.message.chat, 0.4)
         await update.message.reply_text("You're already on Pro. You've got unlimited everything.")
         return
 
@@ -47,6 +49,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 web_app=WebAppInfo(url=subscribe_url),
             )
         ]])
+        await typing_pause(update.message.chat, 0.8)
         await update.message.reply_text(
             "Zoe Pro \u2014 $9.99/mo\n\n"
             "Unlimited AI conversations, fitness coaching, workout programming, "
@@ -99,6 +102,7 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         if user:
             context.user_data["db_user"] = user
 
+        await typing_pause(update.message.chat, 1.0)
         await update.message.reply_text(
             "You're on Pro now. Unlimited everything \u2014 AI conversations, fitness coaching, "
             "peptide tracking, bloodwork intelligence, WHOOP integration, morning briefings, all of it.\n\n"
@@ -108,6 +112,7 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
 
 async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show terms of service (required by Telegram for payments)."""
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(
         "Terms of Service\n\n"
         "Your data is stored securely and only used to run the service. "
@@ -119,6 +124,7 @@ async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show support info (required by Telegram for payments)."""
+    await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(
         "Need help? Type /help to see all commands.\n\n"
         "For billing or refunds, just describe the issue here and I'll get it sorted.\n\n"

@@ -7,6 +7,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from bot.services import user_service, fitness_service
+from bot.utils import typing_pause_bot
 
 # Railway domain for Mini App timer URL
 _RAILWAY_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
@@ -449,6 +450,7 @@ async def _rest_timer_callback(context: ContextTypes.DEFAULT_TYPE):
     _rest_state.pop(session_id, None)
 
     # Send notification
+    await typing_pause_bot(context.bot, chat_id, 0.4)
     await context.bot.send_message(
         chat_id=chat_id,
         text="\u23f0 Time's up. Next set.",

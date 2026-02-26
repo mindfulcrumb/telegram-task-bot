@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from bot.services import user_service, task_service
 from bot.services import coaching_service
+from bot.utils import typing_pause_bot
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ async def morning_briefing_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_briefing(user, tasks, streak, patterns)
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -75,6 +77,7 @@ async def evening_check_in_job(context: ContextTypes.DEFAULT_TYPE):
             lines.append("\nReply with the numbers you knocked out, or just say 'none'.")
             text = "\n".join(lines)
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.8)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -109,6 +112,7 @@ async def daily_assessment_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_daily_assessment(user)
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -165,6 +169,7 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"\"{t['title']}\" \u2014 high priority, no due date")
             lines.append("\nWant me to help with any of these?")
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text="\n".join(lines),
@@ -200,6 +205,7 @@ async def weekly_insights_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_weekly_insight(user, stats)
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -318,6 +324,7 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
             text += "\n\nJust say 'took my BPC' or 'took supplements' to log it."
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -380,6 +387,7 @@ async def workout_reminder_job(context: ContextTypes.DEFAULT_TYPE):
                 "Got your gym bag ready?"
             )
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.8)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -416,6 +424,7 @@ async def weekly_fitness_report_job(context: ContextTypes.DEFAULT_TYPE):
 
             text = _generate_weekly_fitness_report(user, summary, workouts_this_week)
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
@@ -472,6 +481,7 @@ async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
                 "Want me to give you something quick?"
             )
 
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
                 text=text,
