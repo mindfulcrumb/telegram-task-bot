@@ -381,23 +381,20 @@ async def handle_workout_session_callback(update: Update, context: ContextTypes.
         streak = fitness_service.get_workout_streak(user["id"])
         ws = streak.get("current_streak", 0)
 
-        lines = ["\U0001f3c1 *Workout complete!*\n"]
+        lines = ["\U0001f3c1 Workout complete\n"]
         lines.append(f"{session['title']} \u2014 {duration} min")
         if ws > 1:
-            lines.append(f"\U0001f525 {ws}-session streak")
+            lines.append(f"{ws}-session streak \U0001f525")
         if prs:
             for p in prs:
-                lines.append(f"\U0001f3c6 PR: {p['exercise']} {p['new_weight']}kg")
+                lines.append(f"PR: {p['exercise']} {p['new_weight']}kg")
         lines.append("\nLogged and tracked. Nice work.")
 
         # Edit the card to show summary (replace the exercise card)
         try:
-            await query.edit_message_text(
-                "\n".join(lines),
-                parse_mode="Markdown",
-            )
+            await query.edit_message_text("\n".join(lines))
         except Exception:
-            await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            await query.message.reply_text("\n".join(lines))
 
     else:
         await query.answer()
@@ -454,8 +451,7 @@ async def _rest_timer_callback(context: ContextTypes.DEFAULT_TYPE):
     # Send notification
     await context.bot.send_message(
         chat_id=chat_id,
-        text="\u23f0 *Time's up!* Next set.",
-        parse_mode="Markdown",
+        text="\u23f0 Time's up. Next set.",
     )
 
     # Re-render the card to remove rest indicator

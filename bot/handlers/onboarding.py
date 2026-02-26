@@ -95,9 +95,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=referrer_id,
-                        text=f"*{tg_user.first_name}* just joined Zoe through your referral link! "
+                        text=f"{tg_user.first_name} just joined through your referral link. "
                              f"You earned {referral_service.BONUS_MESSAGES_PER_REFERRAL} bonus messages.",
-                        parse_mode="Markdown",
                     )
                 except Exception:
                     pass  # Referrer may have blocked the bot
@@ -177,14 +176,12 @@ async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tier_text = f"You've earned {stats['current_tier']['reward']}!"
 
     await update.message.reply_text(
-        "*Your Referral Stats*\n\n"
-        f"Friends referred: *{stats['total_referrals']}*\n"
-        f"Bonus messages earned: *{stats['bonus_messages']}*\n\n"
+        f"Friends referred: {stats['total_referrals']}\n"
+        f"Bonus messages earned: {stats['bonus_messages']}\n\n"
         f"{tier_text}\n\n"
-        f"*Your referral link:*\n"
-        f"`{stats['referral_link']}`\n\n"
-        "Share this link — you both benefit!",
-        parse_mode="Markdown",
+        f"Your link:\n"
+        f"{stats['referral_link']}\n\n"
+        "Share it around — you both get something out of it.",
     )
 
 
@@ -269,12 +266,12 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
             by_category[cat] = []
         by_category[cat].append(m["content"])
 
-    lines = [f"*What I know about you* ({len(memories)} memories)\n"]
+    lines = [f"Here's what I know about you ({len(memories)} memories)\n"]
     for cat, items in by_category.items():
         label = CATEGORY_LABELS.get(cat, cat.title())
-        lines.append(f"*{label}:*")
+        lines.append(f"{label}:")
         for item in items:
-            lines.append(f"  - {item}")
+            lines.append(f"  {item}")
         lines.append("")
 
     lines.append(
@@ -282,7 +279,7 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "To clear everything: /memory clear"
     )
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 # ── Contact handler (phone verification) ─────────────────────────────
@@ -734,28 +731,27 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
         user["timezone"] = tz_value
         context.user_data["db_user"] = user
         short_name = tz_value.split("/")[-1].replace("_", " ")
-        await query.message.edit_text(f"Timezone set to {short_name}. You're all set!")
+        await query.message.edit_text(f"Timezone set to {short_name}. Good to go.")
         return
 
     if query.data == "show_help":
         await query.message.reply_text(
-            "Just talk to me, send a voice note, or use commands:\n\n"
-            "*Tasks*\n"
-            "/add \u2014 Add a task\n"
-            "/list \u2014 All your tasks\n"
-            "/today \u2014 Due today\n"
-            "/done \u2014 Mark complete\n\n"
-            "*Fitness & Biohacking*\n"
-            "/workout \u2014 Log a workout\n"
-            "/gains \u2014 Streak, PRs & patterns\n"
-            "/protocols \u2014 Peptide protocols\n"
-            "/supplements \u2014 Supplement stack\n"
+            "Just talk to me, send a voice note, or use commands.\n\n"
+            "TASKS\n"
+            "/add \u2014 add a task\n"
+            "/list \u2014 all your tasks\n"
+            "/today \u2014 due today\n"
+            "/done \u2014 mark complete\n\n"
+            "FITNESS & BIOHACKING\n"
+            "/workout \u2014 log a workout\n"
+            "/gains \u2014 streak, PRs & patterns\n"
+            "/protocols \u2014 peptide protocols\n"
+            "/supplements \u2014 supplement stack\n"
             "/recovery \u2014 WHOOP recovery score\n\n"
-            "*Account*\n"
-            "/settings \u2014 Timezone & preferences\n"
-            "/upgrade \u2014 Unlock Zoe Pro\n\n"
+            "ACCOUNT\n"
+            "/settings \u2014 timezone & preferences\n"
+            "/upgrade \u2014 unlock Zoe Pro\n\n"
             "Type /help for the full list.",
-            parse_mode="Markdown"
         )
     elif query.data == "show_calendar":
         await query.message.reply_text(
@@ -768,32 +764,12 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
         )
     elif query.data == "show_capabilities":
         await query.message.reply_text(
-            "Here's what I can do:\n\n"
-            "*Tasks & Productivity*\n"
-            "- Manage tasks naturally (just tell me)\n"
-            "- Set reminders, recurring tasks, scheduling\n"
-            "- Voice messages, Google Calendar sync\n\n"
-            "*Fitness & Training*\n"
-            "- Log workouts with sets/reps/weight\n"
-            "- Track movement pattern balance (push/pull/squat/hinge)\n"
-            "- Progressive overload, PR detection, workout streaks\n"
-            "- Program your training based on your history\n\n"
-            "*Biohacking (Pro)*\n"
-            "- Peptide protocol tracking & dose logging\n"
-            "- Supplement stack management & adherence\n"
-            "- Bloodwork logging with biomarker trends\n\n"
-            "*WHOOP Integration (Pro)*\n"
-            "- Recovery-based training recommendations\n"
-            "- HRV, sleep, and strain tracking\n"
-            "- Recovery + protocols + bloodwork connected\n\n"
-            "*With Zoe Pro:*\n"
-            "- AI workout programming & fitness coaching\n"
-            "- Peptide, supplement & bloodwork intelligence\n"
-            "- WHOOP-powered recovery coaching\n"
-            "- Morning briefings & weekly reports\n"
-            "- Unlimited everything\n\n"
-            "Just start talking to me \u2014 I'll figure out the rest.",
-            parse_mode="Markdown"
+            "Short version \u2014 I handle fitness, tasks, and biohacking.\n\n"
+            "TASKS: manage tasks, set reminders, sync Google Calendar, voice messages\n\n"
+            "FITNESS: log workouts, track movement patterns, detect PRs, program training based on your history\n\n"
+            "BIOHACKING (Pro): peptide protocols, supplement tracking, bloodwork with biomarker trends\n\n"
+            "WHOOP (Pro): recovery-based training, HRV + sleep + strain tracking, connects everything together\n\n"
+            "Just talk to me and I'll figure out the rest.",
         )
 
 
@@ -803,39 +779,35 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await update.message.reply_text(
         "I'm Zoe \u2014 your AI performance coach.\n\n"
-        "Talk to me naturally, send a voice note, or use commands:\n\n"
-        "*Tasks*\n"
-        "/add \u2014 Add a task\n"
-        "/list \u2014 All your tasks\n"
-        "/today \u2014 Due today\n"
-        "/done \u2014 Mark complete\n"
-        "/streak \u2014 Completion streak\n\n"
-        "*Fitness*\n"
-        "/workout \u2014 Log a workout\n"
-        "/gains \u2014 Streak, PRs & pattern balance\n"
-        "/metrics \u2014 Body metrics\n\n"
-        "*Biohacking*\n"
-        "/protocols \u2014 Active peptide protocols\n"
-        "/supplements \u2014 Supplement stack\n"
-        "/bloodwork \u2014 Latest bloodwork\n"
-        "/dose \u2014 Log a peptide dose\n\n"
-        "*WHOOP*\n"
-        "/connect\\_whoop \u2014 Link your WHOOP\n"
-        "/recovery \u2014 Today's recovery score\n"
-        "/whoop \u2014 Full WHOOP dashboard\n\n"
-        "Just tell me naturally:\n"
-        '  "Did bench 4x8 at 75kg, rows 4x10"\n'
-        '  "Took my BPC-157"\n'
-        '  "What should I train today?"\n'
-        '  "My testosterone came back at 650"\n\n'
-        "*Account*\n"
-        "/memory \u2014 What Zoe knows about you\n"
-        "/settings \u2014 Timezone & preferences\n"
-        "/upgrade \u2014 Unlock Zoe Pro\n"
-        "/support \u2014 Get help\n\n"
-        "*Zoe Pro* \u2014 AI fitness coaching, peptide tracking, "
-        "WHOOP integration, bloodwork intelligence, morning briefings, unlimited everything",
-        parse_mode="Markdown"
+        "Talk to me naturally, send a voice note, or use commands.\n\n"
+        "TASKS\n"
+        "/add \u2014 add a task\n"
+        "/list \u2014 all your tasks\n"
+        "/today \u2014 due today\n"
+        "/done \u2014 mark complete\n"
+        "/streak \u2014 completion streak\n\n"
+        "FITNESS\n"
+        "/workout \u2014 log a workout\n"
+        "/gains \u2014 streak, PRs & pattern balance\n"
+        "/metrics \u2014 body metrics\n\n"
+        "BIOHACKING\n"
+        "/protocols \u2014 active peptide protocols\n"
+        "/supplements \u2014 supplement stack\n"
+        "/bloodwork \u2014 latest bloodwork\n"
+        "/dose \u2014 log a peptide dose\n\n"
+        "WHOOP\n"
+        "/connect_whoop \u2014 link your WHOOP\n"
+        "/recovery \u2014 today's recovery score\n"
+        "/whoop \u2014 full dashboard\n\n"
+        "Or just tell me naturally:\n"
+        '  "bench 4x8 at 75kg, rows 4x10"\n'
+        '  "took my BPC-157"\n'
+        '  "what should I train today?"\n\n'
+        "ACCOUNT\n"
+        "/memory \u2014 what I know about you\n"
+        "/settings \u2014 timezone & preferences\n"
+        "/upgrade \u2014 unlock Zoe Pro\n"
+        "/support \u2014 get help",
     )
 
 
@@ -919,8 +891,8 @@ async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_service.delete_user(user["id"])
         context.user_data.clear()
         await update.message.reply_text(
-            "Your account and all data have been permanently deleted. "
-            "If you ever want to come back, just /start again."
+            "Done. Everything's been wiped \u2014 account, tasks, all of it. "
+            "If you ever wanna come back, just /start again."
         )
     else:
         context.user_data["confirm_delete"] = True
@@ -1052,8 +1024,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Normal (non-onboarding) location handling
     await update.message.reply_text(
-        f"Got it! Timezone set to {short_name} ({tz}).\n"
-        "Reminders and briefings will use this timezone.",
+        f"Timezone set to {short_name}. I'll use that for reminders and briefings.",
         reply_markup=ReplyKeyboardRemove(),
     )
 

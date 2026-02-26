@@ -337,14 +337,14 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last = streak.get("last_completion_date")
 
     if current == 0:
-        text = "No active streak yet. Complete a task to start one!"
+        text = "No streak going yet. Complete a task to start one."
     else:
         text = (
-            f"\U0001f525 **Current streak: {current} day{'s' if current != 1 else ''}**\n"
-            f"\U0001f3c6 Best ever: {longest} day{'s' if longest != 1 else ''}\n"
+            f"Current streak: {current} day{'s' if current != 1 else ''} \U0001f525\n"
+            f"Best ever: {longest} day{'s' if longest != 1 else ''}\n"
             f"Last completed: {last.strftime('%b %d') if last else 'never'}"
         )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -386,16 +386,16 @@ async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot.services import fitness_service
     metrics = fitness_service.get_latest_metrics(user["id"])
     if not metrics:
-        await update.message.reply_text("No body metrics yet. Tell me your weight, body fat, or 1RMs!")
+        await update.message.reply_text("No body metrics yet. Tell me your weight, body fat, or 1RMs.")
         return
-    lines = ["\U0001f4ca **Body Metrics**\n"]
+    lines = []
     for metric_type, data in metrics.items():
         label = metric_type.replace("_", " ").title()
         unit = data.get("unit", "")
         val = data["value"]
         date_str = data["recorded_at"].strftime("%b %d") if data.get("recorded_at") else ""
         lines.append(f"{label}: {val}{unit} ({date_str})")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -413,13 +413,13 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = streak.get("current_streak", 0)
     longest = streak.get("longest_streak", 0)
     if current > 0:
-        lines.append(f"\U0001f525 **Workout streak: {current}** (best: {longest})")
+        lines.append(f"Workout streak: {current} (best: {longest}) \U0001f525")
     else:
-        lines.append("No active workout streak. Log a workout to start one!")
+        lines.append("No workout streak going. Log a session to start one.")
 
     # Pattern balance
     if patterns:
-        lines.append("\n\U0001f4ca **Pattern Balance (14d):**")
+        lines.append("\nPattern Balance (14d):")
         pattern_labels = {
             "horizontal_push": "Push (horiz)",
             "horizontal_pull": "Pull (horiz)",
@@ -436,11 +436,11 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # PRs
     if prs:
-        lines.append("\n\U0001f3c6 **Recent PRs:**")
+        lines.append("\nRecent PRs:")
         for p in prs[:5]:
             lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -450,23 +450,23 @@ async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
     protocols = biohacking_service.get_protocol_summary(user["id"])
     if not protocols:
         await update.message.reply_text(
-            "No active peptide protocols.\n\n"
-            "Tell me naturally to start one:\n"
+            "No active protocols.\n\n"
+            "Just tell me naturally to start one:\n"
             '"Starting BPC-157, 250mcg twice a day for 6 weeks"'
         )
         return
-    lines = ["\U0001f9ea **Active Protocols**\n"]
+    lines = ["Active Protocols\n"]
     for p in protocols:
         dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
         freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
-        line = f"**{p['peptide_name']}**: {dose_str}{freq_str}"
+        line = f"{p['peptide_name']}: {dose_str}{freq_str}"
         if p.get("cycle_day") is not None:
             line += f"\n  Day {p['cycle_day']}/{p['cycle_total']}"
             if p.get("days_remaining") is not None:
                 line += f" ({p['days_remaining']}d remaining)"
         line += f"\n  Doses (7d): {p.get('doses_last_7d', 0)}"
         lines.append(line)
-    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n\n".join(lines))
 
 
 async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -476,21 +476,21 @@ async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     supps = biohacking_service.get_active_supplements(user["id"])
     if not supps:
         await update.message.reply_text(
-            "No supplements in your stack.\n\n"
+            "Nothing in your stack yet.\n\n"
             "Tell me what you take:\n"
-            '"I take creatine 5g daily, vitamin D 5000IU with breakfast"'
+            '"creatine 5g daily, vitamin D 5000IU with breakfast"'
         )
         return
-    lines = ["\U0001f48a **Supplement Stack**\n"]
+    lines = ["Your Stack\n"]
     for s in supps:
         dose_str = f"{s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
         timing_str = f" ({s['timing']})" if s.get("timing") else ""
-        lines.append(f"- {s['supplement_name']}: {dose_str}{timing_str}")
+        lines.append(f"  {s['supplement_name']}: {dose_str}{timing_str}")
     # Adherence
     adherence = biohacking_service.get_supplement_adherence(user["id"], days=7)
     if adherence["overall_rate"] > 0:
         lines.append(f"\n7-day adherence: {adherence['overall_rate']}%")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -502,13 +502,13 @@ async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "No bloodwork logged yet.\n\n"
             "Tell me your results:\n"
-            '"My testosterone came back at 650 ng/dL, vitamin D at 45 ng/mL"'
+            '"testosterone came back at 650 ng/dL, vitamin D at 45 ng/mL"'
         )
         return
     panel = enriched["panel"]
     date_str = panel["test_date"].isoformat() if panel.get("test_date") else "?"
     lab_str = f" ({panel['lab_name']})" if panel.get("lab_name") else ""
-    lines = [f"\U0001fa78 **Bloodwork** \u2014 {date_str}{lab_str}\n"]
+    lines = [f"Bloodwork \u2014 {date_str}{lab_str}\n"]
 
     for m in enriched["markers"]:
         unit_str = f" {m['unit']}" if m.get("unit") else ""
@@ -541,7 +541,7 @@ async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 arrow = "\u25b2" if change > 0 else "\u25bc"
                 trend_str = f" {arrow}{abs(change):.0f}"
 
-        lines.append(f"- {m['marker_name']}: **{m['value']}**{unit_str}{range_str}{status_icon}{trend_str}")
+        lines.append(f"  {m['marker_name']}: {m['value']}{unit_str}{range_str}{status_icon}{trend_str}")
 
     # Summary footer
     flagged = enriched["flagged_count"]
@@ -557,7 +557,7 @@ async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if protocol_names:
             lines.append(f"Active protocols: {', '.join(protocol_names)}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -593,13 +593,13 @@ async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not whoop_service.is_configured():
         await update.message.reply_text(
-            "WHOOP integration is coming soon! Stay tuned."
+            "WHOOP integration isn't live yet \u2014 it's coming."
         )
         return
 
     if whoop_service.is_connected(user["id"]):
         await update.message.reply_text(
-            "Your WHOOP is already connected! Use /recovery to see your data."
+            "Already connected. Use /recovery to see your data."
         )
         return
 
@@ -609,12 +609,12 @@ async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Connect WHOOP", url=url)]
         ])
         await update.message.reply_text(
-            "Unlock recovery-based training by connecting your WHOOP.\n\n"
-            "Tap the button below, log in, and authorize Zoe.",
+            "Connect your WHOOP and I'll use your recovery data to guide training intensity.\n\n"
+            "Tap below, log in, and authorize.",
             reply_markup=keyboard,
         )
     else:
-        await update.message.reply_text("Couldn't generate WHOOP link. Try again later.")
+        await update.message.reply_text("Couldn't generate the link. Try again in a bit.")
 
 
 async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -829,7 +829,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await send_current_exercise(chat, context, pending_session_id)
 
     elif query.data == "whoop_log":
-        await chat.send_message("What did you do? e.g. 'Push day — bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
+        await chat.send_message("What'd you do? e.g. 'push day \u2014 bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
 
     elif query.data == "whoop_dashboard":
         # Trigger the full dashboard inline
@@ -855,7 +855,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         zone = whoop_service.get_recovery_zone(recovery)
         zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
 
-        lines = [f"**WHOOP Dashboard**\n"]
+        lines = [f"WHOOP Dashboard\n"]
         lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
         if data.get("hrv_rmssd") is not None:
             lines.append(f"HRV: {data['hrv_rmssd']}ms")
@@ -875,7 +875,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"Strain: {data['daily_strain']}")
 
         if trends and trends.get("days", 0) > 2:
-            lines.append("\n**7-Day Trends:**")
+            lines.append("\n7-Day Trends:")
             if trends.get("recovery_avg") is not None:
                 arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
                     trends.get("recovery_trend", ""), "")
@@ -896,7 +896,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             ],
         ])
 
-        await chat.send_message("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
+        await chat.send_message("\n".join(lines), reply_markup=keyboard)
 
 
 async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

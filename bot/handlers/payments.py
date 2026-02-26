@@ -34,7 +34,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await _ensure_user(update, context)
 
     if user.get("tier") == "pro":
-        await update.message.reply_text("You're already on Pro! Enjoy unlimited everything.")
+        await update.message.reply_text("You're already on Pro. You've got unlimited everything.")
         return
 
     if not STRIPE_PROVIDER_TOKEN:
@@ -48,15 +48,11 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ]])
         await update.message.reply_text(
-            "Upgrade to Zoe Pro for unlimited access:\n\n"
-            "- Unlimited AI conversations\n"
-            "- AI fitness coaching & workout programming\n"
-            "- Peptide protocol tracking & dose intelligence\n"
-            "- Supplement stack management & adherence\n"
-            "- Bloodwork intelligence & biomarker trends\n"
-            "- WHOOP integration & recovery coaching\n"
-            "- Personalized morning briefings\n"
-            "- Smart reminders & weekly reports",
+            "Zoe Pro \u2014 $9.99/mo\n\n"
+            "Unlimited AI conversations, fitness coaching, workout programming, "
+            "peptide tracking, supplement management, bloodwork intelligence, "
+            "WHOOP integration, morning briefings, and weekly reports.\n\n"
+            "Basically everything, no limits.",
             reply_markup=keyboard,
         )
         return
@@ -104,38 +100,27 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
             context.user_data["db_user"] = user
 
         await update.message.reply_text(
-            "Welcome to Zoe Pro! Here's what you unlocked:\n\n"
-            "- Unlimited tasks & AI conversations\n"
-            "- AI fitness coaching & workout programming\n"
-            "- Peptide protocol tracking & dose intelligence\n"
-            "- Supplement stack management & adherence\n"
-            "- Bloodwork intelligence & biomarker trends\n"
-            "- WHOOP integration & recovery coaching\n"
-            "- Personalized morning briefings\n"
-            "- Smart reminders & weekly reports\n\n"
-            "I'll start learning your patterns and coaching you proactively. "
-            "Thanks for trusting me with your training and your protocols."
+            "You're on Pro now. Unlimited everything \u2014 AI conversations, fitness coaching, "
+            "peptide tracking, bloodwork intelligence, WHOOP integration, morning briefings, all of it.\n\n"
+            "I'll start learning your patterns and coaching you proactively. Let's go."
         )
 
 
 async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show terms of service (required by Telegram for payments)."""
     await update.message.reply_text(
-        "Zoe — Terms of Service\n\n"
-        "By using Zoe, you agree to:\n"
-        "- Your data is stored securely and used only to provide the service\n"
-        "- Free tier has usage limits; Zoe Pro removes them\n"
-        "- You can delete your account and all data anytime with /deleteaccount\n"
-        "- Payments are processed securely through Stripe\n"
-        "- Refunds available within 7 days of purchase via /support"
+        "Terms of Service\n\n"
+        "Your data is stored securely and only used to run the service. "
+        "Free tier has usage limits, Pro removes them. "
+        "You can delete your account and all data anytime with /deleteaccount. "
+        "Payments go through Stripe. Refunds available within 7 days via /support."
     )
 
 
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show support info (required by Telegram for payments)."""
     await update.message.reply_text(
-        "Need help?\n\n"
-        "- Type /help to see all commands\n"
-        "- For billing issues or refunds, describe your issue here and we'll get back to you\n"
-        "- To delete your account: /deleteaccount"
+        "Need help? Type /help to see all commands.\n\n"
+        "For billing or refunds, just describe the issue here and I'll get it sorted.\n\n"
+        "To delete your account: /deleteaccount"
     )

@@ -69,10 +69,10 @@ async def evening_check_in_job(context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             name = user.get("first_name", "friend")
-            lines = [f"Hey {name}, quick check-in:\n"]
+            lines = [f"Hey {name}, quick check-in.\n"]
             for i, t in enumerate(pending[:5], 1):
-                lines.append(f"{i}. {t['title']} \u2014 did you finish this?")
-            lines.append("\nJust reply with the numbers you completed, or say 'none'.")
+                lines.append(f"{i}. {t['title']} \u2014 done?")
+            lines.append("\nReply with the numbers you knocked out, or just say 'none'.")
             text = "\n".join(lines)
 
             await context.bot.send_message(
@@ -156,13 +156,13 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
             if not nudges:
                 continue
 
-            lines = ["Hey, quick thought:\n"]
+            lines = ["Quick thought:\n"]
             for t, ntype in nudges:
                 if ntype == "overdue":
                     days = (today_d - t["due_date"]).days
-                    lines.append(f"\U0001f534 \"{t['title']}\" is {days} days overdue")
+                    lines.append(f"\"{t['title']}\" \u2014 {days} days overdue")
                 elif ntype == "no_due_date":
-                    lines.append(f"\u26a1 \"{t['title']}\" is high priority but has no due date")
+                    lines.append(f"\"{t['title']}\" \u2014 high priority, no due date")
             lines.append("\nWant me to help with any of these?")
 
             await context.bot.send_message(
@@ -310,11 +310,11 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
             name = user.get("first_name", "friend")
             if hour == 8:
-                text = f"Morning {name} \u2615 Time for:\n" + "\n".join(f"  {r}" for r in reminders)
+                text = f"Morning, {name}. Time for:\n" + "\n".join(f"  {r}" for r in reminders)
             elif hour == 20:
-                text = f"Evening dose check, {name}:\n" + "\n".join(f"  {r}" for r in reminders)
+                text = f"Evening doses, {name}:\n" + "\n".join(f"  {r}" for r in reminders)
             else:
-                text = f"Dose reminder:\n" + "\n".join(f"  {r}" for r in reminders)
+                text = f"Dose check:\n" + "\n".join(f"  {r}" for r in reminders)
 
             text += "\n\nJust say 'took my BPC' or 'took supplements' to log it."
 
@@ -780,16 +780,16 @@ def _template_briefing(user, tasks):
     due_today = sum(1 for t in tasks if t.get("due_date") and t["due_date"] == today_d)
     high = sum(1 for t in tasks if t.get("priority") == "High")
 
-    lines = [f"Good morning, {name}!\n"]
-    lines.append(f"You have {total} active tasks.")
+    lines = [f"Morning, {name}.\n"]
+    lines.append(f"{total} active tasks.")
     if overdue:
-        lines.append(f"\U0001f534 {overdue} overdue")
+        lines.append(f"{overdue} overdue")
     if due_today:
-        lines.append(f"\U0001f4c5 {due_today} due today")
+        lines.append(f"{due_today} due today")
     if high:
-        lines.append(f"\u26a1 {high} high priority")
+        lines.append(f"{high} high priority")
     if tasks:
-        lines.append(f"\nStart with: {tasks[0]['title']}")
+        lines.append(f"\nI'd start with: {tasks[0]['title']}")
     lines.append("\nWhat are you tackling first?")
     return "\n".join(lines)
 
@@ -903,27 +903,27 @@ def _template_daily_assessment(user):
     lines = [f"Day wrap, {name}.\n"]
     completed = daily["completed_today"]
     if completed > 0:
-        lines.append(f"\u2705 {completed} task{'s' if completed != 1 else ''} completed")
+        lines.append(f"{completed} task{'s' if completed != 1 else ''} completed")
     else:
         lines.append("No tasks completed today.")
 
     due_total = daily["due_today_total"]
     due_done = daily["due_today_done"]
     if due_total > 0:
-        lines.append(f"\U0001f4c5 {due_done}/{due_total} due-today tasks done")
+        lines.append(f"{due_done}/{due_total} due-today tasks done")
 
     overdue = daily["overdue"]
     if overdue > 0:
-        lines.append(f"\U0001f534 {overdue} still overdue")
+        lines.append(f"{overdue} still overdue")
 
     try:
         from bot.services import fitness_service
         if fitness_service.has_workout_today(user["id"]):
-            lines.append("\U0001f4aa Got a workout in")
+            lines.append("Got a workout in too.")
     except Exception:
         pass
 
-    lines.append("\nRest up. Tomorrow's a new day.")
+    lines.append("\nRest up. Tomorrow's a fresh start.")
     return "\n".join(lines)
 
 
@@ -963,11 +963,11 @@ def _generate_weekly_insight(user, stats):
     trend = f"up {diff}" if diff > 0 else f"down {abs(diff)}" if diff < 0 else "same as"
 
     return (
-        f"Weekly recap, {name}!\n\n"
-        f"You completed {this_w} tasks this week ({trend} last week).\n"
+        f"Weekly recap, {name}.\n\n"
+        f"{this_w} tasks completed ({trend} last week).\n"
         f"Most productive day: {stats.get('most_productive_day', 'varies')}\n"
         f"Currently overdue: {stats.get('current_overdue', 0)}\n\n"
-        "Keep it up!"
+        "Solid week. Let's build on it."
     )
 
 
@@ -1050,7 +1050,7 @@ def _template_weekly_fitness(user, summary, workouts_this_week):
     profile = summary.get("profile")
     target = profile.get("training_days_per_week", 3) if profile else 3
 
-    lines = [f"Weekly fitness recap, {name}!\n"]
+    lines = [f"Weekly fitness recap, {name}.\n"]
     lines.append(f"Workouts: {len(workouts_this_week)} this week (target: {target})")
 
     if streak.get("current_streak", 0) > 0:
@@ -1076,5 +1076,5 @@ def _template_weekly_fitness(user, summary, workouts_this_week):
         for p in prs[:3]:
             lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
 
-    lines.append("\nKeep building next week!")
+    lines.append("\nLet's build on this next week.")
     return "\n".join(lines)
