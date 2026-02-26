@@ -307,16 +307,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _typing_pause(chat, 1.0)
 
+    await _typing_pause(chat, 0.8)
+    await update.message.reply_text(
+        "I'm here to bring a little calm to the chaos \u2014 training, "
+        "tasks, health tracking, all of it."
+    )
+
+    await _typing_pause(chat, 0.7)
+    await update.message.reply_text(
+        "Quick heads up \u2014 I educate and track, but I'm not a doctor. "
+        "Always check with yours before starting something new."
+    )
+
+    await _typing_pause(chat, 0.6)
+
     if whatsapp_service.is_configured():
         # WhatsApp OTP verification
         context.user_data["ob"]["otp_phase"] = "awaiting_phone"
         await update.message.reply_text(
-            "I handle training, tasks, reminders, biohacking \u2014 pretty much "
-            "everything you'd want a personal coach to track. "
-            "Quick heads up though \u2014 I educate and track, but I'm not a doctor. "
-            "Always check with yours before starting something new.\n\n"
-            "To get started, type your phone number with country code.\n"
-            "Example: +351912345678",
+            "To get started, drop your phone number with country code.\n"
+            "Something like +351912345678.",
         )
     else:
         # Fallback: Telegram contact sharing (dev/testing without Twilio)
@@ -326,10 +336,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resize_keyboard=True,
         )
         await update.message.reply_text(
-            "I handle training, tasks, reminders, biohacking \u2014 pretty much "
-            "everything you'd want a personal coach to track. "
-            "Quick heads up though \u2014 I educate and track, but I'm not a doctor. "
-            "Always check with yours before starting something new.\n\n"
             "Share your number so I know who you are.",
             reply_markup=phone_keyboard,
         )
@@ -981,7 +987,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available commands."""
     await _typing_pause(update.message.chat, 0.7)
     await update.message.reply_text(
-        "I'm Zoe \u2014 your AI performance coach.\n\n"
+        "I'm Zoe \u2014 your personal coach.\n\n"
         "Talk to me naturally, send a voice note, or use commands.\n\n"
         "TASKS\n"
         "/add \u2014 add a task\n"
@@ -1072,12 +1078,12 @@ async def cmd_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Account: {user.get('first_name', 'User')}\n"
         f"Tier: {tier.title()}\n"
         f"Active tasks: {task_str}\n"
-        f"AI messages today: {ai_str}\n"
+        f"Messages today: {ai_str}\n"
         f"Member since: {user['created_at'].strftime('%b %d, %Y')}"
     )
 
     if tier == "free":
-        text += "\n\nWant unlimited tasks and AI? /upgrade"
+        text += "\n\nWant unlimited everything? /upgrade"
 
     await _typing_pause(update.message.chat, 0.7)
     await update.message.reply_text(text)

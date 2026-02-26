@@ -59,7 +59,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await typing_pause(update.message.chat, 0.8)
         await update.message.reply_text(
             "Zoe Pro — $9.99/mo\n\n"
-            "→ Unlimited AI conversations\n"
+            "→ Unlimited conversations\n"
             "→ Unlimited tasks and reminders\n"
             "→ Morning briefings and weekly insights\n"
             "→ Fitness coaching and workout programming\n"
@@ -72,7 +72,7 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="Zoe Pro",
-        description="AI fitness coaching, peptide tracking, WHOOP integration, bloodwork intelligence, unlimited tasks & conversations, morning briefings, and weekly reports.",
+        description="Fitness coaching, peptide tracking, WHOOP integration, bloodwork intelligence, unlimited tasks & conversations, morning briefings, and weekly reports.",
         payload=f"pro_upgrade_{user['id']}",
         provider_token=STRIPE_PROVIDER_TOKEN,
         currency=PRO_CURRENCY,

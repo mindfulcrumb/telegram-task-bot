@@ -316,15 +316,15 @@ async def _post_init(application):
     try:
         await bot.set_my_description(
             description=(
-                "Zoe is your AI performance coach \u2014 she manages your tasks, "
-                "programs your training, tracks your protocols, and keeps everything moving.\n\n"
+                "Zoe manages your tasks, programs your training, "
+                "tracks your protocols, and keeps everything moving.\n\n"
                 "Talk naturally, send voice notes, or use commands. Tap Start to begin.\n\n"
                 "Zoe provides educational wellness information only \u2014 not medical advice. "
                 "Always consult a healthcare professional before starting any new protocol."
             )
         )
         await bot.set_my_short_description(
-            short_description="AI coach for training, tasks, and biohacking."
+            short_description="Your coach for training, tasks, and biohacking."
         )
         logger.info("Bot description and short description set")
     except Exception as e:
