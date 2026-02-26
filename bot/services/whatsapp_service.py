@@ -44,9 +44,6 @@ async def send_otp(phone: str, code: str) -> bool:
         logger.error(_last_error)
         return False
 
-    # Ensure From number has + prefix
-    from_num = _WHATSAPP_FROM if _WHATSAPP_FROM.startswith("+") else f"+{_WHATSAPP_FROM}"
-
     url = f"https://api.twilio.com/2010-04-01/Accounts/{_ACCOUNT_SID}/Messages.json"
 
     try:
@@ -55,9 +52,8 @@ async def send_otp(phone: str, code: str) -> bool:
                 url,
                 auth=(_ACCOUNT_SID, _AUTH_TOKEN),
                 data={
-                    "From": f"whatsapp:{from_num}",
-                    "To": f"whatsapp:{phone}",
                     "MessagingServiceSid": _MESSAGING_SERVICE_SID,
+                    "To": f"whatsapp:{phone}",
                     "ContentSid": _CONTENT_SID,
                     "ContentVariables": f'{{"1":"{code}"}}',
                 },
