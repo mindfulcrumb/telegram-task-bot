@@ -1305,16 +1305,23 @@ def _timezone_from_coords(lat: float, lon: float) -> str:
 # ── Helper ────────────────────────────────────────────────────────────
 
 async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict | None:
-    """Get the DB user from context or create one. Returns user dict."""
-    user = context.user_data.get("db_user")
-    if user:
-        return user
+    """Get the DB user from context or create one.
 
-    tg_user = update.effective_user
-    user = user_service.get_or_create_user(
-        telegram_user_id=tg_user.id,
-        username=tg_user.username,
-        first_name=tg_user.first_name,
-    )
-    context.user_data["db_user"] = user
+    Returns None (and sends a message) if onboarding isn't complete.
+    """
+    user = context.user_data.get("db_user")
+    if not user:
+        tg_user = update.effective_user
+        user = user_service.get_or_create_user(
+            telegram_user_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        context.user_data["db_user"] = user
+
+    if not user.get("onboarding_completed"):
+        await update.message.reply_text(
+            "You need to verify your phone number first. Type /start to begin."
+        )
+        return None
     return user

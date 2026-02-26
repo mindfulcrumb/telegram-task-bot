@@ -129,20 +129,31 @@ async def _send_human(update: Update, text: str, add_feedback: bool = False):
         await update.message.reply_text(chunk, reply_markup=markup)
 
 
-async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict:
-    """Get or create user from Telegram update."""
+async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    """Get or create user from Telegram update.
+
+    Returns None (and sends a message) if the user hasn't completed
+    onboarding/phone verification — this blocks ALL bot functionality.
+    """
     user = context.user_data.get("db_user")
-    if user:
-        return user
-    tg = update.effective_user
-    user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-    context.user_data["db_user"] = user
+    if not user:
+        tg = update.effective_user
+        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+        context.user_data["db_user"] = user
+
+    if not user.get("onboarding_completed"):
+        await update.message.reply_text(
+            "You need to verify your phone number first. Type /start to begin."
+        )
+        return None
     return user
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /add command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     text = " ".join(context.args) if context.args else ""
     if not text:
         await update.message.reply_text("What's the task? e.g., /add buy groceries")
@@ -164,6 +175,8 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /list command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     tasks = task_service.get_tasks(user["id"])
     if not tasks:
         await update.message.reply_text("No tasks! Add one with /add or just tell me.")
@@ -175,6 +188,8 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /today command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     tasks = task_service.get_tasks(user["id"], "today")
     if not tasks:
         await update.message.reply_text("Nothing due today!")
@@ -186,6 +201,8 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /week command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     tasks = task_service.get_tasks(user["id"], "week")
     if not tasks:
         await update.message.reply_text("Nothing due this week!")
@@ -197,6 +214,8 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /overdue command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     tasks = task_service.get_tasks(user["id"], "overdue")
     if not tasks:
         await update.message.reply_text("Nothing overdue!")
@@ -208,6 +227,8 @@ async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /done command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     if not context.args:
         await update.message.reply_text("Which task? e.g., /done 1 or /done 1 3 5")
         return
@@ -243,6 +264,8 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /delete command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     if not context.args:
         await update.message.reply_text("Which task? e.g., /delete 2")
         return
@@ -267,6 +290,8 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /edit command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("Usage: /edit 1 new task title")
         return
@@ -289,6 +314,8 @@ async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /undo command."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.ai.tools_v2 import _undo_buffer
     entries = _undo_buffer.pop(user["id"], None)
     if not entries:
@@ -306,6 +333,8 @@ async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clear conversation history."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.ai import memory_pg
     memory_pg.clear_history(user["id"])
     await typing_pause(update.message.chat, 0.3)
@@ -315,6 +344,8 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick task analysis."""
     user = await _get_user(update, context)
+    if not user:
+        return
     tasks = task_service.get_tasks(user["id"])
     if not tasks:
         await update.message.reply_text("No tasks to analyze!")
@@ -341,6 +372,8 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show user's current streak."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import coaching_service
     streak = coaching_service.get_streak(user["id"])
     current = streak.get("current_streak", 0)
@@ -362,6 +395,8 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /workout command — quick log or prompt."""
     user = await _get_user(update, context)
+    if not user:
+        return
     text = " ".join(context.args) if context.args else ""
     if not text:
         await update.message.reply_text(
@@ -395,6 +430,8 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /metrics command — show body metrics."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import fitness_service
     metrics = fitness_service.get_latest_metrics(user["id"])
     if not metrics:
@@ -414,6 +451,8 @@ async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /gains command — workout streak + PRs + pattern balance."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import fitness_service
 
     streak = fitness_service.get_workout_streak(user["id"])
@@ -460,6 +499,8 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /protocols command — show active peptide protocols."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import biohacking_service
     protocols = biohacking_service.get_protocol_summary(user["id"])
     if not protocols:
@@ -487,6 +528,8 @@ async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /supplements command — show supplement stack."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import biohacking_service
     supps = biohacking_service.get_active_supplements(user["id"])
     if not supps:
@@ -512,6 +555,8 @@ async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /bloodwork command — show latest bloodwork with optimal ranges & trends."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import biohacking_service
     enriched = biohacking_service.get_enriched_bloodwork(user["id"])
     if not enriched:
@@ -580,6 +625,8 @@ async def cmd_bloodwork(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /dose command — quick log a peptide dose."""
     user = await _get_user(update, context)
+    if not user:
+        return
     text = " ".join(context.args) if context.args else ""
     if not text:
         await update.message.reply_text(
@@ -606,6 +653,8 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /connect_whoop command — link WHOOP device."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import whoop_service
 
     if not whoop_service.is_configured():
@@ -637,6 +686,8 @@ async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /recovery command — show today's WHOOP recovery."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import whoop_service
 
     if not whoop_service.is_connected(user["id"]):
@@ -713,6 +764,8 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /whoop command — full WHOOP dashboard."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import whoop_service
 
     if not whoop_service.is_connected(user["id"]):
@@ -805,6 +858,8 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_disconnect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /disconnect_whoop — unlink WHOOP device."""
     user = await _get_user(update, context)
+    if not user:
+        return
     from bot.services import whoop_service
 
     if not whoop_service.is_connected(user["id"]):
@@ -978,6 +1033,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = await _get_user(update, context)
+    if not user:
+        return
     text = update.message.text
     if not text:
         return
