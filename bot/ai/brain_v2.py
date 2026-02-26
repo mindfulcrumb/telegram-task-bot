@@ -1,4 +1,5 @@
 """AI Brain v2 — user-scoped, PostgreSQL-backed."""
+import asyncio
 import json
 import logging
 import os
@@ -698,6 +699,15 @@ TASKS:
             from bot.services import memory_service
             memory_text = memory_service.format_memories_for_prompt(user_id)
 
+            # Signal when memory is empty — helps the AI know it's starting fresh
+            if not memory_text:
+                memory_text = (
+                    "\nWHAT YOU KNOW ABOUT THIS USER: Nothing yet — "
+                    "this is a new or quiet user. Pay extra attention to "
+                    "personal details they share (name, location, goals, "
+                    "training schedule, protocols, preferences).\n"
+                )
+
             # Add feedback awareness
             stats = memory_service.get_feedback_stats(user_id, days=14)
             if stats["total"] > 0:
@@ -824,6 +834,97 @@ TASKS:
         except Exception:
             return ""
 
+    async def _extract_memories(self, user_id: int, user_input: str, ai_response: str):
+        """Post-conversation memory extraction — runs automatically after every exchange.
+
+        Like ChatGPT's memory system: a separate cheap Haiku call extracts personal
+        facts from the conversation, independent of whether the model called
+        save_user_memory during the chat. This fixes the 1.7% save rate problem.
+        """
+        # Skip trivially short messages — no facts to extract
+        if len(user_input) < 10:
+            return
+
+        try:
+            from bot.services import memory_service
+
+            # Load existing memories so we don't save duplicates
+            existing = memory_service.get_memories(user_id, limit=50)
+            existing_block = "\n".join(f"- {m['content']}" for m in existing) if existing else "(none)"
+
+            prompt = f"""Extract NEW personal facts about the user from this conversation.
+
+ALREADY KNOWN:
+{existing_block}
+
+USER: {user_input[:1500]}
+ASSISTANT: {(ai_response or '')[:1500]}
+
+Return a JSON array: [{{"content": "concise fact", "category": "personal|preference|health|fitness|goal|coaching"}}]
+
+Rules:
+- Only facts ABOUT THE USER, not general knowledge or questions
+- Be concise: "trains 5x/week" not "The user said they train five times a week"
+- Skip anything redundant with ALREADY KNOWN (even if worded differently)
+- Skip greetings, thanks, yes/no, task confirmations
+- If no new facts, return []
+
+JSON:"""
+
+            response, error = _call_api(
+                system="Extract personal facts from conversations. Return only a valid JSON array.",
+                messages=[{"role": "user", "content": prompt}],
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+            )
+
+            if error or not response or not response.content:
+                return
+
+            text = ""
+            for block in response.content:
+                if hasattr(block, "text"):
+                    text += block.text
+
+            text = text.strip()
+            # Strip markdown code fences if present
+            if "```" in text:
+                for segment in text.split("```"):
+                    segment = segment.strip()
+                    if segment.startswith("json"):
+                        segment = segment[4:].strip()
+                    if segment.startswith("["):
+                        text = segment
+                        break
+
+            facts = json.loads(text)
+            if not isinstance(facts, list):
+                return
+
+            saved = 0
+            for fact in facts[:8]:  # Cap at 8 per exchange
+                if not isinstance(fact, dict):
+                    continue
+                content = fact.get("content", "").strip()
+                category = fact.get("category", "general")
+                if content and 3 < len(content) < 500:
+                    result = memory_service.save_memory(
+                        user_id=user_id,
+                        content=content,
+                        category=category,
+                        source="auto_extract",
+                    )
+                    if result.get("action") == "saved":
+                        saved += 1
+
+            if saved > 0:
+                logger.info(f"Auto-extracted {saved} memories for user {user_id}")
+
+        except json.JSONDecodeError:
+            logger.debug(f"Memory extraction returned non-JSON for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Memory extraction error for user {user_id}: {type(e).__name__}: {e}")
+
     def _select_model(self, user_input):
         """Select model based on request complexity.
 
@@ -895,7 +996,7 @@ TASKS:
                 tools[-1]["cache_control"] = {"type": "ephemeral"}
 
             model, max_tokens = self._select_model(user_input)
-            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "5"))
+            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "7"))
             response = None
 
             for turn in range(max_turns):
@@ -995,6 +1096,10 @@ TASKS:
             memory.save_turn(user_id, "user", user_input)
             if final_text:
                 memory.save_turn(user_id, "assistant", final_text)
+
+            # Auto-extract memories in background (doesn't block response delivery)
+            if final_text:
+                asyncio.create_task(self._extract_memories(user_id, user_input, final_text))
 
             return final_text
 

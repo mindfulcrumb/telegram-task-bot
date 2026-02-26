@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 def save_memory(user_id: int, content: str, category: str = "general",
                 source: str = "conversation", confidence: float = 1.0) -> dict:
     """Save a memory about the user. Updates if similar content exists."""
+    # Content validation
+    if not content or not isinstance(content, str):
+        return {"action": "skipped", "reason": "empty"}
+    content = content.strip()
+    if len(content) < 3:
+        return {"action": "skipped", "reason": "too short"}
+    if len(content) > 500:
+        content = content[:500]
+
     with get_cursor() as cur:
         # Check for duplicate/similar memory (exact match on content)
         cur.execute(
@@ -26,6 +35,7 @@ def save_memory(user_id: int, content: str, category: str = "general",
                    category = %s WHERE id = %s RETURNING id""",
                 (confidence, category, existing["id"]),
             )
+            logger.info(f"Memory updated: user={user_id} cat={category} id={existing['id']}")
             return {"id": existing["id"], "action": "updated"}
 
         # Insert new memory
@@ -35,6 +45,7 @@ def save_memory(user_id: int, content: str, category: str = "general",
             (user_id, category, content, source, confidence),
         )
         row = cur.fetchone()
+        logger.info(f"Memory saved: user={user_id} cat={category} src={source} content='{content[:60]}'")
         return {"id": row["id"], "action": "saved"}
 
 
