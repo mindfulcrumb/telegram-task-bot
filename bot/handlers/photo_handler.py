@@ -45,14 +45,16 @@ def _clean_response(text: str) -> str:
     """Strip markdown formatting characters from AI response."""
     if not text:
         return text
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
-    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'```[\s\S]*?```', '', text)
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
     text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
     text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
+    text = re.sub(r'\*\*', '', text)
     return text.strip()
 
 

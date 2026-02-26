@@ -234,11 +234,42 @@ def _chunk_text(text: str, max_chars: int = CHUNK_SIZE) -> list[str]:
 # ─── YouTube Transcript Extraction ───────────────────────────────────
 
 def fetch_youtube_transcript(video_id: str) -> list[dict] | None:
-    """Fetch transcript for a YouTube video. Returns list of {text, start, duration} or None."""
+    """Fetch transcript for a YouTube video. Returns list of {text, start, duration} or None.
+
+    Tries manual captions first, falls back to auto-generated.
+    """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return transcript
+
+        # Try to get English transcript (manual or auto-generated)
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        except Exception as e:
+            logger.debug(f"No transcripts available for {video_id}: {e}")
+            return None
+
+        # Priority: manual English > auto-generated English > any English translation
+        transcript = None
+        try:
+            transcript = transcript_list.find_manually_created_transcript(["en"])
+        except Exception:
+            try:
+                transcript = transcript_list.find_generated_transcript(["en"])
+            except Exception:
+                # Try translating any available transcript to English
+                try:
+                    for t in transcript_list:
+                        transcript = t.translate("en")
+                        break
+                except Exception:
+                    pass
+
+        if transcript is None:
+            logger.debug(f"No English transcript for {video_id}")
+            return None
+
+        return transcript.fetch()
+
     except Exception as e:
         logger.debug(f"Transcript unavailable for {video_id}: {e}")
         return None
@@ -388,9 +419,12 @@ def process_youtube_channel(channel_key: str, max_videos: int = 20,
             # Fetch transcript
             segments = fetch_youtube_transcript(vid)
             if not segments:
+                logger.info(f"YouTube [{source}] '{title}' ({vid}): no transcript available")
                 _log_processing_start("youtube", vid, title, 0)
                 _log_processing_complete("youtube", vid, 0)
                 continue
+
+            logger.info(f"YouTube [{source}] '{title}' ({vid}): got {len(segments)} transcript segments")
 
             # Chunk transcript
             chunks = _chunk_transcript(segments)

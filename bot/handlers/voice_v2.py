@@ -14,19 +14,22 @@ def _clean_response(text: str) -> str:
     """Strip markdown formatting characters from AI response."""
     if not text:
         return text
-    # Remove bold/italic markers
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+    # Remove bold markers (DOTALL for multi-line)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    # Remove italic markers
+    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
     # Remove backtick code formatting
-    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'```[\s\S]*?```', '', text)
     # Remove header markers
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
     # Convert markdown bullet lists to clean text
-    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
     # Clean leftover stray asterisks
     text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
     text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
+    text = re.sub(r'\*\*', '', text)
     return text.strip()
 
 

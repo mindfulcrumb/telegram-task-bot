@@ -22,24 +22,30 @@ def _clean_response(text: str) -> str:
     if not text:
         return text
 
-    # Remove bold/italic markers: **text** -> text, *text* -> text, _text_ -> text
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+    # Remove bold markers: **text** -> text (DOTALL for multi-line spans)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    # Remove italic markers: *text* -> text (DOTALL for multi-line spans)
+    text = re.sub(r'\*(.+?)\*', r'\1', text, flags=re.DOTALL)
+    # Remove underscore emphasis: _text_ -> text
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text, flags=re.DOTALL)
 
     # Remove backtick code formatting: `text` -> text
-    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text, flags=re.DOTALL)
+    # Remove triple-backtick code blocks
+    text = re.sub(r'```[\s\S]*?```', '', text)
 
     # Remove header markers: ### Header -> Header
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
 
-    # Convert markdown bullet lists to clean text: "- item" -> "item"
-    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+    # Convert markdown bullet lists to clean text: "- item" -> "item", "* item" -> "item"
+    text = re.sub(r'^[\-\*]\s+', '  ', text, flags=re.MULTILINE)
 
     # Clean up any leftover stray asterisks at start/end of words
-    # (catches cases the regex above missed)
     text = re.sub(r'(?<!\w)\*(\w)', r'\1', text)
     text = re.sub(r'(\w)\*(?!\w)', r'\1', text)
+
+    # Remove stray double asterisks (e.g., orphaned ** at line boundaries)
+    text = re.sub(r'\*\*', '', text)
 
     return text.strip()
 
