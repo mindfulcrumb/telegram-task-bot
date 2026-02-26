@@ -871,7 +871,9 @@ Rules:
 
 JSON:"""
 
-            response, error = _call_api(
+            # Run in thread pool — _call_api is synchronous and would block the event loop
+            response, error = await asyncio.to_thread(
+                _call_api,
                 system="Extract personal facts from conversations. Return only a valid JSON array.",
                 messages=[{"role": "user", "content": prompt}],
                 model="claude-haiku-4-5-20251001",
