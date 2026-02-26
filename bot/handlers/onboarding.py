@@ -174,6 +174,103 @@ async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /memory ──────────────────────────────────────────────────────────
+
+CATEGORY_LABELS = {
+    "preference": "Preferences",
+    "personal": "Personal",
+    "fitness": "Fitness",
+    "health": "Health",
+    "coaching": "Coaching",
+    "goal": "Goals",
+    "general": "Notes",
+}
+
+
+async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show what Zoe remembers about the user. /memory clear to wipe all."""
+    user = await _ensure_user(update, context)
+    if not user:
+        return
+
+    from bot.services import memory_service
+
+    args = context.args
+
+    # /memory clear — wipe all memories
+    if args and args[0].lower() == "clear":
+        memories = memory_service.get_memories(user["id"], limit=200)
+        if not memories:
+            await update.message.reply_text("I don't have any memories about you yet.")
+            return
+
+        # Require confirmation
+        if context.user_data.get("confirm_memory_clear"):
+            count = 0
+            for m in memories:
+                memory_service.forget_memory(user["id"], m["id"])
+                count += 1
+            context.user_data.pop("confirm_memory_clear", None)
+            await update.message.reply_text(
+                f"Done. Cleared {count} memories. Starting fresh."
+            )
+            return
+        else:
+            context.user_data["confirm_memory_clear"] = True
+            await update.message.reply_text(
+                f"This will delete all {len(memories)} things I remember about you.\n\n"
+                "Send /memory clear again to confirm."
+            )
+            return
+
+    # /memory forget <text> — delete specific memories matching text
+    if args and args[0].lower() == "forget" and len(args) > 1:
+        search = " ".join(args[1:])
+        deleted = memory_service.forget_by_content(user["id"], search)
+        if deleted:
+            await update.message.reply_text(
+                f"Forgot {deleted} memory{'s' if deleted > 1 else ''} matching \"{search}\"."
+            )
+        else:
+            await update.message.reply_text(
+                f"No memories found matching \"{search}\"."
+            )
+        return
+
+    # Default: show all memories
+    memories = memory_service.get_memories(user["id"], limit=100)
+    if not memories:
+        await update.message.reply_text(
+            "I don't know anything about you yet.\n\n"
+            "The more we talk, the more I'll learn. I pick up on your goals, "
+            "preferences, training details, and health info automatically."
+        )
+        return
+
+    # Group by category
+    by_category = {}
+    for m in memories:
+        cat = m["category"]
+        if cat not in by_category:
+            by_category[cat] = []
+        by_category[cat].append(m["content"])
+
+    lines = [f"*What I know about you* ({len(memories)} memories)\n"]
+    for cat, items in by_category.items():
+        label = CATEGORY_LABELS.get(cat, cat.title())
+        lines.append(f"*{label}:*")
+        for item in items:
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    lines.append(
+        "To forget something: /memory forget <text>\n"
+        "To clear everything: /memory clear"
+    )
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 # ── Contact handler (phone verification) ─────────────────────────────
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -691,6 +788,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '  "What should I train today?"\n'
         '  "My testosterone came back at 650"\n\n'
         "*Account*\n"
+        "/memory \u2014 What Zoe knows about you\n"
         "/settings \u2014 Timezone & preferences\n"
         "/upgrade \u2014 Unlock Zoe Pro\n"
         "/support \u2014 Get help\n\n"

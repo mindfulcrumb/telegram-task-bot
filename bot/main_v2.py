@@ -552,11 +552,13 @@ def _register_full_handlers(application):
     try:
         from bot.handlers.onboarding import (
             cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-            cmd_calendar, cmd_referral, handle_onboarding_callback, handle_location, handle_contact,
+            cmd_calendar, cmd_referral, cmd_memory,
+            handle_onboarding_callback, handle_location, handle_contact,
         )
         application.add_handler(CommandHandler("start", cmd_start))
         application.add_handler(CommandHandler("referral", cmd_referral))
         application.add_handler(CommandHandler("refer", cmd_referral))
+        application.add_handler(CommandHandler("memory", cmd_memory))
         application.add_handler(CommandHandler("help", cmd_help))
         application.add_handler(CommandHandler("settings", cmd_settings))
         application.add_handler(CommandHandler("account", cmd_account))
