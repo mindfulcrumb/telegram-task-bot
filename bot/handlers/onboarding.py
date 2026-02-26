@@ -273,17 +273,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, Exception) as e:
             logger.warning(f"Invalid referral payload: {payload} — {e}")
 
-    # Returning user who completed onboarding (or existing pre-onboarding user)
-    is_existing = (
-        user.get("onboarding_completed")
-        or (user.get("last_active") is not None
-            and user["created_at"] != user["last_active"])
-    )
-
-    if is_existing:
-        # One-time migration: mark existing users as onboarding complete
-        if not user.get("onboarding_completed"):
-            user_service.mark_onboarding_complete(user["id"])
+    # Returning user who completed onboarding
+    if not user.get("onboarding_completed"):
+        # Not verified yet — (re)start onboarding below
+        pass
+    else:
 
         from bot.services import task_service
         tasks = task_service.get_tasks(user["id"])
