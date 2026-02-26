@@ -16,6 +16,14 @@ def is_configured() -> bool:
     return bool(_ACCOUNT_SID and _AUTH_TOKEN and _WHATSAPP_FROM)
 
 
+_last_error = ""
+
+
+def get_last_error() -> str:
+    """Return the last Twilio error for debugging."""
+    return _last_error
+
+
 async def send_otp(phone: str, code: str) -> bool:
     """Send a 6-digit OTP via WhatsApp using Twilio.
 
@@ -26,9 +34,16 @@ async def send_otp(phone: str, code: str) -> bool:
     Returns:
         True if message was accepted by Twilio, False otherwise.
     """
+    global _last_error
+    _last_error = ""
+
     if not is_configured():
-        logger.error("Twilio WhatsApp not configured — missing env vars")
+        _last_error = "Twilio not configured — missing env vars"
+        logger.error(_last_error)
         return False
+
+    # Ensure From number has + prefix
+    from_num = _WHATSAPP_FROM if _WHATSAPP_FROM.startswith("+") else f"+{_WHATSAPP_FROM}"
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{_ACCOUNT_SID}/Messages.json"
 
@@ -38,7 +53,7 @@ async def send_otp(phone: str, code: str) -> bool:
                 url,
                 auth=(_ACCOUNT_SID, _AUTH_TOKEN),
                 data={
-                    "From": f"whatsapp:{_WHATSAPP_FROM}",
+                    "From": f"whatsapp:{from_num}",
                     "To": f"whatsapp:{phone}",
                     "Body": f"Your Zoe verification code: {code}. It expires in 5 minutes.",
                 },
@@ -49,9 +64,11 @@ async def send_otp(phone: str, code: str) -> bool:
             logger.info(f"WhatsApp OTP sent to ***{phone[-4:]}")
             return True
 
-        logger.warning(f"Twilio error {resp.status_code}: {resp.text[:200]}")
+        _last_error = f"Twilio {resp.status_code}: {resp.text[:300]}"
+        logger.warning(_last_error)
         return False
 
     except Exception as e:
-        logger.error(f"WhatsApp OTP send failed: {e}")
+        _last_error = f"Request failed: {e}"
+        logger.error(_last_error)
         return False
