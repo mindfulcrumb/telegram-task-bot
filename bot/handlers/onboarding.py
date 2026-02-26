@@ -2,8 +2,6 @@
 import asyncio
 import logging
 import re
-import secrets
-import time
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
@@ -13,7 +11,6 @@ from telegram.ext import ContextTypes
 
 from bot.services import user_service
 from bot.services import referral_service
-from bot.services import whatsapp_service
 
 logger = logging.getLogger(__name__)
 
@@ -23,168 +20,11 @@ async def _typing_pause(chat, seconds: float = 0.8):
     await chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(seconds)
 
-# ── OTP helpers ──────────────────────────────────────────────────────
-
-_PHONE_RE = re.compile(r"^\+\d{7,15}$")
-_OTP_EXPIRY = 300   # 5 minutes
-_OTP_MAX_ATTEMPTS = 3
-_OTP_MAX_SENDS = 3
-
-
-def _validate_phone(text: str) -> str | None:
-    """Clean and validate an international phone number. Returns cleaned number or None."""
-    cleaned = re.sub(r"[\s\-\(\).]", "", text.strip())
-    if _PHONE_RE.match(cleaned):
-        return cleaned
-    return None
-
-
-def _generate_otp() -> str:
-    """Generate a 6-digit numeric OTP."""
-    return "".join(secrets.choice("0123456789") for _ in range(6))
-
-
-async def _send_otp(phone: str, ob: dict, chat) -> bool:
-    """Generate OTP, send via WhatsApp, store state in ob dict."""
-    code = _generate_otp()
-    sent = await whatsapp_service.send_otp(phone, code)
-    if not sent:
-        return False
-
-    ob["otp_code"] = code
-    ob["otp_phone"] = phone
-    ob["otp_expires"] = time.time() + _OTP_EXPIRY
-    ob["otp_attempts"] = 0
-    ob["otp_sends"] = ob.get("otp_sends", 0) + 1
-    ob["otp_phase"] = "awaiting_code"
-    return True
 
 
 async def handle_otp_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text input during OTP verification (phone number or code)."""
-    ob = context.user_data.get("ob", {})
-    phase = ob.get("otp_phase")
-    text = update.message.text.strip()
-    chat = update.message.chat
-
-    if phase == "awaiting_phone":
-        phone = _validate_phone(text)
-        if not phone:
-            await _typing_pause(chat, 0.4)
-            await update.message.reply_text(
-                "That doesn't look right. Type your number with country code, "
-                "like +351912345678."
-            )
-            return
-
-        # Ensure user exists
-        user = context.user_data.get("db_user")
-        if not user:
-            tg = update.effective_user
-            user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-            context.user_data["db_user"] = user
-
-        # Check if phone is already linked to another account
-        if user_service.phone_number_exists(phone, exclude_user_id=user["id"]):
-            await _typing_pause(chat, 0.5)
-            await update.message.reply_text(
-                "This number is already connected to another account.\n"
-                "Reach out to /support if this is an error."
-            )
-            return
-
-        # Check send limit
-        if ob.get("otp_sends", 0) >= _OTP_MAX_SENDS:
-            await _typing_pause(chat, 0.5)
-            await update.message.reply_text(
-                "Something's not working. Double-check the number and try /start again."
-            )
-            return
-
-        await _typing_pause(chat, 0.6)
-        sent = await _send_otp(phone, ob, chat)
-        if not sent:
-            await update.message.reply_text(
-                "Couldn't reach that number on WhatsApp. "
-                "Make sure it's active on WhatsApp and try again."
-            )
-            return
-
-        resend_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Resend code", callback_data="ob:otp:resend")],
-        ])
-        await update.message.reply_text(
-            f"Sent a 6-digit code to your WhatsApp ({phone}).\n"
-            "Type the code here.",
-            reply_markup=resend_kb,
-        )
-
-    elif phase == "awaiting_code":
-        # Check if code is expired
-        if time.time() > ob.get("otp_expires", 0):
-            # Auto-resend if under limit
-            if ob.get("otp_sends", 0) < _OTP_MAX_SENDS:
-                phone = ob.get("otp_phone", "")
-                await _typing_pause(chat, 0.5)
-                sent = await _send_otp(phone, ob, chat)
-                if sent:
-                    await update.message.reply_text(
-                        "That code expired. I sent a new one to your WhatsApp."
-                    )
-                else:
-                    await update.message.reply_text(
-                        "That code expired and I couldn't send a new one. Try /start again."
-                    )
-            else:
-                await update.message.reply_text(
-                    "That code expired. Double-check the number and try /start again."
-                )
-            return
-
-        # Check the code
-        if text == ob.get("otp_code"):
-            # Verified
-            phone = ob["otp_phone"]
-            user = context.user_data.get("db_user")
-            user_service.set_phone_number(user["id"], phone)
-
-            # Clear OTP state
-            for key in ("otp_code", "otp_phone", "otp_expires", "otp_attempts",
-                        "otp_sends", "otp_phase"):
-                ob.pop(key, None)
-
-            await _typing_pause(chat, 0.5)
-            await update.message.reply_text("Got it, you're verified.")
-
-            # Proceed to segmentation
-            await _send_segmentation(update.message, context)
-        else:
-            # Wrong code
-            ob["otp_attempts"] = ob.get("otp_attempts", 0) + 1
-            if ob["otp_attempts"] >= _OTP_MAX_ATTEMPTS:
-                # Auto-resend if under limit
-                if ob.get("otp_sends", 0) < _OTP_MAX_SENDS:
-                    phone = ob.get("otp_phone", "")
-                    await _typing_pause(chat, 0.5)
-                    sent = await _send_otp(phone, ob, chat)
-                    if sent:
-                        await update.message.reply_text(
-                            "Too many tries. I sent a fresh code to your WhatsApp."
-                        )
-                    else:
-                        await update.message.reply_text(
-                            "Too many tries and I couldn't send a new code. Try /start again."
-                        )
-                else:
-                    await update.message.reply_text(
-                        "Something's not working. Double-check the number and try /start again."
-                    )
-            else:
-                remaining = _OTP_MAX_ATTEMPTS - ob["otp_attempts"]
-                await _typing_pause(chat, 0.3)
-                await update.message.reply_text(
-                    f"That's not it. {remaining} attempt{'s' if remaining != 1 else ''} left."
-                )
+    """Handle text input during onboarding — no longer used for OTP, kept as no-op."""
+    pass
 
 
 # ── Onboarding mappings ──────────────────────────────────────────────
@@ -321,24 +161,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _typing_pause(chat, 0.6)
 
-    if whatsapp_service.is_configured():
-        # WhatsApp OTP verification
-        context.user_data["ob"]["otp_phase"] = "awaiting_phone"
-        await update.message.reply_text(
-            "To get started, drop your phone number with country code.\n"
-            "Something like +351912345678.",
-        )
-    else:
-        # Fallback: Telegram contact sharing (dev/testing without Twilio)
-        phone_keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
-            one_time_keyboard=True,
-            resize_keyboard=True,
-        )
-        await update.message.reply_text(
-            "Share your number so I know who you are.",
-            reply_markup=phone_keyboard,
-        )
+    # Telegram contact sharing (one tap, no OTP needed)
+    phone_keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
+        one_time_keyboard=True,
+        resize_keyboard=True,
+    )
+    await update.message.reply_text(
+        "Share your number so I know who you are.",
+        reply_markup=phone_keyboard,
+    )
 
 
 # ── /referral ─────────────────────────────────────────────────────────
@@ -469,10 +301,17 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Contact handler (phone verification) ─────────────────────────────
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle shared contact — store phone number for verification."""
-    user = await _ensure_user(update, context)
+    """Handle shared contact — store phone number during onboarding."""
+    # Don't use _ensure_user — this is called DURING onboarding before completion
+    user = context.user_data.get("db_user")
     if not user:
-        return
+        tg_user = update.effective_user
+        user = user_service.get_or_create_user(
+            telegram_user_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        context.user_data["db_user"] = user
 
     contact = update.message.contact
     if not contact:
@@ -843,27 +682,7 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
         step = parts[1]
         value = parts[2]
 
-        if step == "otp" and value == "resend":
-            # Resend OTP code
-            phone = ob.get("otp_phone")
-            if not phone or ob.get("otp_sends", 0) >= _OTP_MAX_SENDS:
-                await query.message.reply_text(
-                    "Can't send more codes right now. Try /start again."
-                )
-                return
-            await _typing_pause(query.message.chat, 0.5)
-            sent = await _send_otp(phone, ob, query.message.chat)
-            if sent:
-                await query.message.reply_text(
-                    "Sent a new code to your WhatsApp. Type it here."
-                )
-            else:
-                await query.message.reply_text(
-                    "Couldn't send the code. Make sure the number is active on WhatsApp."
-                )
-            return
-
-        elif step == "phone":
+        if step == "phone":
             # Phone skip (fallback mode only, when Twilio not configured)
             await _typing_pause(query.message.chat, 0.5)
             await query.message.reply_text(
@@ -1092,10 +911,17 @@ async def cmd_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /deleteaccount ────────────────────────────────────────────────────
 
 async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete user account and all data (GDPR)."""
-    user = await _ensure_user(update, context)
+    """Delete user account and all data (GDPR). Bypasses onboarding check."""
+    # Don't use _ensure_user — users must be able to delete even if stuck in onboarding
+    user = context.user_data.get("db_user")
     if not user:
-        return
+        tg_user = update.effective_user
+        user = user_service.get_or_create_user(
+            telegram_user_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        context.user_data["db_user"] = user
 
     # Require confirmation
     if context.user_data.get("confirm_delete"):
@@ -1211,9 +1037,16 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle shared location — detect timezone automatically."""
-    user = await _ensure_user(update, context)
+    # Don't use _ensure_user — this may be called DURING onboarding (timezone step)
+    user = context.user_data.get("db_user")
     if not user:
-        return
+        tg_user = update.effective_user
+        user = user_service.get_or_create_user(
+            telegram_user_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        context.user_data["db_user"] = user
 
     loc = update.message.location
     if not loc:
