@@ -7,6 +7,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from bot.services import user_service
+from bot.services import referral_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name=tg_user.first_name,
     )
     context.user_data["db_user"] = user
+
+    # Handle referral deep link: /start ref_12345
+    payload = context.args[0] if context.args else ""
+    if payload.startswith("ref_"):
+        try:
+            referrer_id = int(payload.replace("ref_", ""))
+            result = referral_service.track_referral(referrer_id, tg_user.id)
+            if result:
+                # Notify referrer
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"*{tg_user.first_name}* just joined Zoe through your referral link! "
+                             f"You earned {referral_service.BONUS_MESSAGES_PER_REFERRAL} bonus messages.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass  # Referrer may have blocked the bot
+        except (ValueError, Exception) as e:
+            logger.warning(f"Invalid referral payload: {payload} — {e}")
 
     # Returning user who completed onboarding (or existing pre-onboarding user)
     is_existing = (
@@ -92,6 +113,34 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Always check with your doctor before starting anything new.\n\n"
         "Tap below to get started.",
         reply_markup=phone_keyboard,
+    )
+
+
+# ── /referral ─────────────────────────────────────────────────────────
+
+async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show referral stats and share link."""
+    user = await _ensure_user(update, context)
+    if not user:
+        return
+
+    stats = referral_service.get_referral_stats(user["telegram_user_id"])
+
+    tier_text = ""
+    if stats["next_tier"]:
+        tier_text = f"{stats['referrals_to_next']} more to earn {stats['next_tier']['reward']}"
+    elif stats["current_tier"]:
+        tier_text = f"You've earned {stats['current_tier']['reward']}!"
+
+    await update.message.reply_text(
+        "*Your Referral Stats*\n\n"
+        f"Friends referred: *{stats['total_referrals']}*\n"
+        f"Bonus messages earned: *{stats['bonus_messages']}*\n\n"
+        f"{tier_text}\n\n"
+        f"*Your referral link:*\n"
+        f"`{stats['referral_link']}`\n\n"
+        "Share this link — you both benefit!",
+        parse_mode="Markdown",
     )
 
 

@@ -69,8 +69,22 @@ def initialize():
                 tier TEXT DEFAULT 'free',
                 is_admin BOOLEAN DEFAULT FALSE,
                 stripe_customer_id TEXT,
+                referred_by_telegram_id BIGINT,
+                referral_count INT DEFAULT 0,
+                bonus_messages INT DEFAULT 0,
+                phone_number TEXT,
+                onboarding_completed BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 last_active TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS referrals (
+                id SERIAL PRIMARY KEY,
+                referrer_telegram_id BIGINT NOT NULL,
+                referred_telegram_id BIGINT NOT NULL UNIQUE,
+                status TEXT DEFAULT 'joined',
+                bonus_credited BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
             );
 
             CREATE TABLE IF NOT EXISTS tasks (
@@ -620,6 +634,23 @@ def initialize():
                 description TEXT NOT NULL,
                 examples TEXT
             );
+
+            -- Referral system migration
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by_telegram_id BIGINT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_messages INT DEFAULT 0;
+
+            CREATE TABLE IF NOT EXISTS referrals (
+                id SERIAL PRIMARY KEY,
+                referrer_telegram_id BIGINT NOT NULL,
+                referred_telegram_id BIGINT NOT NULL UNIQUE,
+                status TEXT DEFAULT 'joined',
+                bonus_credited BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_telegram_id);
+            CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_telegram_id);
         """)
     logger.info("PostgreSQL schema initialized")
 

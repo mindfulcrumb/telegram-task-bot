@@ -348,6 +348,7 @@ async def _post_init(application):
             BotCommand("calendar", "Google Calendar"),
             BotCommand("settings", "Your preferences"),
             BotCommand("account", "Account info"),
+            BotCommand("referral", "Your referral link & stats"),
             BotCommand("upgrade", "Unlock Zoe Pro"),
             BotCommand("help", "All commands"),
         ]
@@ -544,9 +545,11 @@ def _register_full_handlers(application):
     try:
         from bot.handlers.onboarding import (
             cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-            cmd_calendar, handle_onboarding_callback, handle_location, handle_contact,
+            cmd_calendar, cmd_referral, handle_onboarding_callback, handle_location, handle_contact,
         )
         application.add_handler(CommandHandler("start", cmd_start))
+        application.add_handler(CommandHandler("referral", cmd_referral))
+        application.add_handler(CommandHandler("refer", cmd_referral))
         application.add_handler(CommandHandler("help", cmd_help))
         application.add_handler(CommandHandler("settings", cmd_settings))
         application.add_handler(CommandHandler("account", cmd_account))
