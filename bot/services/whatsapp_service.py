@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 _ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 _AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 _WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
+_CONTENT_SID = os.getenv("TWILIO_OTP_CONTENT_SID", "HXdd8500ec28f69815651e77d70697ea3d")
 
 
 def is_configured() -> bool:
@@ -55,7 +56,8 @@ async def send_otp(phone: str, code: str) -> bool:
                 data={
                     "From": f"whatsapp:{from_num}",
                     "To": f"whatsapp:{phone}",
-                    "Body": f"Your Zoe code is {code}",
+                    "ContentSid": _CONTENT_SID,
+                    "ContentVariables": f'{{"1":"{code}"}}',
                 },
                 timeout=15.0,
             )
