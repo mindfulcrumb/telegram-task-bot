@@ -374,6 +374,8 @@ async def resume_onboarding(message, context):
         await _send_injuries(message, context)
     elif "biohacking" not in ob:
         await _send_biohacking(message, context)
+    elif "blood_type" not in ob:
+        await _send_blood_type(message, context)
     else:
         # All questions answered — must be on the timezone/location step
         await _send_timezone(message, context)
@@ -514,8 +516,28 @@ async def _send_biohacking(message, context):
     )
 
 
+async def _send_blood_type(message, context):
+    """Step 10: Blood type (optional)."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Type O", callback_data="ob:blood:O"),
+            InlineKeyboardButton("Type A", callback_data="ob:blood:A"),
+        ],
+        [
+            InlineKeyboardButton("Type B", callback_data="ob:blood:B"),
+            InlineKeyboardButton("Type AB", callback_data="ob:blood:AB"),
+        ],
+        [InlineKeyboardButton("Skip", callback_data="ob:blood:skip")],
+    ])
+    await message.reply_text(
+        "Do you know your blood type? I use it to flag foods that work best for you.",
+        reply_markup=keyboard,
+    )
+
+
 async def _send_timezone(message, context):
-    """Step 10: Timezone via location share."""
+    """Step 11: Timezone via location share."""
     await _typing_pause(message.chat, 0.8)
 
     # Inline skip button
@@ -561,6 +583,10 @@ async def _complete_onboarding(message, context, user):
             limitations=ob.get("injury"),
         )
 
+    # Save blood type if provided
+    if ob.get("blood_type"):
+        user_service.update_blood_type(user_id, ob["blood_type"])
+
     # Mark onboarding complete
     user_service.mark_onboarding_complete(user_id)
     user["onboarding_completed"] = True
@@ -602,6 +628,11 @@ async def _complete_onboarding(message, context, user):
                 memories.append(("Tracks supplements", "health"))
             elif bio == "both":
                 memories.append(("Tracks both peptides and supplements", "health"))
+
+        # Blood type
+        blood = ob.get("blood_type")
+        if blood:
+            memories.append((f"Blood type: {blood}", "health"))
 
         # Focus area
         if focus == "tasks":
@@ -763,6 +794,10 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
 
         elif step == "bio":
             ob["biohacking"] = value if value != "none" else None
+            await _send_blood_type(query.message, context)
+
+        elif step == "blood":
+            ob["blood_type"] = value if value != "skip" else None
             await _send_timezone(query.message, context)
 
         elif step == "tz":

@@ -643,6 +643,46 @@ def get_tool_definitions() -> list:
                 "required": ["query"]
             }
         },
+        # --- Nutrition tools ---
+        {
+            "name": "update_nutrition_profile",
+            "description": "Set or update user's nutrition profile: calorie targets, macro targets, dietary restrictions, meals per day. Use when user mentions diet, calories, macros, eating patterns, vegan/keto/gluten-free, or meal frequency.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "daily_calorie_target": {"type": "integer", "description": "Daily calorie target (e.g. 2500)"},
+                    "protein_target_g": {"type": "integer", "description": "Daily protein target in grams"},
+                    "carbs_target_g": {"type": "integer", "description": "Daily carb target in grams"},
+                    "fat_target_g": {"type": "integer", "description": "Daily fat target in grams"},
+                    "dietary_restrictions": {"type": "array", "items": {"type": "string"}, "description": "Dietary restrictions (e.g. ['vegan', 'gluten_free', 'keto', 'dairy_free', 'low_carb'])"},
+                    "meals_per_day": {"type": "integer", "description": "How many meals per day (default 3)"}
+                }
+            }
+        },
+        {
+            "name": "log_meal",
+            "description": "Log a meal with calorie and macro estimates. Use when user says 'I ate...', 'had lunch...', 'just had a protein shake', etc. YOU must estimate calories and macros from their description using your nutrition knowledge and the food reference database. Always log even rough estimates — partial data is better than none.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "meal_type": {"type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"], "description": "Meal type. Infer from time of day if user doesn't specify."},
+                    "description": {"type": "string", "description": "What they ate (e.g. 'grilled chicken breast with rice and broccoli')"},
+                    "calories": {"type": "integer", "description": "Estimated total calories"},
+                    "protein_g": {"type": "number", "description": "Estimated protein in grams"},
+                    "carbs_g": {"type": "number", "description": "Estimated carbs in grams"},
+                    "fat_g": {"type": "number", "description": "Estimated fat in grams"}
+                },
+                "required": ["description", "calories"]
+            }
+        },
+        {
+            "name": "get_daily_nutrition",
+            "description": "Get today's food intake summary: meals logged, total calories, macros, and remaining vs target. Use when user asks 'what have I eaten today', 'how many calories', 'am I on track', 'calories left', etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
     ]
 
 
@@ -1240,6 +1280,12 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             query = args["query"]
             search_type = args.get("search_type", "general")
             blood_type = args.get("blood_type")
+            # Auto-populate blood type from user profile if not specified
+            if not blood_type and search_type == "food":
+                from bot.services import user_service
+                u = user_service.get_user_by_id(user_id)
+                if u and u.get("blood_type"):
+                    blood_type = u["blood_type"]
 
             if search_type == "peptide":
                 info = knowledge_service.get_peptide_info(query)
@@ -1621,6 +1667,72 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if not results:
                 return {"results": [], "message": "No saved URLs matching that query."}
             return {"results": results, "count": len(results)}
+
+        # --- Nutrition tools ---
+        elif name == "update_nutrition_profile":
+            from bot.services import nutrition_service
+            profile = nutrition_service.update_nutrition_profile(user_id, **args)
+            return {
+                "status": "updated",
+                "calorie_target": profile.get("daily_calorie_target"),
+                "protein_target": profile.get("protein_target_g"),
+                "carbs_target": profile.get("carbs_target_g"),
+                "fat_target": profile.get("fat_target_g"),
+                "dietary_restrictions": profile.get("dietary_restrictions"),
+                "meals_per_day": profile.get("meals_per_day"),
+            }
+
+        elif name == "log_meal":
+            from bot.services import nutrition_service
+            meal = nutrition_service.log_meal(
+                user_id,
+                meal_type=args.get("meal_type"),
+                description=args.get("description", ""),
+                calories=args.get("calories"),
+                protein_g=args.get("protein_g"),
+                carbs_g=args.get("carbs_g"),
+                fat_g=args.get("fat_g"),
+            )
+            daily = nutrition_service.get_daily_intake(user_id)
+            return {
+                "logged": {
+                    "meal_type": meal.get("meal_type"),
+                    "description": meal.get("description"),
+                    "calories": meal.get("calories"),
+                    "protein_g": meal.get("protein_g"),
+                    "carbs_g": meal.get("carbs_g"),
+                    "fat_g": meal.get("fat_g"),
+                },
+                "daily_total": {
+                    "meals": daily["meal_count"],
+                    "calories": daily["total_calories"],
+                    "protein": daily["total_protein"],
+                    "carbs": daily["total_carbs"],
+                    "fat": daily["total_fat"],
+                },
+                "remaining": daily.get("remaining", {}),
+                "targets": daily.get("targets", {}),
+            }
+
+        elif name == "get_daily_nutrition":
+            from bot.services import nutrition_service
+            daily = nutrition_service.get_daily_intake(user_id)
+            meals = nutrition_service.get_meals_today(user_id)
+            return {
+                "date": daily["date"],
+                "meal_count": daily["meal_count"],
+                "meals": [{"type": m.get("meal_type"), "description": m.get("description"),
+                           "calories": m.get("calories"), "protein_g": m.get("protein_g")}
+                          for m in meals],
+                "totals": {
+                    "calories": daily["total_calories"],
+                    "protein": daily["total_protein"],
+                    "carbs": daily["total_carbs"],
+                    "fat": daily["total_fat"],
+                },
+                "targets": daily.get("targets", {}),
+                "remaining": daily.get("remaining", {}),
+            }
 
         else:
             return {"error": f"Unknown tool: {name}"}

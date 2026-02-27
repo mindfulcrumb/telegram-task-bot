@@ -153,6 +153,12 @@ def phone_number_exists(phone: str, exclude_user_id: int = None) -> bool:
         return cur.fetchone() is not None
 
 
+def update_blood_type(user_id: int, blood_type: str):
+    """Store user's blood type (O, A, B, AB)."""
+    with get_cursor() as cur:
+        cur.execute("UPDATE users SET blood_type = %s WHERE id = %s", (blood_type, user_id))
+
+
 def mark_onboarding_complete(user_id: int):
     """Mark user's onboarding as complete."""
     with get_cursor() as cur:

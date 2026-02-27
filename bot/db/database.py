@@ -439,6 +439,43 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_workout_sessions_started ON workout_sessions(user_id, started_at);
             CREATE INDEX IF NOT EXISTS idx_workout_exercises_name ON workout_exercises(exercise_name);
 
+            -- Blood type on user profile (for food recommendations)
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS blood_type TEXT;
+
+            -- ═══════════════════════════════════════════════════════
+            -- NUTRITION SYSTEM
+            -- ═══════════════════════════════════════════════════════
+
+            CREATE TABLE IF NOT EXISTS nutrition_profiles (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                dietary_restrictions TEXT[],
+                daily_calorie_target INT,
+                protein_target_g INT,
+                carbs_target_g INT,
+                fat_target_g INT,
+                meals_per_day INT DEFAULT 3,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_nutrition_profiles_user ON nutrition_profiles(user_id);
+
+            CREATE TABLE IF NOT EXISTS meal_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                meal_type TEXT,
+                description TEXT NOT NULL,
+                calories INT,
+                protein_g REAL,
+                carbs_g REAL,
+                fat_g REAL,
+                fiber_g REAL,
+                source TEXT DEFAULT 'manual',
+                photo_analysis TEXT,
+                logged_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_meal_logs_user ON meal_logs(user_id, logged_at);
+            CREATE INDEX IF NOT EXISTS idx_meal_logs_date ON meal_logs(user_id, (logged_at::date));
+
             -- ═══════════════════════════════════════════════════════
             -- KNOWLEDGE BASE SYSTEM
             -- ═══════════════════════════════════════════════════════

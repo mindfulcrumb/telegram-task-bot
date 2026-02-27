@@ -612,6 +612,18 @@ FITNESS TOOL USE:
 - Quick informal logs ("did arms for 30 min") -> just title + duration, don't force exercise detail
 - Structured logs ("bench 4x8 at 75, OHP 3x10 at 40") -> capture full exercise data
 
+NUTRITION TOOL USE:
+- "I had chicken and rice for lunch" -> log_meal. Estimate calories and macros from what they describe. Use food_reference DB for accuracy.
+- "Just had a protein shake" -> log_meal with type=snack. Estimate ~130 cal, 25g protein for a standard shake unless they specify.
+- "How many calories today?" / "am I on track?" -> get_daily_nutrition
+- "I eat 2500 calories a day" / "I want to cut to 2000" -> update_nutrition_profile with daily_calorie_target
+- "I'm vegan" / "no dairy" / "doing keto" -> update_nutrition_profile with dietary_restrictions
+- "I eat 4 meals a day" -> update_nutrition_profile with meals_per_day=4
+- When logging meals, ALWAYS estimate even if rough. Partial data > no data. Use food_reference DB for specific foods.
+- If user has blood type set, auto-include blood type classification when discussing foods.
+- After logging a meal, mention daily total briefly: "Logged. That's 1,450 cal today — 1,050 left."
+- NEVER lecture about nutrition. Be concise: log it, report the numbers, move on.
+
 BIOHACKING TOOL USE:
 - "Starting BPC-157, 250mcg twice a day for 6 weeks" -> manage_peptide_protocol action=add with dose, frequency, cycle dates
 - "Stopping my TB-500" / "done with Ipamorelin cycle" -> manage_peptide_protocol action=end
@@ -877,6 +889,9 @@ COACHING STYLE:
         # Fitness context
         fitness_section = self._build_fitness_section(user.get("id", 0))
 
+        # Nutrition context
+        nutrition_section = self._build_nutrition_section(user)
+
         # Biohacking context
         biohacking_section = self._build_biohacking_section(user.get("id", 0))
 
@@ -910,7 +925,7 @@ This user just started. No tasks, no workout history, no data yet.
 {coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
-{fitness_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{first_time_section}"""
+{fitness_section}{nutrition_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""
@@ -1005,6 +1020,49 @@ TASKS:
             return "\n".join(lines) + "\n" if len(lines) > 1 else ""
         except Exception as e:
             logger.warning(f"Fitness section build failed: {type(e).__name__}: {e}")
+            return ""
+
+    def _build_nutrition_section(self, user: dict) -> str:
+        """Build nutrition context section for system prompt."""
+        try:
+            from bot.services import nutrition_service
+            user_id = user.get("id", 0)
+
+            lines = []
+
+            # Blood type
+            blood_type = user.get("blood_type")
+            if blood_type:
+                lines.append(f"- Blood type: {blood_type}")
+
+            # Nutrition profile
+            profile = nutrition_service.get_nutrition_profile(user_id)
+            if profile:
+                parts = []
+                if profile.get("daily_calorie_target"):
+                    parts.append(f"Target: {profile['daily_calorie_target']} cal/day")
+                if profile.get("protein_target_g"):
+                    parts.append(f"{profile['protein_target_g']}g protein")
+                if profile.get("dietary_restrictions"):
+                    parts.append(f"Diet: {', '.join(profile['dietary_restrictions'])}")
+                if parts:
+                    lines.append(f"- Nutrition: {', '.join(parts)}")
+
+            # Today's intake
+            daily = nutrition_service.get_daily_intake(user_id)
+            if daily["meal_count"] > 0:
+                remaining = daily.get("remaining", {})
+                cal_left = remaining.get("calories")
+                if cal_left is not None:
+                    lines.append(f"- Today: {daily['total_calories']} cal eaten ({daily['meal_count']} meals), {cal_left} cal remaining")
+                else:
+                    lines.append(f"- Today: {daily['total_calories']} cal eaten ({daily['meal_count']} meals)")
+
+            if lines:
+                return "\nNUTRITION DATA:\n" + "\n".join(lines) + "\n"
+            return ""
+        except Exception as e:
+            logger.warning(f"Nutrition section build failed: {type(e).__name__}: {e}")
             return ""
 
     def _build_biohacking_section(self, user_id: int) -> str:
