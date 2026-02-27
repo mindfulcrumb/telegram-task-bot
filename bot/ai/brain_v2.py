@@ -102,13 +102,16 @@ class AIBrain:
         if not api_key:
             return None
 
-        try:
+        def _run():
             client = anthropic.Anthropic(api_key=api_key)
-            resp = client.messages.create(
+            return client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+        try:
+            resp = await asyncio.to_thread(_run)
             if resp.content:
                 return resp.content[0].text
             return None
@@ -1273,12 +1276,16 @@ JSON:"""
             "what should i train", "program", "workout plan",
             "give me a session", "give me a workout",
             "analyze", "bloodwork", "labs", "biomarkers",
-            "plan my week", "review my",
+            "plan my week", "plan my day", "review my",
             "connect whoop", "connect my whoop",
             "how's my recovery", "how is my recovery", "what's my recovery",
             "how am i progressing", "how's my protocol", "how is my protocol",
             "diagnose", "should i train", "should i work out",
             "what does my whoop", "show my sleep",
+            "routine", "daily plan", "schedule",
+            "send email", "send him", "send her", "send a reminder",
+            "calendar meeting", "adjust", "reschedule",
+            "check my inbox", "check email",
         ]
         for trigger in complex_triggers:
             if trigger in lower:
@@ -1345,7 +1352,11 @@ JSON:"""
                     except Exception:
                         pass
 
-                response, error = _call_api(system, messages, tools=tools, model=model, max_tokens=max_tokens)
+                # Run blocking API call in thread so event loop stays responsive
+                # (allows asyncio.wait_for timeout + typing indicator to work)
+                response, error = await asyncio.to_thread(
+                    _call_api, system, messages, tools=tools, model=model, max_tokens=max_tokens
+                )
 
                 if error:
                     logger.error(f"Agent API error on turn {turn}: {error}")
@@ -1357,16 +1368,19 @@ JSON:"""
                     return error_msg
 
                 if not response or not response.content:
+                    logger.error(f"Agent got empty response on turn {turn}")
                     if turn == 0:
                         memory.save_turn(user_id, "user", user_input)
                     memory.save_turn(user_id, "assistant", "Something went wrong processing that.")
                     return None
 
                 # Serialize assistant response for message history
+                # Filter out empty text blocks — API rejects them on subsequent turns
                 assistant_content = []
                 for block in response.content:
                     if hasattr(block, "text"):
-                        assistant_content.append({"type": "text", "text": block.text})
+                        if block.text and block.text.strip():
+                            assistant_content.append({"type": "text", "text": block.text})
                     elif block.type == "tool_use":
                         assistant_content.append({
                             "type": "tool_use",
@@ -1375,7 +1389,8 @@ JSON:"""
                             "input": block.input,
                         })
 
-                messages.append({"role": "assistant", "content": assistant_content})
+                if assistant_content:
+                    messages.append({"role": "assistant", "content": assistant_content})
 
                 # Collect text from this turn (so we don't lose it if later turns have no text)
                 for block in response.content:
@@ -1395,9 +1410,9 @@ JSON:"""
                 # Execute each tool call (user-scoped)
                 tool_results = []
                 for call in tool_calls:
-                    logger.info(f"Tool call: {call.name}({json.dumps(call.input)[:200]})")
+                    logger.info(f"Tool call: {call.name}({json.dumps(call.input, default=str)[:200]})")
                     result = await execute_tool(call.name, call.input, user_id)
-                    logger.info(f"Tool result: {call.name} -> {json.dumps(result)[:200]}")
+                    logger.info(f"Tool result: {call.name} -> {json.dumps(result, default=str)[:200]}")
 
                     # Detect interactive workout session creation
                     if isinstance(result, dict) and result.get("_interactive_session"):
@@ -1406,7 +1421,7 @@ JSON:"""
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": call.id,
-                        "content": json.dumps(result),
+                        "content": json.dumps(result, default=str),
                     })
 
                 messages.append({"role": "user", "content": tool_results})
@@ -1422,7 +1437,9 @@ JSON:"""
                     "role": "user",
                     "content": "Please provide your final response to the user based on the tool results above. Be concise."
                 })
-                final_resp, final_err = _call_api(system, messages, tools=None, model=model, max_tokens=max_tokens)
+                final_resp, final_err = await asyncio.to_thread(
+                    _call_api, system, messages, tools=None, model=model, max_tokens=max_tokens
+                )
                 if final_resp and final_resp.content:
                     for block in final_resp.content:
                         if hasattr(block, "text") and block.text:
@@ -1441,7 +1458,8 @@ JSON:"""
             return final_text
 
         except Exception as e:
-            logger.error(f"Agent loop failed: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"Agent loop failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
             return "Something went wrong processing that. Try again or use a /command."
 
 
