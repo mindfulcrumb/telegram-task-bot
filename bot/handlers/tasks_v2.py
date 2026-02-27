@@ -1028,7 +1028,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Add feedback buttons on substantive responses (longer than a quick ack)
             show_feedback = len(response) > 80
             await _send_human(update, response, add_feedback=show_feedback)
-    elif not pending_session_id:
+    elif pending_session_id:
+        # Workout session created but brain returned no text — send brief intro
+        await _send_human(update, "Session ready. Let's go.")
+    else:
         await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
 
     if pending_session_id:
