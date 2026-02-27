@@ -29,7 +29,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not user.get("onboarding_completed"):
         await update.message.reply_text(
-            "You need to verify your phone number first. Type /start to begin."
+            "Finish setup first — type /start to pick up where you left off."
         )
         return
 

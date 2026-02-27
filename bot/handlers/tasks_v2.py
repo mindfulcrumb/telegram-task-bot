@@ -7,6 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
+from telegram import KeyboardButton, ReplyKeyboardMarkup
+
 from bot.services import user_service, task_service, tier_service
 from bot.ai.brain_v2 import ai_brain
 from bot.utils import typing_pause
@@ -50,9 +52,22 @@ async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict 
         context.user_data["db_user"] = user
 
     if not user.get("onboarding_completed"):
-        await update.message.reply_text(
-            "You need to verify your phone number first. Type /start to begin."
-        )
+        if not user.get("phone_number"):
+            # No phone yet — re-show the share button so they're not stuck
+            phone_keyboard = ReplyKeyboardMarkup(
+                [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
+                one_time_keyboard=True,
+                resize_keyboard=True,
+            )
+            await update.message.reply_text(
+                "Tap the button below to share your number.",
+                reply_markup=phone_keyboard,
+            )
+        else:
+            # Phone done but mid-onboarding — tap the buttons above
+            await update.message.reply_text(
+                "Almost done \u2014 tap one of the buttons above to finish setup."
+            )
         return None
     return user
 
