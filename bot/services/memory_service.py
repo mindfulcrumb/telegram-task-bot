@@ -81,11 +81,13 @@ def forget_memory(user_id: int, memory_id: int) -> bool:
 
 def forget_by_content(user_id: int, content_substring: str) -> int:
     """Delete memories matching a content substring. Returns count deleted."""
+    # Escape LIKE wildcards in user input to prevent over-matching
+    safe = content_substring.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     with get_cursor() as cur:
         cur.execute(
             """DELETE FROM user_memory WHERE user_id = %s
                AND LOWER(content) LIKE LOWER(%s) RETURNING id""",
-            (user_id, f"%{content_substring}%"),
+            (user_id, f"%{safe}%"),
         )
         return len(cur.fetchall())
 

@@ -1624,4 +1624,4 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
 
     except Exception as e:
         logger.error(f"Tool {name} failed: {type(e).__name__}: {e}")
-        return {"error": f"Tool failed: {type(e).__name__}: {str(e)[:100]}"}
+        return {"error": f"Tool temporarily unavailable. Please try again."}

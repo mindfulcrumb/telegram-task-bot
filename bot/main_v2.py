@@ -1,4 +1,5 @@
 """Main entry point — webhook or polling mode, multi-user, PostgreSQL."""
+import html as html_mod
 import sys
 import os
 import logging
@@ -134,15 +135,16 @@ class _HealthCheck(BaseHTTPRequestHandler):
 
             error = params.get("error", [None])[0]
             if error:
-                error_desc = params.get("error_description", ["Unknown"])[0]
-                logger.error(f"Google OAuth error: {error} — {error_desc}")
+                error_desc = params.get("error_description", ["Authorization denied"])[0]
+                logger.error(f"Google OAuth error: {error}")
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
+                safe_desc = html_mod.escape(error_desc)
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
                     f"<h1>Google Authorization Failed</h1>"
-                    f"<p>{error_desc}</p>"
+                    f"<p>{safe_desc}</p>"
                     f"<p>Please try again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
@@ -151,22 +153,32 @@ class _HealthCheck(BaseHTTPRequestHandler):
             code = params.get("code", [None])[0]
             state = params.get("state", [None])[0]
 
-            if not code or not state or not state.startswith("uid_"):
+            if not code or not state:
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b"Missing code or state. Please try again in Telegram.")
                 return
 
-            user_id = int(state.replace("uid_", ""))
-
+            # Validate CSRF state — cryptographic nonce check
             from bot.services import google_auth
+            user_id = google_auth.validate_oauth_state(state)
+            if user_id is None:
+                logger.warning(f"Google OAuth invalid/expired state: {state[:20]}...")
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Invalid or expired authorization. Please try again in Telegram.")
+                return
+
             success, error_msg = google_auth.exchange_code(user_id, code)
 
             if success:
-                # Detect scope level for appropriate success message
+                # Detect scope level — use full scope URLs
                 ws_scopes = [
-                    "gmail.readonly", "gmail.send", "drive.readonly",
-                    "tasks", "documents",
+                    "https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/gmail.send",
+                    "https://www.googleapis.com/auth/drive.readonly",
+                    "https://www.googleapis.com/auth/tasks",
+                    "https://www.googleapis.com/auth/documents",
                 ]
                 full_workspace = google_auth.has_scopes(user_id, ws_scopes)
 
@@ -197,10 +209,11 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.send_response(500)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
+                safe_err = html_mod.escape(error_msg or "Unknown error")
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
                     f"<h1>Failed to Connect Google</h1>"
-                    f"<p>{error_msg}</p>"
+                    f"<p>{safe_err}</p>"
                     f"<p>Please try again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
@@ -216,38 +229,41 @@ class _HealthCheck(BaseHTTPRequestHandler):
         try:
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
-            logger.info(f"WHOOP callback hit. Full path: {self.path}")
-            logger.info(f"WHOOP callback params: {params}")
+            logger.info("WHOOP callback hit")
 
             # Check for OAuth error response
             error = params.get("error", [None])[0]
             if error:
-                error_desc = params.get("error_description", ["Unknown"])[0]
-                logger.error(f"WHOOP OAuth error: {error} — {error_desc}")
+                logger.error(f"WHOOP OAuth error: {error}")
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>WHOOP Authorization Failed</h1>"
-                    f"<p>Error: {error}</p>"
-                    f"<p>{error_desc}</p>"
-                    f"<p>Please try /connect_whoop again in Telegram.</p>"
-                    f"</body></html>".encode()
+                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    b"<h1>WHOOP Authorization Failed</h1>"
+                    b"<p>Please try /connect_whoop again in Telegram.</p>"
+                    b"</body></html>"
                 )
                 return
 
             code = params.get("code", [None])[0]
             state = params.get("state", [None])[0]
 
-            if not code or not state or not state.startswith("uid_"):
-                logger.error(f"WHOOP callback missing params. code={bool(code)}, state={state}, path={self.path}")
+            if not code or not state:
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b"Missing code or state parameter. Please try /connect_whoop again in Telegram.")
                 return
 
-            user_id = int(state.replace("uid_", ""))
+            # Validate CSRF state — cryptographic nonce check
+            from bot.services.google_auth import validate_oauth_state
+            user_id = validate_oauth_state(state)
+            if user_id is None:
+                logger.warning("WHOOP OAuth invalid/expired state")
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Invalid or expired authorization. Please try /connect_whoop again in Telegram.")
+                return
 
             from bot.services import whoop_service
             success, error_msg = whoop_service.exchange_code(user_id, code)
@@ -274,15 +290,14 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>Failed to connect WHOOP</h1>"
-                    f"<p>{error_msg}</p>"
-                    f"<p>Please try /connect_whoop again in Telegram.</p>"
-                    f"</body></html>".encode()
+                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    b"<h1>Failed to connect WHOOP</h1>"
+                    b"<p>Please try /connect_whoop again in Telegram.</p>"
+                    b"</body></html>"
                 )
 
         except Exception as e:
-            logger.error(f"WHOOP callback error: {e}")
+            logger.error(f"WHOOP callback error: {type(e).__name__}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(b"Internal error during WHOOP connection")

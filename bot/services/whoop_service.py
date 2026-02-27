@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import urllib.parse
 from datetime import datetime, timedelta, date, timezone
 
@@ -63,8 +64,12 @@ def get_auth_url(user_id: int) -> str | None:
     if not client_id or not redirect_uri:
         return None
 
-    # State encodes user_id — WHOOP requires min 8 chars
-    state = f"uid_{user_id:06d}"
+    # CSRF protection: cryptographic nonce tied to user_id
+    nonce = secrets.token_urlsafe(16)
+    state = f"uid_{user_id:06d}_{nonce}"
+    # Store nonce for validation on callback
+    from bot.services.google_auth import _store_oauth_state
+    _store_oauth_state(user_id, nonce)
     params = urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -98,9 +103,8 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
         )
 
         if resp.status_code != 200:
-            body = resp.text[:500]
-            logger.error(f"WHOOP token exchange HTTP {resp.status_code}: {body}")
-            return False, f"HTTP {resp.status_code}: {body}"
+            logger.error(f"WHOOP token exchange failed: HTTP {resp.status_code}")
+            return False, f"Token exchange failed (HTTP {resp.status_code})"
 
         token_data = resp.json()
     except Exception as e:
@@ -115,8 +119,8 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
     scopes = token_data.get("scope", "")
 
     if not access_token:
-        logger.error(f"WHOOP token response missing access_token: {token_data}")
-        return False, f"No access_token in response. Keys: {list(token_data.keys())}"
+        logger.error(f"WHOOP token response missing access_token (keys: {list(token_data.keys())})")
+        return False, "No access_token in WHOOP response"
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
@@ -620,8 +624,8 @@ def verify_webhook_signature(body: bytes, signature: str, timestamp: str) -> boo
     """Verify WHOOP webhook HMAC-SHA256 signature."""
     secret = _get_client_secret()
     if not secret:
-        logger.warning("WHOOP webhook signature check skipped: no client secret")
-        return True  # Allow if not configured (dev mode)
+        logger.error("WHOOP webhook rejected: no client secret configured")
+        return False  # Fail closed — reject if secret not configured
 
     expected = hmac.new(
         secret.encode(),

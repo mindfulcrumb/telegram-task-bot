@@ -1,6 +1,7 @@
 """Google OAuth 2.0 — shared auth module for all Google Workspace APIs."""
 import logging
 import os
+import secrets
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 
@@ -70,7 +71,11 @@ def get_auth_url(user_id: int, scopes: str = None) -> str | None:
     if scopes is None:
         scopes = GOOGLE_WORKSPACE_SCOPES
 
-    state = f"uid_{user_id:06d}"
+    # CSRF protection: cryptographic nonce tied to user_id, stored in DB
+    nonce = secrets.token_urlsafe(32)
+    state = f"uid_{user_id:06d}_{nonce}"
+    _store_oauth_state(user_id, nonce)
+
     params = urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -81,6 +86,42 @@ def get_auth_url(user_id: int, scopes: str = None) -> str | None:
         "state": state,
     })
     return f"{GOOGLE_AUTH_URL}?{params}"
+
+
+def _store_oauth_state(user_id: int, nonce: str):
+    """Store OAuth state nonce in DB for CSRF validation (expires after 10 min)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """INSERT INTO oauth_states (user_id, nonce, expires_at)
+               VALUES (%s, %s, NOW() + INTERVAL '10 minutes')
+               ON CONFLICT (user_id) DO UPDATE SET
+                   nonce = EXCLUDED.nonce, expires_at = EXCLUDED.expires_at""",
+            (user_id, nonce),
+        )
+
+
+def validate_oauth_state(state: str) -> int | None:
+    """Validate OAuth state and return user_id if valid. Deletes state after use."""
+    if not state or "_" not in state:
+        return None
+    parts = state.split("_", 2)
+    if len(parts) < 3 or parts[0] != "uid":
+        return None
+    try:
+        user_id = int(parts[1])
+    except ValueError:
+        return None
+    nonce = parts[2]
+
+    with get_cursor() as cur:
+        cur.execute(
+            """DELETE FROM oauth_states
+               WHERE user_id = %s AND nonce = %s AND expires_at > NOW()
+               RETURNING user_id""",
+            (user_id, nonce),
+        )
+        row = cur.fetchone()
+        return row["user_id"] if row else None
 
 
 def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
@@ -98,9 +139,8 @@ def exchange_code(user_id: int, code: str) -> tuple[bool, str]:
         )
 
         if resp.status_code != 200:
-            body = resp.text[:500]
-            logger.error(f"Google token exchange HTTP {resp.status_code}: {body}")
-            return False, f"HTTP {resp.status_code}"
+            logger.error(f"Google token exchange failed: HTTP {resp.status_code}")
+            return False, f"Token exchange failed (HTTP {resp.status_code})"
 
         token_data = resp.json()
     except Exception as e:
@@ -156,7 +196,7 @@ def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
         )
 
         if resp.status_code != 200:
-            logger.error(f"Google token refresh HTTP {resp.status_code}: {resp.text[:200]}")
+            logger.error(f"Google token refresh failed for user {user_id}: HTTP {resp.status_code}")
             return None
 
         token_data = resp.json()
@@ -240,7 +280,25 @@ def has_scopes(user_id: int, required_scopes: list[str]) -> bool:
 
 
 def revoke_access(user_id: int):
-    """Disconnect Google -- delete tokens and legacy URL."""
+    """Disconnect Google — revoke token at Google, then delete locally."""
+    # Attempt to revoke at Google first (best-effort)
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT refresh_token FROM google_calendar_tokens WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+
+    if row and row.get("refresh_token"):
+        try:
+            _http.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": row["refresh_token"]},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        except Exception as e:
+            logger.warning(f"Google token revocation failed for user {user_id}: {e}")
+
     with get_cursor() as cur:
         cur.execute("DELETE FROM google_calendar_tokens WHERE user_id = %s", (user_id,))
         cur.execute("UPDATE users SET google_calendar_url = NULL WHERE id = %s", (user_id,))

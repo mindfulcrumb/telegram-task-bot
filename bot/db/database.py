@@ -351,6 +351,13 @@ def initialize():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
 
+            -- OAuth CSRF state tokens (short-lived, validated on callback)
+            CREATE TABLE IF NOT EXISTS oauth_states (
+                user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                nonce TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+
             -- Active workout sessions (interactive tracking)
             CREATE TABLE IF NOT EXISTS workout_sessions (
                 id SERIAL PRIMARY KEY,

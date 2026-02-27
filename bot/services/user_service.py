@@ -52,12 +52,18 @@ def get_or_create_user(telegram_user_id: int, username: str = None, first_name: 
             return dict(user)
 
         # Create new user — admin gets Pro tier automatically
+        # Use ON CONFLICT to handle race condition (two concurrent first messages)
         is_admin = _is_admin_id(telegram_user_id)
         tier = "pro" if is_admin else "free"
 
         cur.execute(
             """INSERT INTO users (telegram_user_id, telegram_username, first_name, is_admin, tier)
-               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+               VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (telegram_user_id) DO UPDATE SET
+                   last_active = NOW(),
+                   telegram_username = COALESCE(EXCLUDED.telegram_username, users.telegram_username),
+                   first_name = COALESCE(EXCLUDED.first_name, users.first_name)
+               RETURNING *""",
             (telegram_user_id, username, first_name, is_admin, tier)
         )
         new_user = dict(cur.fetchone())

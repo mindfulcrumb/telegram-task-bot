@@ -216,11 +216,16 @@ def interpret_biomarker(marker_name: str, value: float) -> dict:
 
 # ─── Food Reference ───────────────────────────────────────────────────
 
+_VALID_BLOOD_TYPES = {"o", "a", "b", "ab"}
+
+
 def search_foods(query: str, blood_type: str = None) -> list:
     """Search foods by name, optionally filtered by blood type classification."""
     with get_cursor() as cur:
         like_q = f"%{query.lower()}%"
         if blood_type:
+            if blood_type.lower() not in _VALID_BLOOD_TYPES:
+                return []
             bt_col = f"blood_type_{blood_type.lower()}"
             cur.execute(
                 f"""SELECT name, category, calories_per_100g, protein_g, carbs_g,
@@ -250,6 +255,8 @@ def search_foods(query: str, blood_type: str = None) -> list:
 def get_foods_by_blood_type(blood_type: str, classification: str = None,
                             category: str = None, query: str = None) -> list:
     """Get foods filtered by blood type and classification."""
+    if blood_type.lower() not in _VALID_BLOOD_TYPES:
+        return []
     bt_col = f"blood_type_{blood_type.lower()}"
     with get_cursor() as cur:
         sql = f"""SELECT name, category, calories_per_100g, protein_g,
