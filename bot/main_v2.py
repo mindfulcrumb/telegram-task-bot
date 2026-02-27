@@ -127,7 +127,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.wfile.write(f"Timer error: {e}".encode())
 
     def _handle_google_callback(self):
-        """Handle Google Calendar OAuth callback — exchange code for tokens."""
+        """Handle Google OAuth callback — exchange code for tokens (Calendar or full Workspace)."""
         try:
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
@@ -141,9 +141,9 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>Calendar Authorization Failed</h1>"
+                    f"<h1>Google Authorization Failed</h1>"
                     f"<p>{error_desc}</p>"
-                    f"<p>Please try /calendar again in Telegram.</p>"
+                    f"<p>Please try again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
                 return
@@ -154,24 +154,44 @@ class _HealthCheck(BaseHTTPRequestHandler):
             if not code or not state or not state.startswith("uid_"):
                 self.send_response(400)
                 self.end_headers()
-                self.wfile.write(b"Missing code or state. Please try /calendar again in Telegram.")
+                self.wfile.write(b"Missing code or state. Please try again in Telegram.")
                 return
 
             user_id = int(state.replace("uid_", ""))
 
-            from bot.services import calendar_service
-            success, error_msg = calendar_service.exchange_code(user_id, code)
+            from bot.services import google_auth
+            success, error_msg = google_auth.exchange_code(user_id, code)
 
             if success:
+                # Detect scope level for appropriate success message
+                ws_scopes = [
+                    "gmail.readonly", "gmail.send", "drive.readonly",
+                    "tasks", "documents",
+                ]
+                full_workspace = google_auth.has_scopes(user_id, ws_scopes)
+
+                if full_workspace:
+                    title = "Google Workspace Connected!"
+                    desc = (
+                        "Zoe now has access to your Calendar, Gmail, Drive, "
+                        "Tasks, and Docs. Just ask her anything."
+                    )
+                else:
+                    title = "Google Calendar Connected!"
+                    desc = (
+                        "Zoe now has access to your calendar for scheduling "
+                        "and morning briefings."
+                    )
+
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    b"<h1>Google Calendar Connected!</h1>"
-                    b"<p>You can close this window and go back to Telegram.</p>"
-                    b"<p>Zoe now has access to your calendar for scheduling and morning briefings.</p>"
-                    b"</body></html>"
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>{title}</h1>"
+                    f"<p>You can close this window and go back to Telegram.</p>"
+                    f"<p>{desc}</p>"
+                    f"</body></html>".encode()
                 )
             else:
                 self.send_response(500)
@@ -179,9 +199,9 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>Failed to Connect Calendar</h1>"
+                    f"<h1>Failed to Connect Google</h1>"
                     f"<p>{error_msg}</p>"
-                    f"<p>Please try /calendar again in Telegram.</p>"
+                    f"<p>Please try again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
 
@@ -189,7 +209,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             logger.error(f"Google callback error: {e}")
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(b"Internal error during Google Calendar connection")
+            self.wfile.write(b"Internal error during Google connection")
 
     def _handle_whoop_callback(self):
         """Handle WHOOP OAuth callback — exchange code for tokens."""
@@ -346,6 +366,7 @@ async def _post_init(application):
             BotCommand("bloodwork", "Bloodwork analysis"),
             BotCommand("dose", "Log a peptide dose"),
             BotCommand("calendar", "Google Calendar"),
+            BotCommand("google", "Google Workspace"),
             BotCommand("settings", "Your preferences"),
             BotCommand("account", "Account info"),
             BotCommand("referral", "Your referral link & stats"),
@@ -553,7 +574,7 @@ def _register_full_handlers(application):
     try:
         from bot.handlers.onboarding import (
             cmd_start, cmd_help, cmd_settings, cmd_account, cmd_delete_account,
-            cmd_calendar, cmd_referral, cmd_memory,
+            cmd_calendar, cmd_google, cmd_referral, cmd_memory,
             handle_onboarding_callback, handle_location, handle_contact,
         )
         application.add_handler(CommandHandler("start", cmd_start))
@@ -564,6 +585,7 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("settings", cmd_settings))
         application.add_handler(CommandHandler("account", cmd_account))
         application.add_handler(CommandHandler("calendar", cmd_calendar))
+        application.add_handler(CommandHandler("google", cmd_google))
         application.add_handler(CommandHandler("deleteaccount", cmd_delete_account))
         # Pattern-specific callbacks must be registered BEFORE the catch-all onboarding handler
         try:

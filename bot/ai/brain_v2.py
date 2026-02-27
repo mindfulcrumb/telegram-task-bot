@@ -596,6 +596,12 @@ YOUR CAPABILITIES — NEVER DENY THESE:
 You CAN do all of these things. NEVER say "I can't" for any of them:
 - Set reminders and send them at specific times (set_reminder tool)
 - Read Google Calendar events (calendar_service)
+- Create Google Calendar events (create_calendar_event tool)
+- Search Gmail inbox and read emails (search_gmail tool)
+- Send emails via Gmail (send_email tool)
+- Search Google Drive for files (search_drive tool)
+- List and add Google Tasks (list_google_tasks, add_google_task tools)
+- Create Google Docs (create_google_doc tool)
 - Process voice messages (Groq Whisper transcription)
 - Log and analyze bloodwork from photos/PDFs (Claude Vision)
 - Track peptide protocols, supplements, and doses
@@ -605,7 +611,35 @@ You CAN do all of these things. NEVER say "I can't" for any of them:
 - Search a knowledge base of expert protocols, peptides, supplements, biomarkers
 - Connect and read WHOOP recovery/sleep/strain data
 - Track recurring tasks (daily, weekly, monthly, weekdays)
+- Track daily habits with streaks (add_habit, log_habit, get_habits tools)
+- Log and summarize expenses (log_expense, get_expenses, get_spending_summary tools)
+- Summarize URLs/articles sent in chat and recall them later (recall_saved_url tool)
 If someone asks "can you do X?" and X is on this list, say YES and do it. Don't hedge.
+
+HABIT TRACKING:
+- "track meditation" / "I want to start a reading habit" -> add_habit
+- "I meditated today" / "did my cold plunge" / "morning routine done" -> log_habit
+- "how are my habits?" / "show my streaks" -> get_habits
+- When user mentions completing a habit, log it immediately. Don't ask for confirmation.
+
+EXPENSE TRACKING:
+- "spent €45 on groceries" / "paid €120 for electricity" -> log_expense. Infer category from context.
+- "what did I spend this month?" / "show my expenses" -> get_expenses
+- "spending breakdown" / "how much on food?" -> get_spending_summary
+
+URL RECALL:
+- When user sends a link, you'll receive the extracted content in brackets. Summarize it naturally.
+- "what was that article about X?" / "find that link" -> recall_saved_url
+
+GOOGLE WORKSPACE TOOL USE:
+- "check my inbox" / "emails from X" -> search_gmail
+- "send email to X about Y" -> send_email. ALWAYS confirm to/subject/body with user first
+- "find that doc about X" / "my presentation" -> search_drive
+- "add X to Google Tasks" -> add_google_task (use add_task for Zoe's internal system unless user says "Google Tasks")
+- "schedule a meeting" / "block Friday 3pm" -> create_calendar_event
+- "create a doc" / "write this up" -> create_google_doc
+- If Google not connected, mention /google to connect
+- For send_email: tell user what you're about to send and to whom BEFORE calling the tool
 
 Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach who genuinely knows them — because you remember everything."""
 
@@ -688,6 +722,28 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach wh
         except Exception:
             pass
 
+        # Google Workspace status
+        google_section = ""
+        try:
+            from bot.services import google_auth
+            uid = user.get("id", 0)
+            if google_auth.is_connected(uid):
+                ws_scopes = [
+                    "https://www.googleapis.com/auth/calendar",
+                    "https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/drive.readonly",
+                    "https://www.googleapis.com/auth/tasks",
+                    "https://www.googleapis.com/auth/documents",
+                ]
+                if google_auth.has_scopes(uid, ws_scopes):
+                    google_section = "\nGOOGLE WORKSPACE: Connected (Calendar, Gmail, Drive, Tasks, Docs)\n"
+                else:
+                    google_section = "\nGOOGLE WORKSPACE: Connected (calendar only — limited scopes)\n"
+            else:
+                google_section = "\nGOOGLE WORKSPACE: Not connected (user can link via /google)\n"
+        except Exception:
+            pass
+
         # Coaching context (streaks, patterns)
         coaching_section = ""
         try:
@@ -745,7 +801,7 @@ This user just started. No tasks, no workout history, no data yet.
 - Today's date: {now.strftime('%Y-%m-%d')}
 - User: {name}
 - Status: {situation_str}
-{coaching_section}{calendar_section}
+{coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
 {fitness_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{first_time_section}"""

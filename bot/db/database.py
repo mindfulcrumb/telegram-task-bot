@@ -654,6 +654,73 @@ def initialize():
 
             CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_telegram_id);
             CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_telegram_id);
+
+            -- ═══════════════════════════════════════════════════════════
+            -- TIER 1 FEATURES (Feb 2026 — habits, expenses, URL summaries, gmail alerts)
+            -- ═══════════════════════════════════════════════════════════
+
+            -- Gmail history tracking (for smart email alerts)
+            ALTER TABLE google_calendar_tokens ADD COLUMN IF NOT EXISTS gmail_history_id BIGINT;
+
+            -- Habits
+            CREATE TABLE IF NOT EXISTS habits (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(100) NOT NULL,
+                frequency VARCHAR(20) DEFAULT 'daily',
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS habit_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL,
+                habit_id INT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+                logged_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(habit_id, logged_date)
+            );
+
+            CREATE TABLE IF NOT EXISTS habit_streaks (
+                id SERIAL PRIMARY KEY,
+                habit_id INT UNIQUE NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+                current_streak INT DEFAULT 0,
+                longest_streak INT DEFAULT 0,
+                last_completion_date DATE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_habits_user ON habits(user_id, active);
+            CREATE INDEX IF NOT EXISTS idx_habit_logs_habit ON habit_logs(habit_id, logged_date);
+            CREATE INDEX IF NOT EXISTS idx_habit_logs_user ON habit_logs(user_id, logged_date);
+
+            -- Expenses
+            CREATE TABLE IF NOT EXISTS expenses (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount DECIMAL(10,2) NOT NULL,
+                currency VARCHAR(3) DEFAULT 'EUR',
+                category VARCHAR(50),
+                description TEXT,
+                expense_date DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_expenses_user_date ON expenses(user_id, expense_date);
+
+            -- URL summaries (saved articles, videos, links)
+            CREATE TABLE IF NOT EXISTS url_summaries (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                domain TEXT,
+                title TEXT,
+                summary TEXT,
+                content_type VARCHAR(20),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_url_summaries_user ON url_summaries(user_id, created_at);
         """)
     logger.info("PostgreSQL schema initialized")
 

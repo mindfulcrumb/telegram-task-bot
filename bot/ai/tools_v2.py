@@ -427,6 +427,194 @@ def get_tool_definitions() -> list:
                 "required": ["peptide_name"]
             }
         },
+        # --- Google Workspace tools ---
+        {
+            "name": "search_gmail",
+            "description": "Search the user's Gmail inbox. Use when they ask about emails, messages from someone, unread mail, or want to find a specific email. Returns subject, sender, date, and snippet for each result.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Gmail search query. Examples: 'from:boss@company.com is:unread', 'subject:invoice newer_than:7d', 'is:unread'"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max emails to return (default: 5, max: 10)"
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "send_email",
+            "description": "Send an email via Gmail. Use when user asks to send, reply to, or draft an email. IMPORTANT: Always confirm recipient, subject, and body with the user before calling this tool unless they were completely explicit about all three.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject line"},
+                    "body": {"type": "string", "description": "Email body text (plain text)"}
+                },
+                "required": ["to", "subject", "body"]
+            }
+        },
+        {
+            "name": "search_drive",
+            "description": "Search Google Drive for files and documents. Use when user asks to find a file, document, spreadsheet, or presentation. Returns file name, type, and shareable link.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search term (file name or keyword). For advanced queries use Drive syntax: 'mimeType=\"application/pdf\"', 'modifiedTime > \"2024-01-01\"'"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max files to return (default: 5)"
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "list_google_tasks",
+            "description": "List tasks from Google Tasks (separate from Zoe's internal task system). Use when user specifically asks about their Google Tasks, or wants to see tasks from Google Calendar/Tasks app.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "show_completed": {
+                        "type": "boolean",
+                        "description": "Whether to include completed tasks (default: false)"
+                    }
+                }
+            }
+        },
+        {
+            "name": "add_google_task",
+            "description": "Add a task to Google Tasks. Use ONLY when user explicitly wants to add to Google Tasks (not Zoe's internal tasks). Prefer add_task for Zoe's system unless user specifically says 'Google Tasks'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Task title"},
+                    "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format"},
+                    "notes": {"type": "string", "description": "Task notes or description"}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "create_calendar_event",
+            "description": "Create a new event on Google Calendar. Use when user asks to schedule something, add a meeting, block time, or create a calendar event.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "Event title"},
+                    "start_datetime": {"type": "string", "description": "Start in ISO format YYYY-MM-DDTHH:MM:SS"},
+                    "end_datetime": {"type": "string", "description": "End in ISO format YYYY-MM-DDTHH:MM:SS. Default to 1 hour after start if not specified."},
+                    "description": {"type": "string", "description": "Event description or notes"},
+                    "location": {"type": "string", "description": "Event location"}
+                },
+                "required": ["summary", "start_datetime", "end_datetime"]
+            }
+        },
+        {
+            "name": "create_google_doc",
+            "description": "Create a new Google Doc. Use when user asks to create a document, write something up, or start a new doc. Returns the editable document link.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Document title"},
+                    "content": {"type": "string", "description": "Initial document content (optional)"}
+                },
+                "required": ["title"]
+            }
+        },
+        # --- Habit tracking ---
+        {
+            "name": "add_habit",
+            "description": "Create a new daily habit to track. Use when user wants to start tracking a habit like meditation, reading, cold plunge, journaling, etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Habit name (e.g. 'meditation', 'cold plunge', 'reading')"},
+                    "frequency": {"type": "string", "enum": ["daily", "weekdays", "weekly"], "description": "How often. Default daily."}
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "log_habit",
+            "description": "Log a habit as completed for today. Use when user says they did a habit (e.g. 'I meditated', 'did my cold plunge', 'morning routine done'). Also use for checking off habits.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "habit_name": {"type": "string", "description": "Name of the habit to log (must match an existing habit)"}
+                },
+                "required": ["habit_name"]
+            }
+        },
+        {
+            "name": "get_habits",
+            "description": "Get all tracked habits with today's completion status and streak info. Use when user asks about habits, streaks, or habit progress.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "include_summary": {"type": "boolean", "description": "Include 7-day and 30-day completion rates. Default false."}
+                },
+                "required": []
+            }
+        },
+        # --- Expense tracking ---
+        {
+            "name": "log_expense",
+            "description": "Log an expense. Use when user mentions spending money (e.g. 'spent €45 on groceries', 'paid €120 for electricity'). Infer category from context.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "number", "description": "Amount spent"},
+                    "currency": {"type": "string", "description": "Currency code (EUR, USD, GBP). Default EUR."},
+                    "category": {"type": "string", "enum": ["food", "transport", "utilities", "health", "shopping", "entertainment", "subscriptions", "dining", "travel", "education", "other"], "description": "Expense category — infer from context"},
+                    "description": {"type": "string", "description": "What the expense was for"},
+                    "expense_date": {"type": "string", "description": "Date in YYYY-MM-DD format. Default today."}
+                },
+                "required": ["amount", "description"]
+            }
+        },
+        {
+            "name": "get_expenses",
+            "description": "Get recent expenses. Use when user asks what they spent, expense history, recent purchases.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Number of days to look back. Default 30."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_spending_summary",
+            "description": "Get spending summary by category. Use when user asks for spending breakdown, totals by category, or monthly spending.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Number of days to look back. Default 30."}
+                },
+                "required": []
+            }
+        },
+        # --- URL recall ---
+        {
+            "name": "recall_saved_url",
+            "description": "Search previously saved URL summaries. Use when user asks about a link they sent before (e.g. 'what was that article about creatine?', 'find that link I sent').",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search keyword(s) to find in saved URL titles, summaries, or domains"}
+                },
+                "required": ["query"]
+            }
+        },
     ]
 
 
@@ -1138,6 +1326,226 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 return {"type": "regulatory", "result": status}
             return {"type": "regulatory", "result": None,
                     "message": f"No regulatory data for '{peptide_name}'"}
+
+        # --- Google Workspace tools ---
+        elif name == "search_gmail":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/gmail.readonly"]):
+                return {"error": "Gmail access not granted. Tell the user to use /google to connect with full permissions."}
+            results = google_workspace.search_gmail(
+                user_id,
+                query=args["query"],
+                max_results=min(args.get("max_results", 5), 10),
+            )
+            if not results:
+                return {"emails": [], "message": "No emails found matching that search."}
+            return {"emails": results, "count": len(results)}
+
+        elif name == "send_email":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/gmail.send"]):
+                return {"error": "Gmail send permission not granted. Tell the user to use /google to reconnect with full permissions."}
+            success = google_workspace.send_email(
+                user_id,
+                to=args["to"],
+                subject=args["subject"],
+                body=args["body"],
+            )
+            if success:
+                return {"success": True, "to": args["to"], "subject": args["subject"]}
+            return {"error": "Failed to send email. Check the recipient address and try again."}
+
+        elif name == "search_drive":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/drive.readonly"]):
+                return {"error": "Drive access not granted. Tell the user to use /google to connect with full permissions."}
+            files = google_workspace.search_drive(
+                user_id,
+                query=args["query"],
+                max_results=args.get("max_results", 5),
+            )
+            if not files:
+                return {"files": [], "message": "No files found matching that search."}
+            return {"files": files, "count": len(files)}
+
+        elif name == "list_google_tasks":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/tasks"]):
+                return {"error": "Google Tasks access not granted. Tell the user to use /google to connect."}
+            tasks = google_workspace.list_google_tasks(
+                user_id,
+                show_completed=args.get("show_completed", False),
+            )
+            return {"tasks": tasks, "count": len(tasks)}
+
+        elif name == "add_google_task":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/tasks"]):
+                return {"error": "Google Tasks access not granted. Tell the user to use /google to connect."}
+            due = None
+            if args.get("due_date"):
+                try:
+                    d = datetime.fromisoformat(args["due_date"])
+                    due = d.strftime("%Y-%m-%dT09:00:00.000Z")
+                except (ValueError, TypeError):
+                    pass
+            task = google_workspace.add_google_task(
+                user_id,
+                title=args["title"],
+                due_date=due,
+                notes=args.get("notes"),
+            )
+            if task:
+                return {"success": True, "title": args["title"], "task_id": task.get("id")}
+            return {"error": "Failed to add task to Google Tasks."}
+
+        elif name == "create_calendar_event":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import calendar_service
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/calendar"]):
+                return {"error": "Calendar write permission not granted. Tell the user to use /google to reconnect with full permissions."}
+            try:
+                start = datetime.fromisoformat(args["start_datetime"])
+                end = datetime.fromisoformat(args["end_datetime"])
+            except (ValueError, TypeError):
+                return {"error": "Invalid datetime format. Use YYYY-MM-DDTHH:MM:SS"}
+            event = calendar_service.create_event(
+                user_id=user_id,
+                summary=args["summary"],
+                start_dt=start,
+                end_dt=end,
+                description=args.get("description"),
+                location=args.get("location"),
+            )
+            if event:
+                return {
+                    "success": True,
+                    "event": args["summary"],
+                    "start": args["start_datetime"],
+                    "link": event.get("htmlLink", ""),
+                }
+            return {"error": "Failed to create calendar event."}
+
+        elif name == "create_google_doc":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import google_workspace
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/documents"]):
+                return {"error": "Google Docs access not granted. Tell the user to use /google to connect."}
+            doc = google_workspace.create_google_doc(
+                user_id,
+                title=args["title"],
+                content=args.get("content"),
+            )
+            if doc:
+                return {
+                    "success": True,
+                    "title": args["title"],
+                    "link": doc["link"],
+                    "doc_id": doc["id"],
+                }
+            return {"error": "Failed to create document."}
+
+        # --- Habit tracking executors ---
+
+        elif name == "add_habit":
+            from bot.services import habit_service
+            habit = habit_service.add_habit(
+                user_id, args["name"], args.get("frequency", "daily")
+            )
+            if habit:
+                return {"success": True, "habit": habit["name"], "frequency": habit["frequency"]}
+            return {"error": f"Habit '{args['name']}' already exists or couldn't be created."}
+
+        elif name == "log_habit":
+            from bot.services import habit_service
+            result = habit_service.log_habit(user_id, args["habit_name"])
+            if result is None:
+                return {"error": f"No active habit matching '{args['habit_name']}'. Check /habits or tell the user to add it first."}
+            return result
+
+        elif name == "get_habits":
+            from bot.services import habit_service
+            if args.get("include_summary"):
+                summary = habit_service.get_habit_summary(user_id)
+                return summary
+            habits = habit_service.get_habits(user_id)
+            if not habits:
+                return {"habits": [], "message": "No habits tracked yet."}
+            return {
+                "habits": [
+                    {
+                        "name": h["name"],
+                        "done_today": h.get("done_today", False),
+                        "current_streak": h.get("current_streak", 0),
+                        "longest_streak": h.get("longest_streak", 0),
+                    }
+                    for h in habits
+                ],
+                "done_today": sum(1 for h in habits if h.get("done_today")),
+                "total": len(habits),
+            }
+
+        # --- Expense tracking executors ---
+
+        elif name == "log_expense":
+            from bot.services import expense_service
+            expense_date = None
+            if args.get("expense_date"):
+                try:
+                    expense_date = datetime.fromisoformat(args["expense_date"]).date()
+                except (ValueError, TypeError):
+                    pass
+            expense = expense_service.log_expense(
+                user_id,
+                amount=args["amount"],
+                currency=args.get("currency", "EUR"),
+                category=args.get("category", "other"),
+                description=args["description"],
+                expense_date=expense_date,
+            )
+            if expense:
+                return {"success": True, "amount": args["amount"], "currency": args.get("currency", "EUR"), "category": args.get("category", "other"), "description": args["description"]}
+            return {"error": "Failed to log expense."}
+
+        elif name == "get_expenses":
+            from bot.services import expense_service
+            expenses = expense_service.get_expenses(user_id, days=args.get("days", 30))
+            if not expenses:
+                return {"expenses": [], "message": "No expenses found."}
+            return {"expenses": expenses, "count": len(expenses)}
+
+        elif name == "get_spending_summary":
+            from bot.services import expense_service
+            summary = expense_service.get_spending_summary(user_id, days=args.get("days", 30))
+            return summary
+
+        # --- URL recall executor ---
+
+        elif name == "recall_saved_url":
+            from bot.services import url_summarizer
+            results = url_summarizer.search_saved_urls(user_id, args["query"])
+            if not results:
+                return {"results": [], "message": "No saved URLs matching that query."}
+            return {"results": results, "count": len(results)}
 
         else:
             return {"error": f"Unknown tool: {name}"}

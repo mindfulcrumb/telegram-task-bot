@@ -620,6 +620,99 @@ async def initial_content_extraction_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Initial content extraction job failed: {e}")
 
 
+# --- Gmail Alert Check ---
+
+# In-memory dedup set (capped at 1000) to avoid re-notifying same messages
+_notified_gmail_ids: set[str] = set()
+
+
+async def gmail_check_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 120s. Checks for new inbox emails and notifies user via Telegram."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            uid = user["id"]
+            tg_id = user["telegram_user_id"]
+
+            # Only check users with Gmail scope connected
+            from bot.services.google_auth import is_connected, has_scopes
+            if not is_connected(uid):
+                continue
+            if not has_scopes(uid, ["https://www.googleapis.com/auth/gmail.readonly"]):
+                continue
+
+            from bot.services import google_workspace
+            from bot.db.database import get_cursor
+
+            # Get stored history ID
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT gmail_history_id FROM google_calendar_tokens WHERE user_id = %s",
+                    (uid,),
+                )
+                row = cur.fetchone()
+
+            stored_history_id = row.get("gmail_history_id") if row else None
+
+            if not stored_history_id:
+                # First run — just store the current history ID, don't notify
+                current_id = google_workspace.get_profile_history_id(uid)
+                if current_id:
+                    with get_cursor() as cur:
+                        cur.execute(
+                            "UPDATE google_calendar_tokens SET gmail_history_id = %s WHERE user_id = %s",
+                            (current_id, uid),
+                        )
+                continue
+
+            # Check for new messages since last history ID
+            new_messages, new_history_id = google_workspace.get_history_changes(
+                uid, stored_history_id
+            )
+
+            # Update stored history ID
+            if new_history_id and new_history_id != stored_history_id:
+                with get_cursor() as cur:
+                    cur.execute(
+                        "UPDATE google_calendar_tokens SET gmail_history_id = %s WHERE user_id = %s",
+                        (new_history_id, uid),
+                    )
+
+            if not new_messages:
+                continue
+
+            # Dedup and notify
+            for msg in new_messages[:5]:
+                msg_id = msg.get("id", "")
+                if msg_id in _notified_gmail_ids:
+                    continue
+                _notified_gmail_ids.add(msg_id)
+
+                sender = msg.get("from", "Unknown")
+                subject = msg.get("subject", "(no subject)")
+                snippet = msg.get("snippet", "")[:100]
+
+                notification = (
+                    f"New email from {sender}\n"
+                    f"{subject}\n\n"
+                    f"{snippet}"
+                )
+                try:
+                    await context.bot.send_message(chat_id=tg_id, text=notification)
+                except Exception as e:
+                    logger.warning(f"Failed to send gmail notification to {tg_id}: {e}")
+
+            # Cap dedup set
+            if len(_notified_gmail_ids) > 1000:
+                # Remove oldest half
+                to_remove = list(_notified_gmail_ids)[:500]
+                for item in to_remove:
+                    _notified_gmail_ids.discard(item)
+
+        except Exception as e:
+            logger.error(f"Gmail check failed for user {user.get('id')}: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -668,7 +761,10 @@ def setup_proactive_jobs(application):
     # One-time deep content extraction: runs once 5 min after startup, then stops
     jq.run_once(initial_content_extraction_job, when=300, name="initial_content_extraction")
 
-    logger.info("Proactive coaching jobs registered (14 jobs)")
+    # Gmail new email alerts: every 2 minutes
+    jq.run_repeating(gmail_check_job, interval=120, first=90, name="gmail_alerts")
+
+    logger.info("Proactive coaching jobs registered (15 jobs)")
 
 
 # --- Helpers ---
@@ -754,6 +850,42 @@ def _generate_briefing(user, tasks, streak, patterns):
         except Exception:
             pass
 
+        # Cross-domain intelligence data
+        cross_domain = ""
+        try:
+            # Gmail unread count
+            from bot.services.google_auth import is_connected, has_scopes
+            if is_connected(user["id"]) and has_scopes(user["id"], ["https://www.googleapis.com/auth/gmail.readonly"]):
+                from bot.services import google_workspace
+                unread = google_workspace.get_unread_count(user["id"])
+                if unread > 0:
+                    cross_domain += f"Gmail: {unread} unread emails\n"
+        except Exception:
+            pass
+        try:
+            # Habit streaks
+            from bot.services import habit_service
+            habits = habit_service.get_habits(user["id"])
+            if habits:
+                done = sum(1 for h in habits if h.get("done_today"))
+                active_streaks = [h for h in habits if (h.get("current_streak") or 0) >= 3]
+                cross_domain += f"Habits: {done}/{len(habits)} done today"
+                if active_streaks:
+                    streak_names = ", ".join(f"{h['name']} ({h['current_streak']}d)" for h in active_streaks[:3])
+                    cross_domain += f" | Active streaks: {streak_names}"
+                cross_domain += "\n"
+        except Exception:
+            pass
+        try:
+            # Yesterday's spending
+            from bot.services import expense_service
+            from datetime import timedelta as td
+            yesterday_total = expense_service.get_daily_total(user["id"], date.today() - td(days=1))
+            if yesterday_total > 0:
+                cross_domain += f"Yesterday's spending: \u20ac{yesterday_total:.0f}\n"
+        except Exception:
+            pass
+
         prompt = (
             f"Generate a morning briefing for {user.get('first_name', 'friend')}.\n\n"
             f"Tasks ({len(tasks)} total, {len(overdue)} overdue, {len(due_today)} due today):\n"
@@ -761,14 +893,23 @@ def _generate_briefing(user, tasks, streak, patterns):
             + cal_section
             + whoop_section
             + fitness_section
+            + cross_domain
             + f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
             f"Most productive: {patterns.get('most_productive_day', 'varies')}\n"
             f"Best time: {patterns.get('preferred_time', 'varies')}\n\n"
             "Write 2-3 SHORT paragraphs separated by blank lines (double newline).\n"
             "Each paragraph is 1-2 sentences. Under 15 words per sentence.\n"
             "Total under 400 chars.\n\n"
+            "CROSS-DOMAIN INTELLIGENCE (use these correlations to give smarter advice):\n"
+            "- If WHOOP recovery < 40% AND intense workout scheduled: suggest swapping to recovery/mobility\n"
+            "- If WHOOP recovery < 40% AND big meeting on calendar: suggest lighter prep, mention low energy\n"
+            "- If 5+ overdue tasks AND workout scheduled: prioritize tasks, keep workout short\n"
+            "- If sleep < 6 hours: suggest caffeine timing, lighter training, earlier bedtime\n"
+            "- If workout streak at risk (last workout 2+ days ago): mention it, suggest quick session\n"
+            "- If habit streaks are active: acknowledge them, encourage consistency\n\n"
             "If WHOOP data is available, mention recovery zone and suggest training intensity.\n"
             "Mention calendar events if any. Say which task to start with.\n"
+            "Mention unread emails if significant (5+). Mention habit streaks if active.\n"
             "Mention streak if > 0.\n\n"
             "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block.\n"
             "No markdown formatting. No asterisks, no hyphens as bullets."
@@ -878,6 +1019,30 @@ def _generate_daily_assessment(user):
         except Exception:
             pass
 
+        # Habit completion
+        habit_section = ""
+        try:
+            from bot.services import habit_service
+            habits = habit_service.get_habits(user["id"])
+            if habits:
+                done = sum(1 for h in habits if h.get("done_today"))
+                habit_section = f"Habits: {done}/{len(habits)} completed today\n"
+                incomplete = [h["name"] for h in habits if not h.get("done_today")]
+                if incomplete:
+                    habit_section += f"Missed: {', '.join(incomplete[:3])}\n"
+        except Exception:
+            pass
+
+        # Today's spending
+        spending_section = ""
+        try:
+            from bot.services import expense_service
+            today_total = expense_service.get_daily_total(user["id"])
+            if today_total > 0:
+                spending_section = f"Spending today: \u20ac{today_total:.0f}\n"
+        except Exception:
+            pass
+
         # Build data block for AI
         data_block = (
             f"Tasks completed today: {daily['completed_today']}\n"
@@ -888,6 +1053,8 @@ def _generate_daily_assessment(user):
             + whoop_section
             + supplement_section
             + protocol_section
+            + habit_section
+            + spending_section
         )
 
         prompt = (
@@ -898,6 +1065,8 @@ def _generate_daily_assessment(user):
             "Total under 400 chars.\n\n"
             "Start with how the day went. Acknowledge what went well.\n"
             "If tasks were missed or overdue grew, address it gently.\n"
+            "Mention habits completed/missed. Mention spending if logged.\n"
+            "Correlate: recovery + training + sleep + productivity = overall readiness.\n"
             "End with ONE suggestion for tomorrow.\n\n"
             "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block of text.\n"
             "No markdown formatting. No asterisks, no hyphens as bullets."

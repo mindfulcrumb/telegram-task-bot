@@ -947,6 +947,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # URL detection — extract content from links and prepend as context
+    urls = []
+    try:
+        from bot.services.url_summarizer import extract_urls_from_entities, extract_content
+        urls = extract_urls_from_entities(update.message)
+        if urls:
+            for url in urls[:2]:  # Max 2 URLs per message
+                content_type, extracted = extract_content(url)
+                if extracted:
+                    from urllib.parse import urlparse
+                    domain = urlparse(url).hostname or "link"
+                    text = f"[URL content from {domain} ({content_type}): {extracted[:4000]}]\n\n{text}"
+    except Exception as e:
+        logger.warning(f"URL extraction failed: {e}")
+
     # Keep typing dots alive the entire time AI is processing
     chat = update.message.chat
     typing_active = True
@@ -979,6 +994,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         typing_active = False
         typing_task.cancel()
+
+    # Save URL summaries for later recall (fire-and-forget)
+    if response and urls:
+        try:
+            from bot.services.url_summarizer import save_url_summary
+            for url in urls[:2]:
+                # Use first 150 chars of response as summary, URL as title
+                from urllib.parse import urlparse as _urlparse
+                _domain = _urlparse(url).hostname or "link"
+                _title = f"Content from {_domain}"
+                _summary = response[:300] if response else ""
+                _ct = "article"
+                try:
+                    from bot.services.url_summarizer import classify_url
+                    _ct = classify_url(url)
+                except Exception:
+                    pass
+                save_url_summary(user["id"], url, _title, _summary, _ct)
+        except Exception as e:
+            logger.warning(f"Failed to save URL summary: {e}")
 
     # Check for pending interactive workout session
     pending_session_id = ai_brain._pending_session.pop(user["id"], None)

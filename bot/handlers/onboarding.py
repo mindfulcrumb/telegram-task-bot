@@ -941,6 +941,78 @@ async def cmd_delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
+# ── /google ──────────────────────────────────────────────────────────
+
+async def cmd_google(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Connect, view, or disconnect Google Workspace."""
+    user = await _ensure_user(update, context)
+    if not user:
+        return
+
+    from bot.services import google_auth
+
+    args = context.args
+
+    # Disconnect
+    if args and args[0].lower() == "disconnect":
+        google_auth.revoke_access(user["id"])
+        await _typing_pause(update.message.chat, 0.5)
+        await update.message.reply_text("Google disconnected.")
+        return
+
+    if not google_auth.is_configured():
+        await update.message.reply_text(
+            "Google integration isn't set up yet."
+        )
+        return
+
+    # Already connected — check scope level
+    if google_auth.is_connected(user["id"]):
+        full_scopes = [
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/documents",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ]
+        has_full = google_auth.has_scopes(user["id"], full_scopes)
+
+        if has_full:
+            await _typing_pause(update.message.chat, 0.5)
+            await update.message.reply_text(
+                "Google Workspace is connected.\n"
+                "Calendar, Gmail, Drive, Tasks, Docs — all good.\n\n"
+                "To disconnect: /google disconnect"
+            )
+        else:
+            # Connected with limited scopes — prompt upgrade
+            url = google_auth.get_auth_url(user["id"])
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Upgrade Google permissions", url=url)]
+            ])
+            await _typing_pause(update.message.chat, 0.6)
+            await update.message.reply_text(
+                "Google Calendar is connected, but with limited access.\n\n"
+                "Upgrade to also use Gmail, Drive, Tasks, and Docs.",
+                reply_markup=keyboard,
+            )
+        return
+
+    # Not connected — show connect button
+    url = google_auth.get_auth_url(user["id"])
+    if url:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Connect Google Workspace", url=url)]
+        ])
+        await _typing_pause(update.message.chat, 0.6)
+        await update.message.reply_text(
+            "Connect Google so I can access your Calendar, Gmail, "
+            "Drive, Tasks, and Docs.\n\n"
+            "Tap below, sign in, and authorize.",
+            reply_markup=keyboard,
+        )
+
+
 # ── /calendar ─────────────────────────────────────────────────────────
 
 async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
