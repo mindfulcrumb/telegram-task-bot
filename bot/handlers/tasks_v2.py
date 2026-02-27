@@ -64,10 +64,10 @@ async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict 
                 reply_markup=phone_keyboard,
             )
         else:
-            # Phone done but mid-onboarding — tap the buttons above
-            await update.message.reply_text(
-                "Almost done \u2014 tap one of the buttons above to finish setup."
-            )
+            # Phone done but mid-onboarding — re-send the next step
+            from bot.handlers.onboarding import _send_segmentation
+            await update.message.reply_text("Almost done \u2014 one more thing.")
+            await _send_segmentation(update.message, context)
         return None
     return user
 
