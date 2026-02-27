@@ -341,6 +341,37 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_segmentation(update.message, context)
 
 
+# ── Resume onboarding from where user left off ───────────────────────
+
+async def resume_onboarding(message, context):
+    """Figure out which onboarding step the user is on and re-send it."""
+    ob = context.user_data.get("ob", {})
+    focus = ob.get("focus")
+
+    if not focus:
+        await _send_segmentation(message, context)
+    elif focus == "tasks":
+        # Tasks-only track skips fitness → goes straight to timezone
+        await _send_timezone(message, context)
+    elif not ob.get("goal"):
+        await _send_goal(message, context)
+    elif not ob.get("experience"):
+        await _send_experience(message, context)
+    elif not ob.get("days"):
+        await _send_frequency(message, context)
+    elif not ob.get("equipment"):
+        await _send_equipment(message, context)
+    elif not ob.get("style"):
+        await _send_style(message, context)
+    elif "injury" not in ob:
+        await _send_injuries(message, context)
+    elif "biohacking" not in ob:
+        await _send_biohacking(message, context)
+    else:
+        # All questions answered — must be on the timezone/location step
+        await _send_timezone(message, context)
+
+
 # ── Onboarding step senders ──────────────────────────────────────────
 
 async def _send_segmentation(message, context):
