@@ -955,100 +955,108 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # URL detection — extract content from links and prepend as context
-    urls = []
     try:
-        from bot.services.url_summarizer import extract_urls_from_entities, extract_content
-        urls = extract_urls_from_entities(update.message)
-        if urls:
-            for url in urls[:2]:  # Max 2 URLs per message
-                content_type, extracted = extract_content(url)
-                if extracted:
-                    from urllib.parse import urlparse
-                    domain = urlparse(url).hostname or "link"
-                    text = f"[URL content from {domain} ({content_type}): {extracted[:4000]}]\n\n{text}"
-    except Exception as e:
-        logger.warning(f"URL extraction failed: {e}")
-
-    # Keep typing dots alive the entire time AI is processing
-    chat = update.message.chat
-    typing_active = True
-
-    async def _typing_loop():
-        while typing_active:
-            try:
-                await chat.send_action(ChatAction.TYPING)
-            except Exception:
-                pass
-            await asyncio.sleep(4)
-
-    typing_task = asyncio.create_task(_typing_loop())
-
-    try:
-        async def _keep_typing():
-            await chat.send_action(ChatAction.TYPING)
-
-        tasks = task_service.get_tasks(user["id"])
-
-        # Timeout safety: if brain takes >120s, return a fallback instead of hanging
+        # URL detection — extract content from links and prepend as context
+        urls = []
         try:
-            response = await asyncio.wait_for(
-                ai_brain.process(text, user, tasks, typing_callback=_keep_typing),
-                timeout=120.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error(f"Brain processing timed out for user {user['id']}")
-            response = "That took too long — try again or break your question into something simpler."
-    finally:
-        typing_active = False
-        typing_task.cancel()
+            from bot.services.url_summarizer import extract_urls_from_entities, extract_content
+            urls = extract_urls_from_entities(update.message)
+            if urls:
+                for url in urls[:2]:  # Max 2 URLs per message
+                    content_type, extracted = extract_content(url)
+                    if extracted:
+                        from urllib.parse import urlparse
+                        domain = urlparse(url).hostname or "link"
+                        text = f"[URL content from {domain} ({content_type}): {extracted[:4000]}]\n\n{text}"
+        except Exception as e:
+            logger.warning(f"URL extraction failed: {e}")
 
-    # Save URL summaries for later recall (fire-and-forget)
-    if response and urls:
-        try:
-            from bot.services.url_summarizer import save_url_summary
-            for url in urls[:2]:
-                # Use first 150 chars of response as summary, URL as title
-                from urllib.parse import urlparse as _urlparse
-                _domain = _urlparse(url).hostname or "link"
-                _title = f"Content from {_domain}"
-                _summary = response[:300] if response else ""
-                _ct = "article"
+        # Keep typing dots alive the entire time AI is processing
+        chat = update.message.chat
+        typing_active = True
+
+        async def _typing_loop():
+            while typing_active:
                 try:
-                    from bot.services.url_summarizer import classify_url
-                    _ct = classify_url(url)
+                    await chat.send_action(ChatAction.TYPING)
                 except Exception:
                     pass
-                save_url_summary(user["id"], url, _title, _summary, _ct)
-        except Exception as e:
-            logger.warning(f"Failed to save URL summary: {e}")
+                await asyncio.sleep(4)
 
-    # Check for pending interactive workout session
-    pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+        typing_task = asyncio.create_task(_typing_loop())
 
-    if response:
-        # If paywall was hit, attach subscribe button
-        if ai_brain._paywall_hit:
-            from bot.handlers.payments import get_subscribe_keyboard
-            keyboard = get_subscribe_keyboard(update.effective_user.id)
-            await update.message.reply_text(response, reply_markup=keyboard)
-        else:
-            # Add feedback buttons on substantive responses (longer than a quick ack)
-            show_feedback = len(response) > 80
-            await _send_human(update, response, add_feedback=show_feedback)
-    elif pending_session_id:
-        # Workout session created but brain returned no text — send brief intro
-        await _send_human(update, "Session ready. Let's go.")
-    else:
-        await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
-
-    if pending_session_id:
-        from bot.handlers.workout_session import send_current_exercise
         try:
-            await send_current_exercise(update.message.chat, context, pending_session_id)
-        except Exception as e:
-            logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
-            await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
+            async def _keep_typing():
+                await chat.send_action(ChatAction.TYPING)
+
+            tasks = task_service.get_tasks(user["id"])
+
+            # Timeout safety: if brain takes >120s, return a fallback instead of hanging
+            try:
+                response = await asyncio.wait_for(
+                    ai_brain.process(text, user, tasks, typing_callback=_keep_typing),
+                    timeout=120.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Brain processing timed out for user {user['id']}")
+                response = "That took too long — try again or break your question into something simpler."
+        finally:
+            typing_active = False
+            typing_task.cancel()
+
+        # Save URL summaries for later recall (fire-and-forget)
+        if response and urls:
+            try:
+                from bot.services.url_summarizer import save_url_summary
+                for url in urls[:2]:
+                    # Use first 150 chars of response as summary, URL as title
+                    from urllib.parse import urlparse as _urlparse
+                    _domain = _urlparse(url).hostname or "link"
+                    _title = f"Content from {_domain}"
+                    _summary = response[:300] if response else ""
+                    _ct = "article"
+                    try:
+                        from bot.services.url_summarizer import classify_url
+                        _ct = classify_url(url)
+                    except Exception:
+                        pass
+                    save_url_summary(user["id"], url, _title, _summary, _ct)
+            except Exception as e:
+                logger.warning(f"Failed to save URL summary: {e}")
+
+        # Check for pending interactive workout session
+        pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+
+        if response:
+            # If paywall was hit, attach subscribe button
+            if ai_brain._paywall_hit:
+                from bot.handlers.payments import get_subscribe_keyboard
+                keyboard = get_subscribe_keyboard(update.effective_user.id)
+                await update.message.reply_text(response, reply_markup=keyboard)
+            else:
+                # Add feedback buttons on substantive responses (longer than a quick ack)
+                show_feedback = len(response) > 80
+                await _send_human(update, response, add_feedback=show_feedback)
+        elif pending_session_id:
+            # Workout session created but brain returned no text — send brief intro
+            await _send_human(update, "Session ready. Let's go.")
+        else:
+            await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
+
+        if pending_session_id:
+            from bot.handlers.workout_session import send_current_exercise
+            try:
+                await send_current_exercise(update.message.chat, context, pending_session_id)
+            except Exception as e:
+                logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+                await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
+
+    except Exception as e:
+        logger.error(f"handle_message failed for user: {e}", exc_info=True)
+        try:
+            await update.message.reply_text("Something went wrong. Try again.")
+        except Exception:
+            pass
 
 
 def _format_tasks(tasks: list) -> str:

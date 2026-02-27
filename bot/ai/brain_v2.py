@@ -1286,6 +1286,7 @@ JSON:"""
         complex_triggers = [
             "what should i train", "program", "workout plan",
             "give me a session", "give me a workout",
+            "my workout", "what workout", "today's workout", "prescribe",
             "analyze", "bloodwork", "labs", "biomarkers",
             "plan my week", "plan my day", "review my",
             "connect whoop", "connect my whoop",
@@ -1415,7 +1416,7 @@ JSON:"""
 
                 # Check stop reason — break on max_tokens to avoid truncated loops
                 if hasattr(response, "stop_reason") and response.stop_reason == "max_tokens":
-                    logger.warning(f"Agent hit max_tokens on turn {turn}")
+                    logger.warning(f"Agent hit max_tokens on turn {turn}, text_parts={len(all_text_parts)}, model={model}")
                     break
 
                 # Check for tool calls
