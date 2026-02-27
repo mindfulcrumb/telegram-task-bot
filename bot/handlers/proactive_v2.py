@@ -260,10 +260,107 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Reminder failed for user {user.get('id')}: {e}")
 
 
-# --- Conversation Pruning ---
+# --- Conversation Summarization + Pruning ---
 
-async def prune_conversations_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs daily. Deletes conversation history older than 7 days."""
+async def summarize_conversations_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 2 hours. Summarizes conversations for users inactive 30+ min,
+    then prunes raw history older than 7 days. Summaries persist permanently."""
+    try:
+        from bot.ai import memory_pg
+        from bot.services import memory_service
+        from bot.ai.brain_v2 import _call_api
+
+        users = user_service.get_all_active_users()
+        summarized = 0
+
+        for user in users:
+            try:
+                uid = user["id"]
+                # Get today's conversation history
+                history = memory_pg.get_history(uid, limit=20)
+                if len(history) < 4:  # Need at least 2 exchanges to summarize
+                    continue
+
+                # Check if last message is old enough (30+ min = conversation ended)
+                from bot.ai.memory_pg import get_last_message_time
+                last_msg = get_last_message_time(uid)
+                if not last_msg:
+                    continue
+                from datetime import datetime, timezone, timedelta
+                if datetime.now(timezone.utc) - last_msg < timedelta(minutes=30):
+                    continue
+
+                # Check if we already summarized today
+                existing = memory_service.get_recent_summaries(uid, limit=1)
+                if existing and str(existing[0]["conversation_date"]) == str(date.today()):
+                    continue
+
+                # Build conversation text for summarization
+                convo_text = ""
+                for msg in history[-20:]:
+                    role = msg.get("role", "?").upper()
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(
+                            b.get("text", "") for b in content if isinstance(b, dict)
+                        )
+                    convo_text += f"{role}: {content[:200]}\n"
+
+                if len(convo_text) < 50:
+                    continue
+
+                prompt = (
+                    "Summarize this conversation in 2-3 sentences. "
+                    "Focus on: what the user asked about, decisions made, "
+                    "and any notable events (PRs, health changes, new goals).\n"
+                    "Also return up to 3 key events as a JSON array.\n\n"
+                    f"Conversation:\n{convo_text[:2000]}\n\n"
+                    'Format: {"summary": "...", "topics": ["training","nutrition",...], '
+                    '"key_events": ["hit squat PR","started creatine",...]}'
+                )
+
+                response, error = _call_api(
+                    system="Summarize conversations concisely. Return valid JSON.",
+                    messages=[{"role": "user", "content": prompt}],
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=250,
+                )
+
+                if error or not response or not response.content:
+                    continue
+
+                text = response.content[0].text.strip()
+                # Strip code fences
+                if "```" in text:
+                    for seg in text.split("```"):
+                        seg = seg.strip()
+                        if seg.startswith("json"):
+                            seg = seg[4:].strip()
+                        if seg.startswith("{"):
+                            text = seg
+                            break
+
+                import json
+                data = json.loads(text)
+                summary = data.get("summary", text[:300])
+                topics = data.get("topics", [])
+                key_events = data.get("key_events", [])
+
+                memory_service.save_conversation_summary(
+                    uid, summary, topics=topics, key_events=key_events,
+                )
+                summarized += 1
+
+            except Exception as e:
+                logger.debug(f"Conversation summary failed for user {user.get('id')}: {e}")
+
+        if summarized > 0:
+            logger.info(f"Summarized {summarized} conversations")
+
+    except Exception as e:
+        logger.error(f"Conversation summarization job failed: {e}")
+
+    # Also prune old raw history (summaries persist, raw messages expire)
     try:
         from bot.ai import memory_pg
         memory_pg.prune_old(days=7)
@@ -756,8 +853,8 @@ def setup_proactive_jobs(application):
     # Weekly insights: every 6 hours (self-skips on non-Sundays)
     jq.run_repeating(weekly_insights_job, interval=21600, first=600, name="weekly_insights")
 
-    # Conversation pruning: daily (every 24h)
-    jq.run_repeating(prune_conversations_job, interval=86400, first=3600, name="prune_conversations")
+    # Conversation summarization + pruning: every 2 hours
+    jq.run_repeating(summarize_conversations_job, interval=7200, first=3600, name="summarize_conversations")
 
     # Stale session cleanup: every 2 hours
     jq.run_repeating(cleanup_sessions_job, interval=7200, first=600, name="cleanup_sessions")
@@ -976,7 +1073,7 @@ def _generate_briefing(user, tasks, streak, patterns):
             "workouts, tasks, and recovery data. Write like a real coach texting their client — "
             "warm but direct. Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=350,
         )
 
         if not error and response and response.content:

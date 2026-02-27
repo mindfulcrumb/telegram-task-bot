@@ -930,13 +930,13 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # User picked a training goal from the mini-onboarding
         goal_key = query.data.split(":")[1]
         goal_map = {
-            "muscle": "build_muscle",
+            "muscle": "hypertrophy",
             "strength": "strength",
-            "cut": "lose_fat",
+            "cut": "fat_loss",
             "athletic": "athletic_performance",
-            "health": "general_fitness",
+            "health": "general_health",
         }
-        fitness_goal = goal_map.get(goal_key, "general_fitness")
+        fitness_goal = goal_map.get(goal_key, "general_health")
 
         from bot.services import fitness_service
         fitness_service.update_fitness_profile(user["id"], fitness_goal=fitness_goal)
@@ -981,8 +981,8 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await chat.send_action(ChatAction.TYPING)
         try:
             whoop_service.sync_all(user["id"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"WHOOP sync failed for user {user['id']}: {e}")
 
         data = whoop_service.get_today_recovery(user["id"])
         trends = whoop_service.get_whoop_trends(user["id"], days=7)

@@ -732,7 +732,7 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
     # ── Onboarding flow callbacks ──
     if query.data.startswith("ob:"):
         ob = context.user_data.get("ob")
-        if not ob and ob != {}:
+        if ob is None:
             # Stale button after onboarding completed
             return
 

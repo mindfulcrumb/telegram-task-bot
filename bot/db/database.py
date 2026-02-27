@@ -477,6 +477,24 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_meal_logs_date ON meal_logs(user_id, (logged_at::date));
 
             -- ═══════════════════════════════════════════════════════
+            -- CONVERSATION SUMMARIES (episodic memory)
+            -- ═══════════════════════════════════════════════════════
+            CREATE TABLE IF NOT EXISTS conversation_summaries (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                conversation_date DATE NOT NULL,
+                summary TEXT NOT NULL,
+                topics TEXT[],
+                key_events TEXT[],
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_convo_summaries_user
+                ON conversation_summaries(user_id, conversation_date DESC);
+
+            -- Add importance column to user_memory for tiered loading
+            ALTER TABLE user_memory ADD COLUMN IF NOT EXISTS importance SMALLINT DEFAULT 5;
+
+            -- ═══════════════════════════════════════════════════════
             -- KNOWLEDGE BASE SYSTEM
             -- ═══════════════════════════════════════════════════════
 

@@ -651,7 +651,7 @@ def _register_full_handlers(application):
             pass
         application.add_handler(CallbackQueryHandler(
             handle_onboarding_callback,
-            pattern="^(ob:|tz:|show_help$|show_calendar$|show_capabilities$)"
+            pattern="^(ob:|tz:|settings:|settime:|show_help$|show_calendar$|show_capabilities$)"
         ))
         application.add_handler(MessageHandler(filters.LOCATION, handle_location))
         application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
