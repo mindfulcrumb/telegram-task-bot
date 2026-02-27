@@ -1026,6 +1026,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Check for pending interactive workout session
         pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+        logger.info(f"WORKOUT CARDS: pending_session_id={pending_session_id}, user_id={user['id']}, _pending_session keys={list(ai_brain._pending_session.keys())}")
 
         if response:
             # If paywall was hit, attach subscribe button
@@ -1044,12 +1045,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
 
         if pending_session_id:
+            logger.info(f"WORKOUT CARDS: sending cards for session {pending_session_id}")
             from bot.handlers.workout_session import send_current_exercise
             try:
                 await send_current_exercise(update.message.chat, context, pending_session_id)
+                logger.info(f"WORKOUT CARDS: cards sent successfully for session {pending_session_id}")
             except Exception as e:
-                logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+                logger.error(f"WORKOUT CARDS: FAILED to send cards for session {pending_session_id}: {e}", exc_info=True)
                 await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
+        else:
+            logger.info(f"WORKOUT CARDS: no pending session for user {user['id']}")
 
     except Exception as e:
         logger.error(f"handle_message failed for user: {e}", exc_info=True)

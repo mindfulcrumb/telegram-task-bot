@@ -593,7 +593,8 @@ TOOL USE GUIDELINES:
 FITNESS TOOL USE:
 - "I did chest today" / "just finished training" -> log_workout. Infer exercises if possible, ask for details if vague.
 - "bench pressed 80kg for 5 reps" -> log_workout with exercise details (weight, reps, sets)
-- "What should I train?" / "program me a session" / "give me a workout" -> call get_fitness_context first, reason about patterns, then call start_workout_session. This sends interactive cards with set tracking and rest timers. Keep your text to 1-2 lines of coaching context.
+- ANY request for a workout, training, or session ("What should I train?", "give me a workout", "what's my workout today?", "program me a session", "recovery session", "leg day", etc.) -> ALWAYS call start_workout_session. NEVER describe exercises in text — the interactive cards ARE the workout. Call get_fitness_context first if needed, then call start_workout_session with specific exercises, sets, reps, and weights. Keep your text to 1-2 lines of coaching context.
+- CRITICAL: If you mention exercises, sets, reps, or a workout plan in your text but did NOT call start_workout_session, you have made an error. The user needs interactive cards, not a text description.
 - ONLY use start_workout_session for sessions to do NOW. For logging PAST workouts, use log_workout.
 - "I weigh 82kg" / "body fat is 15%" -> log_body_metric
 - "How's my bench progressing?" -> get_exercise_history for bench press
@@ -1434,6 +1435,7 @@ JSON:"""
                     # Detect interactive workout session creation
                     if isinstance(result, dict) and result.get("_interactive_session"):
                         self._pending_session[user_id] = result["session_id"]
+                        logger.info(f"WORKOUT CARDS: _pending_session[{user_id}] = {result['session_id']}")
 
                     tool_results.append({
                         "type": "tool_result",

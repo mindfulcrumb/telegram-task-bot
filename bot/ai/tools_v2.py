@@ -945,11 +945,13 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
         # --- Interactive workout session ---
         elif name == "start_workout_session":
             from bot.services import fitness_service
+            logger.info(f"WORKOUT CARDS: start_workout_session called for user {user_id}, title={args['title']}, {len(args['exercises'])} exercises")
             session = fitness_service.create_workout_session(
                 user_id=user_id,
                 title=args["title"],
                 exercises=args["exercises"],
             )
+            logger.info(f"WORKOUT CARDS: session created id={session['id']}, exercises={len(session.get('exercises', []))}")
             return {
                 "success": True,
                 "session_id": session["id"],

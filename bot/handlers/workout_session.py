@@ -168,9 +168,12 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
 
 async def send_current_exercise(chat, context, session_id: int):
     """Send or edit the card to show the current exercise."""
+    logger.info(f"WORKOUT CARDS: send_current_exercise called with session_id={session_id}")
     session = fitness_service.get_session_by_id(session_id)
     if not session:
-        return
+        logger.error(f"WORKOUT CARDS: session {session_id} NOT FOUND in DB!")
+        raise ValueError(f"Workout session {session_id} not found")
+    logger.info(f"WORKOUT CARDS: session found — {len(session.get('exercises', []))} exercises, status={session.get('status')}")
 
     # Store chat_id for timer callbacks
     fitness_service.update_session_chat_id(session_id, chat.id)
