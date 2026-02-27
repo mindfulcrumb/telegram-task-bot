@@ -623,7 +623,10 @@ def _register_full_handlers(application):
             application.add_handler(CallbackQueryHandler(callback_upgrade_dismiss, pattern="^upgrade:dismiss$"))
         except Exception:
             pass
-        application.add_handler(CallbackQueryHandler(handle_onboarding_callback))
+        application.add_handler(CallbackQueryHandler(
+            handle_onboarding_callback,
+            pattern="^(ob:|tz:|show_help$|show_calendar$|show_capabilities$)"
+        ))
         application.add_handler(MessageHandler(filters.LOCATION, handle_location))
         application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
         logger.info("Onboarding handlers registered")

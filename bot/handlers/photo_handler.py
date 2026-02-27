@@ -53,6 +53,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
         context.user_data["db_user"] = user
 
+    if not user.get("onboarding_completed"):
+        await update.message.reply_text(
+            "You need to verify your phone number first. Type /start to begin."
+        )
+        return
+
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         await update.message.reply_text("Can't process images right now — try again later.")
@@ -160,7 +166,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text=response,
                         reply_markup=reply_markup,
                     )
-            # No caption and not a blood test — just ignore silently
+            else:
+                await update.message.reply_text(
+                    "Send a caption with your photo so I know what you need, "
+                    "or send a blood test and I'll read the markers."
+                )
             return
 
         # It's a blood test — log the markers

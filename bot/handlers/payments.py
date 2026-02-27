@@ -20,8 +20,6 @@ BILLING_BASE_URL = os.getenv("BILLING_URL", "https://meetzoe.app/billing")
 def get_subscribe_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
     """Build the subscribe inline keyboard with WebView button."""
     subscribe_url = f"{SUBSCRIBE_BASE_URL}?tgid={telegram_user_id}"
-    if STRIPE_PROVIDER_TOKEN:
-        return None  # Native Telegram payments handle this
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(
             "Subscribe — $9.99/mo",

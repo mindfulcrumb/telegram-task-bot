@@ -162,8 +162,8 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts.append(f"\U0001f525 {s}-day streak!")
             elif s == 1:
                 parts.append("\U0001f525 Streak started!")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Streak update failed for user {user['id']}: {e}")
     if not_found:
         parts.append(f"Not found: {', '.join(str(n) for n in not_found)}")
     await update.message.reply_text("\n".join(parts) or "Nothing to complete.")
@@ -861,6 +861,11 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat = query.message.chat
 
     if query.data == "whoop_train":
+        from bot.services import whoop_service
+        if not whoop_service.is_connected(user["id"]):
+            await chat.send_message("WHOOP not connected. Use /connect_whoop to link.")
+            return
+
         await chat.send_action(ChatAction.TYPING)
 
         async def _keep_typing():
@@ -992,8 +997,8 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
     # Remove the feedback buttons from the message
     try:
         await query.edit_message_reply_markup(reply_markup=None)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Could not remove feedback buttons: {e}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):

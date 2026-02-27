@@ -27,6 +27,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
         context.user_data["db_user"] = user
 
+    if not user.get("onboarding_completed"):
+        await update.message.reply_text(
+            "You need to verify your phone number first. Type /start to begin."
+        )
+        return
+
     groq_key = os.environ.get("GROQ_API_KEY")
     if not groq_key:
         await update.message.reply_text("Voice messages aren't set up yet — type it out for now.")

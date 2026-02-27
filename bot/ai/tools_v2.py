@@ -769,6 +769,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             from bot.services.tier_service import check_limit
             user_tier = "free"
             user_is_admin = False
+            u = None
             try:
                 from bot.services import user_service
                 u = user_service.get_user_by_id(user_id)

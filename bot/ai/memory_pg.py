@@ -33,11 +33,14 @@ def get_history(user_id: int, limit: int = None) -> list:
 def save_turn(user_id: int, role: str, content):
     """Save a single conversation turn."""
     serialized = json.dumps(content) if not isinstance(content, str) else content
-    with get_cursor() as cur:
-        cur.execute(
-            "INSERT INTO conversations (user_id, role, content) VALUES (%s, %s, %s)",
-            (user_id, role, serialized)
-        )
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "INSERT INTO conversations (user_id, role, content) VALUES (%s, %s, %s)",
+                (user_id, role, serialized)
+            )
+    except Exception as e:
+        logger.warning(f"Failed to save conversation turn for user {user_id}: {e}")
 
 
 def clear_history(user_id: int):
