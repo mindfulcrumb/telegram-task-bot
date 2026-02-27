@@ -90,7 +90,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No tasks! Add one with /add or just tell me.")
         return
     await typing_pause(update.message.chat, 0.5)
-    await update.message.reply_text(_format_tasks(tasks))
+    await update.message.reply_text(_format_grouped_tasks(tasks))
 
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1162,7 +1162,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _format_tasks(tasks: list) -> str:
-    """Format task list for display."""
+    """Format task list for display (used by /today, /overdue, /week)."""
     today = date.today()
     lines = []
     for t in tasks:
@@ -1182,4 +1182,91 @@ def _format_tasks(tasks: list) -> str:
             else:
                 due_str = f" - {d.strftime('%b %d')}"
         lines.append(f"{t['index']}. {pri}{t['title']} [{cat}]{due_str}")
+    return "\n".join(lines)
+
+
+def _format_grouped_tasks(tasks: list) -> str:
+    """Format task list grouped by urgency for /list command."""
+    today = date.today()
+
+    groups: dict[str, list] = {
+        "today": [],
+        "overdue": [],
+        "upcoming": [],
+        "no_date": [],
+    }
+
+    for t in tasks:
+        d = t.get("due_date")
+        if d is None:
+            groups["no_date"].append(t)
+        elif d < today:
+            groups["overdue"].append(t)
+        elif d == today:
+            groups["today"].append(t)
+        else:
+            groups["upcoming"].append(t)
+
+    lines = []
+
+    # Summary line
+    total = len(tasks)
+    parts = []
+    if groups["today"]:
+        parts.append(f"{len(groups['today'])} today")
+    if groups["overdue"]:
+        parts.append(f"{len(groups['overdue'])} overdue")
+    if groups["upcoming"]:
+        parts.append(f"{len(groups['upcoming'])} upcoming")
+    summary = f"{total} task{'s' if total != 1 else ''}"
+    if parts:
+        summary += " · " + ", ".join(parts)
+    lines.append(summary)
+
+    def _fmt(t, due_part=""):
+        pri = "!" if t.get("priority") == "High" else ""
+        cat = " · Biz" if t.get("category") == "Business" else ""
+        return f"  {t['index']}. {pri}{t['title']}{cat}{due_part}"
+
+    sections = []
+
+    if groups["today"]:
+        items = []
+        for t in groups["today"]:
+            items.append(_fmt(t))
+        sections.append(("TODAY", items))
+
+    if groups["overdue"]:
+        items = []
+        for t in groups["overdue"]:
+            days = (today - t["due_date"]).days
+            items.append(_fmt(t, f" · {days}d"))
+        sections.append(("OVERDUE", items))
+
+    if groups["upcoming"]:
+        items = []
+        for t in groups["upcoming"]:
+            d = t["due_date"]
+            diff = (d - today).days
+            if diff == 1:
+                when = "tmrw"
+            elif diff <= 7:
+                when = d.strftime("%a")
+            else:
+                when = d.strftime("%b %d")
+            items.append(_fmt(t, f" · {when}"))
+        sections.append(("UPCOMING", items))
+
+    if groups["no_date"]:
+        items = []
+        for t in groups["no_date"]:
+            items.append(_fmt(t))
+        sections.append(("NO DATE", items))
+
+    for header, items in sections:
+        lines.append("")
+        lines.append(header)
+        for item in items:
+            lines.append(item)
+
     return "\n".join(lines)
