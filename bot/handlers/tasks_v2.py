@@ -30,7 +30,7 @@ async def _send_human(update: Update, text: str, add_feedback: bool = False):
         ])
 
     await send_chunked(
-        bot=update.effective_chat.bot,
+        bot=update.get_bot(),
         chat_id=update.effective_chat.id,
         text=text,
         reply_markup=feedback_markup,
