@@ -64,7 +64,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(context.args) if context.args else ""
     if not text:
-        await update.message.reply_text("What's the task? e.g., /add buy groceries")
+        await update.message.reply_text("What's the task?\n/add buy groceries")
         return
 
     # Check tier limit
@@ -103,7 +103,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Nothing due today!")
         return
     await typing_pause(update.message.chat, 0.5)
-    await update.message.reply_text(f"Due today:\n\n{_format_tasks(tasks)}")
+    await update.message.reply_text(f"On your plate today:\n\n{_format_tasks(tasks)}")
 
 
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,7 +116,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Nothing due this week!")
         return
     await typing_pause(update.message.chat, 0.5)
-    await update.message.reply_text(f"This week:\n\n{_format_tasks(tasks)}")
+    await update.message.reply_text(f"Coming up this week:\n\n{_format_tasks(tasks)}")
 
 
 async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,7 +129,7 @@ async def cmd_overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Nothing overdue!")
         return
     await typing_pause(update.message.chat, 0.5)
-    await update.message.reply_text(f"Overdue:\n\n{_format_tasks(tasks)}")
+    await update.message.reply_text(f"These are piling up:\n\n{_format_tasks(tasks)}")
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -138,13 +138,13 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
     if not context.args:
-        await update.message.reply_text("Which task? e.g., /done 1 or /done 1 3 5")
+        await update.message.reply_text("Which one? /done 1 or /done 1 3 5")
         return
 
     try:
         nums = [int(a) for a in context.args]
     except ValueError:
-        await update.message.reply_text("Use task numbers, e.g., /done 1 3")
+        await update.message.reply_text("Use the task numbers — /done 1 3")
         return
 
     completed, not_found = task_service.complete_tasks(user["id"], nums)
@@ -175,13 +175,13 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
     if not context.args:
-        await update.message.reply_text("Which task? e.g., /delete 2")
+        await update.message.reply_text("Which one? /delete 2")
         return
 
     try:
         nums = [int(a) for a in context.args]
     except ValueError:
-        await update.message.reply_text("Use task numbers, e.g., /delete 2")
+        await update.message.reply_text("Use the task number — /delete 2")
         return
 
     deleted, not_found = task_service.delete_tasks(user["id"], nums)
@@ -201,13 +201,13 @@ async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text("Usage: /edit 1 new task title")
+        await update.message.reply_text("Like this: /edit 1 new task title")
         return
 
     try:
         num = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("First argument must be a task number.")
+        await update.message.reply_text("First part needs to be the task number — /edit 1 new title")
         return
 
     new_title = " ".join(context.args[1:])
@@ -246,7 +246,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot.ai import memory_pg
     memory_pg.clear_history(user["id"])
     await typing_pause(update.message.chat, 0.3)
-    await update.message.reply_text("Conversation history cleared.")
+    await update.message.reply_text("Cleared. Fresh start.")
 
 
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -266,13 +266,13 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     biz = sum(1 for t in tasks if t.get("category") == "Business")
     personal = total - biz
 
-    text = (
-        f"Quick overview:\n\n"
-        f"Total: {total} tasks\n"
-        f"Overdue: {overdue}\n"
-        f"High priority: {high}\n"
-        f"Business: {biz} | Personal: {personal}"
-    )
+    parts = [f"{total} tasks"]
+    if overdue:
+        parts.append(f"{overdue} overdue")
+    if high:
+        parts.append(f"{high} high priority")
+    text = " · ".join(parts)
+    text += f"\n\nBiz: {biz} · Personal: {personal}"
     await typing_pause(update.message.chat, 0.6)
     await update.message.reply_text(text)
 
@@ -289,11 +289,11 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last = streak.get("last_completion_date")
 
     if current == 0:
-        text = "No streak going yet. Complete a task to start one."
+        text = "No streak yet. Knock out a task to start one."
     else:
         text = (
-            f"Current streak: {current} day{'s' if current != 1 else ''} \U0001f525\n"
-            f"Best ever: {longest} day{'s' if longest != 1 else ''}\n"
+            f"{current}-day streak \U0001f525\n"
+            f"Best: {longest} days\n"
             f"Last completed: {last.strftime('%b %d') if last else 'never'}"
         )
     await typing_pause(update.message.chat, 0.6)
@@ -318,10 +318,10 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Failed to show active workout: {e}")
         await update.message.reply_text(
-            "Log a workout:\n"
+            "What'd you do?\n\n"
             "/workout push day 45min\n"
             "/workout cardio 30min\n\n"
-            "Or just tell me naturally what you did!"
+            "Or just tell me what you did."
         )
         return
     # Feed into AI brain as a workout log
@@ -441,13 +441,13 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = streak.get("current_streak", 0)
     longest = streak.get("longest_streak", 0)
     if current > 0:
-        lines.append(f"Workout streak: {current} (best: {longest}) \U0001f525")
+        lines.append(f"{current}-session streak (best: {longest}) \U0001f525")
     else:
-        lines.append("No workout streak going. Log a session to start one.")
+        lines.append("No workout streak yet. Log a session to start one.")
 
     # Pattern balance
     if patterns:
-        lines.append("\nPattern Balance (14d):")
+        lines.append("\nMovement balance (14d):")
         pattern_labels = {
             "horizontal_push": "Push (horiz)",
             "horizontal_pull": "Pull (horiz)",
@@ -464,7 +464,7 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # PRs
     if prs:
-        lines.append("\nRecent PRs:")
+        lines.append("\nPRs:")
         for p in prs[:5]:
             lines.append(f"  {p['exercise'].title()}: {p['new_weight']}kg (was {p['previous_best']}kg)")
 
@@ -486,7 +486,7 @@ async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '"Starting BPC-157, 250mcg twice a day for 6 weeks"'
         )
         return
-    lines = ["Active Protocols\n"]
+    lines = ["Your protocols:\n"]
     for p in protocols:
         dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
         freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
@@ -515,7 +515,7 @@ async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '"creatine 5g daily, vitamin D 5000IU with breakfast"'
         )
         return
-    lines = ["Your Stack\n"]
+    lines = ["Your stack:\n"]
     for s in supps:
         dose_str = f"{s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
         timing_str = f" ({s['timing']})" if s.get("timing") else ""
@@ -606,10 +606,10 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args) if context.args else ""
     if not text:
         await update.message.reply_text(
-            "Quick-log a dose:\n"
+            "Which one?\n\n"
             "/dose BPC-157\n"
             "/dose Ipamorelin abdomen\n\n"
-            'Or just tell me: "Took my BPC"'
+            "Or just say \"took my BPC.\""
         )
         return
     # Feed into AI brain
@@ -769,7 +769,7 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     zone = whoop_service.get_recovery_zone(recovery)
     zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
 
-    lines = [f"WHOOP Dashboard\n"]
+    lines = ["Today's numbers:\n"]
 
     # Today
     lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
@@ -802,7 +802,7 @@ async def cmd_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 7-day trends
     if trends and trends.get("days", 0) > 2:
-        lines.append("\n7-Day Trends:")
+        lines.append("\nLast 7 days:")
         if trends.get("recovery_avg") is not None:
             arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
                 trends.get("recovery_trend", ""), ""
@@ -918,7 +918,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
         zone = whoop_service.get_recovery_zone(recovery)
         zone_emoji = {"green": "\U0001f7e2", "yellow": "\U0001f7e1", "red": "\U0001f534"}.get(zone, "\u26aa")
 
-        lines = [f"WHOOP Dashboard\n"]
+        lines = ["Your WHOOP:\n"]
         lines.append(f"{zone_emoji} Recovery: {recovery}% ({zone})")
         if data.get("hrv_rmssd") is not None:
             lines.append(f"HRV: {data['hrv_rmssd']}ms")
@@ -938,7 +938,7 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"Strain: {data['daily_strain']}")
 
         if trends and trends.get("days", 0) > 2:
-            lines.append("\n7-Day Trends:")
+            lines.append("\nLast 7 days:")
             if trends.get("recovery_avg") is not None:
                 arrow = {"trending_up": "\u2191", "trending_down": "\u2193", "stable": "\u2192"}.get(
                     trends.get("recovery_trend", ""), "")

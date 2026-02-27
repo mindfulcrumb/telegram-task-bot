@@ -185,10 +185,10 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
             nudge_text = await ai_brain.quick_generate(nudge_prompt, max_tokens=200)
             if not nudge_text:
                 # Fallback to simple format if AI fails
-                lines = ["Quick thought:\n"]
+                lines = ["Hey, these are still hanging:\n"]
                 for b in task_bullets:
                     lines.append(b.lstrip("- "))
-                lines.append("\nWant me to help with any of these?")
+                lines.append("\nNeed a hand knocking any out?")
                 nudge_text = "\n".join(lines)
 
             await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)

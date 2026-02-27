@@ -56,12 +56,12 @@ async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = get_upgrade_keyboard(tg_id)
         await typing_pause(update.message.chat, 0.8)
         await update.message.reply_text(
-            "Zoe Pro — $9.99/mo\n\n"
-            "→ Unlimited conversations\n"
-            "→ Unlimited tasks and reminders\n"
-            "→ Morning briefings and weekly insights\n"
-            "→ Fitness coaching and workout programming\n"
-            "→ WHOOP integration and bloodwork tracking\n\n"
+            "Zoe Pro \u2014 $9.99/mo\n\n"
+            "Unlimited conversations\n"
+            "Unlimited tasks and reminders\n"
+            "Morning briefings and weekly insights\n"
+            "Fitness coaching and workout cards\n"
+            "WHOOP integration and bloodwork tracking\n\n"
             "Cancel anytime.",
             reply_markup=keyboard,
         )
@@ -104,8 +104,8 @@ async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]])
         await typing_pause(update.message.chat, 0.5)
         await update.message.reply_text(
-            "Your plan: Zoe Pro ($9.99/mo)\n"
-            "Status: Active",
+            "You're on Zoe Pro ($9.99/mo).\n"
+            "Tap below to manage your subscription.",
             reply_markup=keyboard,
         )
     else:
@@ -159,11 +159,10 @@ async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show terms of service (required by Telegram for payments)."""
     await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(
-        "Terms of Service\n\n"
-        "Your data is stored securely and only used to run the service. "
+        "Your data's stored securely and only used to run Zoe. "
         "Free tier has usage limits, Pro removes them. "
-        "You can delete your account and all data anytime with /deleteaccount. "
-        "Payments go through Stripe. Refunds available within 7 days via /support."
+        "Delete your account and all data anytime with /deleteaccount.\n\n"
+        "Payments go through Stripe. Refunds within 7 days via /support."
     )
 
 
@@ -171,7 +170,7 @@ async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show support info (required by Telegram for payments)."""
     await typing_pause(update.message.chat, 0.5)
     await update.message.reply_text(
-        "Need help? Type /help to see all commands.\n\n"
-        "For billing or refunds, just describe the issue here and I'll get it sorted.\n\n"
-        "To delete your account: /deleteaccount"
+        "Hit /help to see all commands.\n\n"
+        "For billing or refunds, just describe the issue here and I'll sort it out.\n\n"
+        "Delete your account: /deleteaccount"
     )
