@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 _rest_state = {}
 
 
+def _escape_md(text: str) -> str:
+    """Escape Telegram Markdown v1 special characters in user-generated text."""
+    if not text:
+        return text
+    for ch in ("\\", "`", "*", "_", "[", "]"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
                          total_exercises: int, is_resting: bool = False,
                          rest_label: str = "", rest_seconds: int = 0) -> tuple:
@@ -27,14 +36,14 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
     Returns (text, reply_markup) tuple.
     """
     ex_id = exercise["id"]
-    name = exercise["exercise_name"]
+    name = _escape_md(exercise["exercise_name"])
     sets_target = exercise["target_sets"]
     sets_done = exercise["sets_completed"]
     reps = exercise["target_reps"]
     weight = exercise.get("target_weight")
     unit = exercise.get("weight_unit", "kg")
     rpe = exercise.get("target_rpe")
-    notes = exercise.get("notes")
+    notes = _escape_md(exercise.get("notes") or "")
     all_done = sets_done >= sets_target
     is_last = exercise_index == total_exercises - 1
     is_first = exercise_index == 0
@@ -53,7 +62,7 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
     text += "\n"
 
     # Coaching note
-    if notes:
+    if notes and notes.strip():
         text += f"_{notes}_\n"
 
     # ── Rest indicator ──
@@ -196,11 +205,25 @@ async def send_current_exercise(chat, context, session_id: int):
             )
             return
         except Exception:
-            # Message too old or deleted — send new one
-            pass
+            # Markdown failed or message too old — try without parse_mode
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat.id,
+                    message_id=existing_msg_id,
+                    text=text,
+                    reply_markup=markup,
+                )
+                return
+            except Exception:
+                # Message too old or deleted — send new one
+                pass
 
-    # Send new card message
-    msg = await chat.send_message(text, reply_markup=markup, parse_mode="Markdown")
+    # Send new card message — fallback to plaintext if Markdown fails
+    try:
+        msg = await chat.send_message(text, reply_markup=markup, parse_mode="Markdown")
+    except Exception as md_err:
+        logger.warning(f"Markdown send failed for session {session_id}, falling back to plain: {md_err}")
+        msg = await chat.send_message(text, reply_markup=markup)
     fitness_service.set_card_message_id(session_id, msg.message_id)
 
 
@@ -426,7 +449,11 @@ async def _refresh_card(query, context, session_id: int):
     try:
         await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
     except Exception:
-        pass  # Telegram error if text is identical
+        # Markdown failed or text identical — try without parse_mode
+        try:
+            await query.edit_message_text(text, reply_markup=markup)
+        except Exception:
+            pass  # Text truly identical or message too old
 
 
 def _cancel_timer(context, user_id: int, session_id: int):
@@ -483,4 +510,12 @@ async def _rest_timer_callback(context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
     except Exception:
-        pass
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text=text,
+                reply_markup=markup,
+            )
+        except Exception:
+            pass

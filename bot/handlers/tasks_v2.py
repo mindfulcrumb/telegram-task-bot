@@ -332,7 +332,11 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if pending_session_id:
         from bot.handlers.workout_session import send_current_exercise
-        await send_current_exercise(update.message.chat, context, pending_session_id)
+        try:
+            await send_current_exercise(update.message.chat, context, pending_session_id)
+        except Exception as e:
+            logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+            await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -812,7 +816,11 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
         if pending_session_id:
             from bot.handlers.workout_session import send_current_exercise
-            await send_current_exercise(chat, context, pending_session_id)
+            try:
+                await send_current_exercise(chat, context, pending_session_id)
+            except Exception as e:
+                logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+                await chat.send_message("Workout created but couldn't display the card. Try 'show my workout'.")
 
     elif query.data == "whoop_log":
         await chat.send_message("What'd you do? e.g. 'push day \u2014 bench 4x8 at 75kg, OHP 3x10 at 40kg, 50 min'")
@@ -1036,7 +1044,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if pending_session_id:
         from bot.handlers.workout_session import send_current_exercise
-        await send_current_exercise(update.message.chat, context, pending_session_id)
+        try:
+            await send_current_exercise(update.message.chat, context, pending_session_id)
+        except Exception as e:
+            logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+            await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
 
 
 def _format_tasks(tasks: list) -> str:
