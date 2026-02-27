@@ -136,7 +136,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── New user — start conversational onboarding ──
+    # ── Returning mid-onboarding user — resume where they left off ──
+    if user.get("phone_number"):
+        # Already shared phone — don't replay the intro, just pick up
+        if "ob" not in context.user_data:
+            context.user_data["ob"] = {}
+        await resume_onboarding(update.message, context)
+        return
+
+    # ── Brand new user — start conversational onboarding ──
     context.user_data["ob"] = {}
     chat = update.message.chat
 
@@ -161,14 +169,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _typing_pause(chat, 0.6)
 
-    # Telegram contact sharing (one tap, no OTP needed)
+    # Telegram contact sharing — NO one_time_keyboard so it persists
     phone_keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
-        one_time_keyboard=True,
         resize_keyboard=True,
     )
     await update.message.reply_text(
-        "Share your number so I know who you are.",
+        "Tap the button below to share your number.",
         reply_markup=phone_keyboard,
     )
 
@@ -526,7 +533,6 @@ async def _send_timezone(message, context):
     # Reply keyboard for location share
     location_keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("\U0001f4cd Share my location", request_location=True)]],
-        one_time_keyboard=True,
         resize_keyboard=True,
     )
     await message.reply_text(

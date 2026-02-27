@@ -56,7 +56,6 @@ async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict 
             # No phone yet — re-show the share button so they're not stuck
             phone_keyboard = ReplyKeyboardMarkup(
                 [[KeyboardButton("\U0001f4f1 Share phone number", request_contact=True)]],
-                one_time_keyboard=True,
                 resize_keyboard=True,
             )
             await update.message.reply_text(
