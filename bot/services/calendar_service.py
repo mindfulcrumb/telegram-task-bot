@@ -101,6 +101,7 @@ def _fetch_events_oauth(token: str, days: int, max_events: int) -> list[dict]:
                     dt = dt.replace(tzinfo=timezone.utc)
 
             events.append({
+                "id": item.get("id"),
                 "title": item.get("summary", "Untitled"),
                 "start": dt,
                 "all_day": all_day,
@@ -201,6 +202,70 @@ def create_event(
         return None
 
 
+def delete_event(user_id: int, event_id: str) -> bool:
+    """Delete a Google Calendar event by ID. Returns True on success."""
+    token = get_access_token(user_id)
+    if not token:
+        return False
+
+    try:
+        resp = _http.delete(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code in (200, 204):
+            return True
+        logger.error(f"Calendar delete_event failed {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"Calendar delete_event error: {type(e).__name__}: {e}")
+        return False
+
+
+def update_event(
+    user_id: int,
+    event_id: str,
+    summary: str = None,
+    start_dt: datetime = None,
+    end_dt: datetime = None,
+    description: str = None,
+    location: str = None,
+) -> dict | None:
+    """Update a Google Calendar event. Only provided fields are changed."""
+    token = get_access_token(user_id)
+    if not token:
+        return None
+
+    body = {}
+    if summary is not None:
+        body["summary"] = summary
+    if start_dt is not None:
+        body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": "UTC"}
+    if end_dt is not None:
+        body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": "UTC"}
+    if description is not None:
+        body["description"] = description
+    if location is not None:
+        body["location"] = location
+
+    if not body:
+        return None
+
+    try:
+        resp = _http.patch(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        logger.error(f"Calendar update_event failed {resp.status_code}: {resp.text[:200]}")
+        return None
+    except Exception as e:
+        logger.error(f"Calendar update_event error: {type(e).__name__}: {e}")
+        return None
+
+
 def format_events_for_ai(events: list[dict]) -> str:
     """Format calendar events as text for the AI system prompt."""
     if not events:
@@ -213,6 +278,7 @@ def format_events_for_ai(events: list[dict]) -> str:
             time_str = dt.strftime("%A %b %d") + " (all day)"
         else:
             time_str = dt.strftime("%A %b %d at %I:%M %p")
-        lines.append(f"- {e['title']} — {time_str}")
+        event_id = e.get("id", "")
+        lines.append(f"- {e['title']} — {time_str} [event_id={event_id}]")
 
     return "\n".join(lines)

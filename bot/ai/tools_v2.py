@@ -519,6 +519,34 @@ def get_tool_definitions() -> list:
             }
         },
         {
+            "name": "delete_calendar_event",
+            "description": "Delete/cancel a Google Calendar event. Use when user asks to remove, cancel, or delete a calendar event. The event_id comes from the UPCOMING CALENDAR EVENTS list in context.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string", "description": "The Google Calendar event ID from the events list"},
+                    "event_title": {"type": "string", "description": "The event title (for confirmation)"}
+                },
+                "required": ["event_id"]
+            }
+        },
+        {
+            "name": "update_calendar_event",
+            "description": "Update/reschedule a Google Calendar event. Use when user asks to move, reschedule, rename, or change a calendar event. Only provide fields that should change.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string", "description": "The Google Calendar event ID from the events list"},
+                    "summary": {"type": "string", "description": "New event title (if changing)"},
+                    "start_datetime": {"type": "string", "description": "New start time in ISO format YYYY-MM-DDTHH:MM:SS (if rescheduling)"},
+                    "end_datetime": {"type": "string", "description": "New end time in ISO format YYYY-MM-DDTHH:MM:SS (if rescheduling)"},
+                    "description": {"type": "string", "description": "New event description (if changing)"},
+                    "location": {"type": "string", "description": "New event location (if changing)"}
+                },
+                "required": ["event_id"]
+            }
+        },
+        {
             "name": "create_google_doc",
             "description": "Create a new Google Doc. Use when user asks to create a document, write something up, or start a new doc. Returns the editable document link.",
             "input_schema": {
@@ -1442,6 +1470,50 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     "link": event.get("htmlLink", ""),
                 }
             return {"error": "Failed to create calendar event."}
+
+        elif name == "delete_calendar_event":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import calendar_service
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/calendar"]):
+                return {"error": "Calendar write permission not granted. Tell the user to use /google to reconnect with full permissions."}
+            success = calendar_service.delete_event(user_id, args["event_id"])
+            if success:
+                return {"success": True, "deleted": args.get("event_title", args["event_id"])}
+            return {"error": "Failed to delete calendar event. The event may have already been removed."}
+
+        elif name == "update_calendar_event":
+            from bot.services.google_auth import is_connected, has_scopes
+            from bot.services import calendar_service
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            if not has_scopes(user_id, ["https://www.googleapis.com/auth/calendar"]):
+                return {"error": "Calendar write permission not granted. Tell the user to use /google to reconnect with full permissions."}
+            start = None
+            end = None
+            if args.get("start_datetime"):
+                try:
+                    start = datetime.fromisoformat(args["start_datetime"])
+                except (ValueError, TypeError):
+                    return {"error": "Invalid start_datetime format. Use YYYY-MM-DDTHH:MM:SS"}
+            if args.get("end_datetime"):
+                try:
+                    end = datetime.fromisoformat(args["end_datetime"])
+                except (ValueError, TypeError):
+                    return {"error": "Invalid end_datetime format. Use YYYY-MM-DDTHH:MM:SS"}
+            event = calendar_service.update_event(
+                user_id=user_id,
+                event_id=args["event_id"],
+                summary=args.get("summary"),
+                start_dt=start,
+                end_dt=end,
+                description=args.get("description"),
+                location=args.get("location"),
+            )
+            if event:
+                return {"success": True, "updated": event.get("summary", args["event_id"])}
+            return {"error": "Failed to update calendar event."}
 
         elif name == "create_google_doc":
             from bot.services.google_auth import is_connected, has_scopes

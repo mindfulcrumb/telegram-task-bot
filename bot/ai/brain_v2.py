@@ -93,6 +93,29 @@ class AIBrain:
         # Set to True when process() hits the paywall (AI message limit)
         self._paywall_hit = False
 
+    async def quick_generate(self, prompt: str, max_tokens: int = 300) -> str | None:
+        """Lightweight single-turn generation using Haiku. No tools, no memory.
+        Used for proactive nudge rephrasing and other internal formatting tasks."""
+        import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return None
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if resp.content:
+                return resp.content[0].text
+            return None
+        except Exception as e:
+            logger.error(f"quick_generate failed: {type(e).__name__}: {e}")
+            return None
+
     def _get_static_prompt(self) -> str:
         """Get the static system prompt (built once, cached in memory)."""
         if self._static_prompt is None:
@@ -596,7 +619,7 @@ YOUR CAPABILITIES — NEVER DENY THESE:
 You CAN do all of these things. NEVER say "I can't" for any of them:
 - Set reminders and send them at specific times (set_reminder tool)
 - Read Google Calendar events (calendar_service)
-- Create Google Calendar events (create_calendar_event tool)
+- Create, update, and delete Google Calendar events (create/update/delete_calendar_event tools)
 - Search Gmail inbox and read emails (search_gmail tool)
 - Send emails via Gmail (send_email tool)
 - Search Google Drive for files (search_drive tool)
@@ -637,6 +660,8 @@ GOOGLE WORKSPACE TOOL USE:
 - "find that doc about X" / "my presentation" -> search_drive
 - "add X to Google Tasks" -> add_google_task (use add_task for Zoe's internal system unless user says "Google Tasks")
 - "schedule a meeting" / "block Friday 3pm" -> create_calendar_event
+- "cancel the 5k" / "delete that meeting" / "remove the 8am event" -> delete_calendar_event (use event_id from UPCOMING CALENDAR EVENTS)
+- "move the meeting to 4pm" / "reschedule Friday to Monday" -> update_calendar_event (use event_id from UPCOMING CALENDAR EVENTS)
 - "create a doc" / "write this up" -> create_google_doc
 - If Google not connected, mention /google to connect
 - For send_email: tell user what you're about to send and to whom BEFORE calling the tool

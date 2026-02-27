@@ -99,13 +99,18 @@ def update_tier(user_id: int, tier: str, stripe_customer_id: str = None):
             )
 
 
-def update_settings(user_id: int, timezone: str = None, briefing_hour: int = None):
+def update_settings(user_id: int, timezone: str = None, briefing_hour: int = None,
+                     check_in_hour: int = None, assessment_hour: int = None):
     """Update user preferences."""
     with get_cursor() as cur:
         if timezone is not None:
             cur.execute("UPDATE users SET timezone = %s WHERE id = %s", (timezone, user_id))
         if briefing_hour is not None:
             cur.execute("UPDATE users SET briefing_hour = %s WHERE id = %s", (briefing_hour, user_id))
+        if check_in_hour is not None:
+            cur.execute("UPDATE users SET check_in_hour = %s WHERE id = %s", (check_in_hour, user_id))
+        if assessment_hour is not None:
+            cur.execute("UPDATE users SET assessment_hour = %s WHERE id = %s", (assessment_hour, user_id))
 
 
 def get_all_active_users() -> list:

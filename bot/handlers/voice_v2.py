@@ -66,7 +66,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Empty transcription for user {user['id']} "
                 f"(duration={voice.duration}s, file_size={voice.file_size})"
             )
-            await update.message.reply_text("Couldn't catch that \u2014 try again?")
+            await update.message.reply_text(
+                "Didn't catch that — mind sending it again? "
+                "Sometimes holding the mic a bit closer helps.",
+                reply_to_message_id=update.message.message_id,
+            )
             return
 
         text = text.strip()
@@ -85,7 +89,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except asyncio.TimeoutError:
             logger.error(f"Voice brain processing timed out for user {user['id']}")
-            await update.message.reply_text("That took too long to process. Try sending it again or type it out.")
+            await update.message.reply_text(
+                "That one took too long — try sending it again?",
+                reply_to_message_id=update.message.message_id,
+            )
             return
 
         if response:
@@ -102,11 +109,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
             )
         else:
-            await update.message.reply_text("Something went wrong processing that. Try again or type it out.")
+            await update.message.reply_text(
+                "Didn't quite get that — try sending the voice note again?",
+                reply_to_message_id=update.message.message_id,
+            )
 
     except Exception as e:
         logger.error(f"Voice handling failed: {type(e).__name__}: {e}")
-        await update.message.reply_text("Had trouble with that voice message. Try again or type it out.")
+        await update.message.reply_text(
+            "Had trouble with that one — send it again?",
+            reply_to_message_id=update.message.message_id,
+        )
     finally:
         typing_active = False
         typing_task.cancel()

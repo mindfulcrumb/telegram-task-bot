@@ -734,6 +734,88 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
 
         return
 
+    # ── Settings callbacks ──
+    if query.data.startswith("settings:"):
+        user = context.user_data.get("db_user")
+        if not user:
+            tg = update.effective_user
+            user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+            context.user_data["db_user"] = user
+
+        setting = query.data.split(":")[1]
+
+        if setting == "briefing":
+            # Show morning briefing time options
+            buttons = []
+            for h in [5, 6, 7, 8, 9, 10]:
+                buttons.append(InlineKeyboardButton(_format_hour(h), callback_data=f"settime:briefing:{h}"))
+            keyboard = InlineKeyboardMarkup([buttons[:3], buttons[3:]])
+            await query.message.edit_text(
+                "What time do you want your morning briefing?",
+                reply_markup=keyboard,
+            )
+            return
+
+        elif setting == "checkin":
+            # Show evening check-in time options
+            buttons = []
+            for h in [18, 19, 20, 21, 22, 23]:
+                buttons.append(InlineKeyboardButton(_format_hour(h), callback_data=f"settime:checkin:{h}"))
+            keyboard = InlineKeyboardMarkup([buttons[:3], buttons[3:]])
+            await query.message.edit_text(
+                "What time do you want your evening check-in?",
+                reply_markup=keyboard,
+            )
+            return
+
+        elif setting == "timezone":
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("London", callback_data="tz:Europe/London"),
+                    InlineKeyboardButton("Lisbon", callback_data="tz:Europe/Lisbon"),
+                    InlineKeyboardButton("Paris", callback_data="tz:Europe/Paris"),
+                ],
+                [
+                    InlineKeyboardButton("New York", callback_data="tz:America/New_York"),
+                    InlineKeyboardButton("Chicago", callback_data="tz:America/Chicago"),
+                    InlineKeyboardButton("LA", callback_data="tz:America/Los_Angeles"),
+                ],
+                [
+                    InlineKeyboardButton("Dubai", callback_data="tz:Asia/Dubai"),
+                    InlineKeyboardButton("Tokyo", callback_data="tz:Asia/Tokyo"),
+                    InlineKeyboardButton("Sydney", callback_data="tz:Australia/Sydney"),
+                ],
+            ])
+            await query.message.edit_text(
+                "Pick your timezone:",
+                reply_markup=keyboard,
+            )
+            return
+
+    # Time setting callbacks (from settings)
+    if query.data.startswith("settime:"):
+        user = context.user_data.get("db_user")
+        if not user:
+            tg = update.effective_user
+            user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+            context.user_data["db_user"] = user
+
+        parts = query.data.split(":")
+        setting_type = parts[1]
+        hour = int(parts[2])
+
+        if setting_type == "briefing":
+            user_service.update_settings(user["id"], briefing_hour=hour)
+            user["briefing_hour"] = hour
+            context.user_data["db_user"] = user
+            await query.message.edit_text(f"Morning briefing set to {_format_hour(hour)}.")
+        elif setting_type == "checkin":
+            user_service.update_settings(user["id"], check_in_hour=hour)
+            user["check_in_hour"] = hour
+            context.user_data["db_user"] = user
+            await query.message.edit_text(f"Evening check-in set to {_format_hour(hour)}.")
+        return
+
     # ── Legacy callbacks ──
 
     # Timezone selection
@@ -841,36 +923,57 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /settings ─────────────────────────────────────────────────────────
 
+def _format_hour(h: int) -> str:
+    """Format hour int to human-readable (e.g. 8 -> '8:00 AM', 20 -> '8:00 PM')."""
+    if h == 0:
+        return "12:00 AM"
+    elif h < 12:
+        return f"{h}:00 AM"
+    elif h == 12:
+        return "12:00 PM"
+    else:
+        return f"{h - 12}:00 PM"
+
+
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show and manage user settings."""
     user = await _ensure_user(update, context)
     if not user:
         return
 
-    await _typing_pause(update.message.chat, 0.6)
-    await update.message.reply_text(
-        f"Your settings:\n\n"
-        f"Timezone: {user.get('timezone', 'UTC')}\n"
-        f"Daily briefing: {user.get('briefing_hour', 8)}:00\n"
-        f"Tier: {user.get('tier', 'free').title()}\n\n"
-        "To change timezone: /settings timezone Europe/Lisbon\n"
-        "To change briefing hour: /settings briefing 9"
-    )
-
-    # Handle setting changes
+    # Handle text-based setting changes first
     args = context.args
     if args and len(args) >= 2:
         if args[0] == "timezone":
             user_service.update_settings(user["id"], timezone=args[1])
             await update.message.reply_text(f"Timezone updated to {args[1]}")
+            return
         elif args[0] == "briefing":
             try:
                 hour = int(args[1])
                 if 0 <= hour <= 23:
                     user_service.update_settings(user["id"], briefing_hour=hour)
-                    await update.message.reply_text(f"Daily briefing set to {hour}:00")
+                    await update.message.reply_text(f"Morning briefing set to {_format_hour(hour)}")
+                    return
             except ValueError:
                 pass
+
+    tz = user.get("timezone", "UTC")
+    tz_short = tz.split("/")[-1].replace("_", " ")
+    briefing = user.get("briefing_hour", 8)
+    checkin = user.get("check_in_hour", 20)
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"Morning briefing: {_format_hour(briefing)}", callback_data="settings:briefing")],
+        [InlineKeyboardButton(f"Evening check-in: {_format_hour(checkin)}", callback_data="settings:checkin")],
+        [InlineKeyboardButton(f"Timezone: {tz_short}", callback_data="settings:timezone")],
+    ])
+
+    await _typing_pause(update.message.chat, 0.6)
+    await update.message.reply_text(
+        "Your settings — tap to change:",
+        reply_markup=keyboard,
+    )
 
 
 # ── /account ──────────────────────────────────────────────────────────

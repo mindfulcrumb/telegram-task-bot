@@ -163,19 +163,38 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
             if not nudges:
                 continue
 
-            lines = ["Quick thought:\n"]
+            # Build a short summary for the AI to rephrase naturally
+            task_bullets = []
             for t, ntype in nudges:
                 if ntype == "overdue":
                     days = (today_d - t["due_date"]).days
-                    lines.append(f"\"{t['title']}\" \u2014 {days} days overdue")
+                    task_bullets.append(f"- \"{t['title']}\" ({days} days overdue)")
                 elif ntype == "no_due_date":
-                    lines.append(f"\"{t['title']}\" \u2014 high priority, no due date")
-            lines.append("\nWant me to help with any of these?")
+                    task_bullets.append(f"- \"{t['title']}\" (high priority, no due date)")
+
+            nudge_prompt = (
+                "You're a personal assistant nudging the user about overdue tasks. "
+                "Rephrase these task titles in a short, casual, human way (2-4 sentences max). "
+                "If a title looks technical (env vars, API keys, config), describe it simply — "
+                "e.g. 'that Railway config setup' instead of raw variable names. "
+                "End with an offer to help. No markdown, no bullet points.\n\n"
+                + "\n".join(task_bullets)
+            )
+
+            from bot.ai.brain_v2 import ai_brain
+            nudge_text = await ai_brain.quick_generate(nudge_prompt, max_tokens=200)
+            if not nudge_text:
+                # Fallback to simple format if AI fails
+                lines = ["Quick thought:\n"]
+                for b in task_bullets:
+                    lines.append(b.lstrip("- "))
+                lines.append("\nWant me to help with any of these?")
+                nudge_text = "\n".join(lines)
 
             await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
             await context.bot.send_message(
                 chat_id=user["telegram_user_id"],
-                text="\n".join(lines),
+                text=nudge_text,
             )
 
             for t, ntype in nudges:
