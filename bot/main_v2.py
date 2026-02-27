@@ -635,7 +635,7 @@ def _register_full_handlers(application):
         from bot.handlers.tasks_v2 import (
             cmd_add, cmd_list, cmd_today, cmd_week, cmd_overdue,
             cmd_done, cmd_delete, cmd_edit, cmd_undo, cmd_clear,
-            cmd_analyze, cmd_streak, cmd_workout, cmd_metrics, cmd_gains,
+            cmd_analyze, cmd_streak, cmd_workout, cmd_wtest, cmd_metrics, cmd_gains,
             cmd_protocols, cmd_supplements, cmd_bloodwork, cmd_dose,
             cmd_connect_whoop, cmd_recovery, cmd_whoop, cmd_disconnect_whoop,
             handle_whoop_callback, handle_feedback_callback, handle_message,
@@ -653,6 +653,7 @@ def _register_full_handlers(application):
         application.add_handler(CommandHandler("analyze", cmd_analyze))
         application.add_handler(CommandHandler("streak", cmd_streak))
         application.add_handler(CommandHandler("workout", cmd_workout))
+        application.add_handler(CommandHandler("wtest", cmd_wtest))
         application.add_handler(CommandHandler("metrics", cmd_metrics))
         application.add_handler(CommandHandler("gains", cmd_gains))
         application.add_handler(CommandHandler("protocols", cmd_protocols))

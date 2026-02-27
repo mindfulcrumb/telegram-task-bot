@@ -307,6 +307,16 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(context.args) if context.args else ""
     if not text:
+        # If there's an active session, show it
+        try:
+            from bot.services import fitness_service
+            from bot.handlers.workout_session import send_current_exercise
+            active = fitness_service.get_active_session(user["id"])
+            if active:
+                await send_current_exercise(update.message.chat, context, active["id"])
+                return
+        except Exception as e:
+            logger.warning(f"Failed to show active workout: {e}")
         await update.message.reply_text(
             "Log a workout:\n"
             "/workout push day 45min\n"
@@ -337,6 +347,60 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
             await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
+
+
+async def cmd_wtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Diagnostic: test workout card rendering without AI. /wtest"""
+    user = await _get_user(update, context)
+    if not user:
+        return
+
+    steps = []
+    try:
+        from bot.services import fitness_service
+        steps.append("1. fitness_service imported")
+
+        # Create a simple test session
+        test_exercises = [
+            {"exercise_name": "Test Push-ups", "sets": 3, "reps": "10", "notes": "Diagnostic test"},
+            {"exercise_name": "Test Squats", "sets": 3, "reps": "12"},
+        ]
+        session = fitness_service.create_workout_session(
+            user_id=user["id"],
+            title="Diagnostic Test",
+            exercises=test_exercises,
+        )
+        steps.append(f"2. Session created: id={session['id']}, exercises={len(session.get('exercises', []))}")
+
+        # Verify we can fetch it back
+        fetched = fitness_service.get_session_by_id(session["id"])
+        if not fetched:
+            steps.append("3. FAIL: get_session_by_id returned None!")
+            await update.message.reply_text("\n".join(steps))
+            return
+        steps.append(f"3. Session fetched: {len(fetched['exercises'])} exercises, status={fetched.get('status')}")
+
+        # Try rendering
+        from bot.handlers.workout_session import render_exercise_card, send_current_exercise
+        text, markup = render_exercise_card(
+            fetched["exercises"][0], session["id"], 0, len(fetched["exercises"])
+        )
+        steps.append(f"4. Card rendered: {len(text)} chars, {len(markup.inline_keyboard)} button rows")
+
+        # Try sending
+        await send_current_exercise(update.message.chat, context, session["id"])
+        steps.append("5. Card SENT successfully!")
+
+        # Abandon test session
+        fitness_service.abandon_session(session["id"])
+        steps.append("6. Test session cleaned up")
+
+    except Exception as e:
+        import traceback
+        steps.append(f"FAIL: {type(e).__name__}: {e}")
+        steps.append(traceback.format_exc()[-500:])
+
+    await update.message.reply_text("\n".join(steps))
 
 
 async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1026,7 +1090,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Check for pending interactive workout session
         pending_session_id = ai_brain._pending_session.pop(user["id"], None)
-        logger.info(f"WORKOUT CARDS: pending_session_id={pending_session_id}, user_id={user['id']}, _pending_session keys={list(ai_brain._pending_session.keys())}")
+        logger.info(f"WORKOUT CARDS: pending_session_id={pending_session_id}, user_id={user['id']}")
+
+        # Safety net: if no pending session found but user asked for a workout,
+        # check if the AI silently created a session (the _pending_session dict can
+        # miss if the agent loop structure changes or an exception path skips it)
+        if not pending_session_id:
+            _lower = text.lower()
+            _workout_phrases = ("workout", "train", "session", "leg day", "push day", "pull day",
+                                "recovery session", "what should i", "give me a", "prescribe")
+            if any(p in _lower for p in _workout_phrases):
+                try:
+                    from bot.services import fitness_service as _fs
+                    _active = _fs.get_active_session(user["id"])
+                    if _active:
+                        # Check if this session was created in the last 60 seconds (i.e., from this request)
+                        from datetime import datetime, timezone as _tz
+                        _started = _active.get("started_at")
+                        if _started:
+                            _age = (datetime.now(_tz.utc) - _started).total_seconds()
+                            if _age < 60:
+                                pending_session_id = _active["id"]
+                                logger.info(f"WORKOUT CARDS: safety net caught active session {pending_session_id} (age={_age:.0f}s)")
+                except Exception as e:
+                    logger.warning(f"WORKOUT CARDS: safety net check failed: {e}")
 
         if response:
             # If paywall was hit, attach subscribe button
@@ -1052,7 +1139,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"WORKOUT CARDS: cards sent successfully for session {pending_session_id}")
             except Exception as e:
                 logger.error(f"WORKOUT CARDS: FAILED to send cards for session {pending_session_id}: {e}", exc_info=True)
-                await update.message.reply_text("Workout created but couldn't display the card. Try 'show my workout'.")
+                await update.message.reply_text(f"Workout created but card failed: {type(e).__name__}: {e}")
         else:
             logger.info(f"WORKOUT CARDS: no pending session for user {user['id']}")
 

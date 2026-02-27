@@ -18,11 +18,12 @@ def _to_ascii(text):
         return ""
 
 
-def _call_api(system, messages, tools=None, model=None, max_tokens=1024):
+def _call_api(system, messages, tools=None, model=None, max_tokens=1024, tool_choice=None):
     """Call Anthropic API with tool support and prompt caching.
 
     system: str or list of content blocks (for caching).
     model: model ID override. Falls back to CLAUDE_MODEL env var.
+    tool_choice: optional dict to force tool use (e.g., {"type": "any"}).
     """
     import anthropic
 
@@ -44,6 +45,8 @@ def _call_api(system, messages, tools=None, model=None, max_tokens=1024):
         }
         if tools:
             kwargs["tools"] = tools
+            if tool_choice:
+                kwargs["tool_choice"] = tool_choice
 
         response = client.messages.create(**kwargs)
 
@@ -1362,6 +1365,15 @@ JSON:"""
             response = None
             all_text_parts = []  # Collect text from ALL turns, not just the last
 
+            # Detect workout requests — force tool use on first turn so the model
+            # MUST call at least one tool (get_fitness_context or start_workout_session)
+            _lower_input = user_input.lower()
+            _workout_hints = ("workout", "train", "session", "leg day", "push day",
+                              "pull day", "what should i", "give me a", "prescribe",
+                              "recovery session", "mobility session")
+            _is_workout_request = any(h in _lower_input for h in _workout_hints)
+            _first_turn_tool_choice = {"type": "any"} if _is_workout_request else None
+
             for turn in range(max_turns):
                 # Refresh typing indicator between turns so dots stay visible
                 if typing_callback and turn > 0:
@@ -1370,10 +1382,14 @@ JSON:"""
                     except Exception:
                         pass
 
+                # On first turn of workout requests, force tool use
+                tc = _first_turn_tool_choice if turn == 0 else None
+
                 # Run blocking API call in thread so event loop stays responsive
                 # (allows asyncio.wait_for timeout + typing indicator to work)
                 response, error = await asyncio.to_thread(
-                    _call_api, system, messages, tools=tools, model=model, max_tokens=max_tokens
+                    _call_api, system, messages, tools=tools, model=model, max_tokens=max_tokens,
+                    tool_choice=tc,
                 )
 
                 if error:
