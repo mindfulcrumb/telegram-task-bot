@@ -739,7 +739,7 @@ async def cmd_recovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Inline action buttons
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("What should I train?", callback_data="whoop_train"),
+            InlineKeyboardButton("Train today", callback_data="whoop_train"),
             InlineKeyboardButton("Log workout", callback_data="whoop_log"),
         ],
         [
@@ -879,6 +879,70 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await chat.send_message("WHOOP not connected. Use /connect_whoop to link.")
             return
 
+        # Check if we know enough about the user to program training
+        from bot.services import fitness_service
+        profile = fitness_service.get_fitness_profile(user["id"])
+        if not profile or not profile.get("fitness_goal"):
+            # Ask what they're training for so Zoe can give relevant advice
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Build muscle", callback_data="whoop_goal:muscle"),
+                    InlineKeyboardButton("Get stronger", callback_data="whoop_goal:strength"),
+                ],
+                [
+                    InlineKeyboardButton("Lose fat", callback_data="whoop_goal:cut"),
+                    InlineKeyboardButton("Race / sport", callback_data="whoop_goal:athletic"),
+                ],
+                [InlineKeyboardButton("General fitness", callback_data="whoop_goal:health")],
+            ])
+            await chat.send_message(
+                "Before I program anything \u2014 what are you training for?",
+                reply_markup=keyboard,
+            )
+            return
+
+        await chat.send_action(ChatAction.TYPING)
+
+        async def _keep_typing():
+            await chat.send_action(ChatAction.TYPING)
+
+        tasks = task_service.get_tasks(user["id"])
+        response = await ai_brain.process(
+            "Based on my WHOOP recovery, what should I train today? Give me a specific session.",
+            user, tasks, typing_callback=_keep_typing,
+        )
+
+        pending_session_id = ai_brain._pending_session.pop(user["id"], None)
+
+        if response:
+            await typing_pause(chat, 0.6)
+            await chat.send_message(_clean_response(response))
+
+        if pending_session_id:
+            from bot.handlers.workout_session import send_current_exercise
+            try:
+                await send_current_exercise(chat, context, pending_session_id)
+            except Exception as e:
+                logger.error(f"Failed to send workout card for session {pending_session_id}: {e}")
+                await chat.send_message("Workout created but couldn't display the card. Try 'show my workout'.")
+
+    elif query.data.startswith("whoop_goal:"):
+        # User picked a training goal from the mini-onboarding
+        goal_key = query.data.split(":")[1]
+        goal_map = {
+            "muscle": "build_muscle",
+            "strength": "strength",
+            "cut": "lose_fat",
+            "athletic": "athletic_performance",
+            "health": "general_fitness",
+        }
+        fitness_goal = goal_map.get(goal_key, "general_fitness")
+
+        from bot.services import fitness_service
+        fitness_service.update_fitness_profile(user["id"], fitness_goal=fitness_goal)
+
+        # Now generate the training recommendation with context
+        from bot.services import whoop_service
         await chat.send_action(ChatAction.TYPING)
 
         async def _keep_typing():

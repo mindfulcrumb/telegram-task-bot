@@ -287,6 +287,30 @@ class _HealthCheck(BaseHTTPRequestHandler):
                     whoop_service.sync_all(user_id)
                 except Exception:
                     pass
+
+                # Send post-connection onboarding message in Telegram
+                try:
+                    from bot.services import user_service
+                    u = user_service.get_user_by_id(user_id)
+                    chat_id = u.get("telegram_id") if u else None
+                    if chat_id:
+                        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+                        msg = (
+                            "WHOOP is linked. Here's what I can do with it:\n\n"
+                            "/recovery \u2014 today's recovery score, HRV, sleep breakdown\n"
+                            "/whoop \u2014 full dashboard with strain, sleep, and recovery\n\n"
+                            "You can also just ask me things like:\n"
+                            "\u2022 \"what should I train today?\"\n"
+                            "\u2022 \"am I recovered enough for legs?\"\n"
+                            "\u2022 \"how'd I sleep?\"\n\n"
+                            "I'll use your real data to answer."
+                        )
+                        url = f"https://api.telegram.org/bot{token}/sendMessage"
+                        data = json.dumps({"chat_id": int(chat_id), "text": msg}).encode()
+                        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                        urllib.request.urlopen(req, timeout=10)
+                except Exception as e:
+                    logger.warning(f"Failed to send WHOOP onboarding message: {e}")
             else:
                 self.send_response(500)
                 self.send_header("Content-Type", "text/html")
