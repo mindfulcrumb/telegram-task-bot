@@ -1134,7 +1134,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Workout session created but brain returned no text — send brief intro
             await _send_human(update, "Session ready. Let's go.")
         else:
-            await update.message.reply_text("Something went wrong processing that. Try again or use a /command.")
+            logger.error(f"Brain returned no response for user {user['id']}, text={text[:100]}")
+            await update.message.reply_text("Couldn't process that. Try again or use a /command.")
 
         if pending_session_id:
             logger.info(f"WORKOUT CARDS: sending cards for session {pending_session_id}")
@@ -1151,7 +1152,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"handle_message failed for user: {e}", exc_info=True)
         try:
-            await update.message.reply_text("Something went wrong. Try again.")
+            await update.message.reply_text(f"Something broke ({type(e).__name__}). Try again.")
         except Exception:
             pass
 

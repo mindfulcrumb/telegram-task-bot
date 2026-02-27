@@ -891,155 +891,157 @@ TASKS:
         try:
             from bot.services import fitness_service
             summary = fitness_service.get_fitness_summary(user_id)
-        except Exception:
+
+            lines = ["\nFITNESS DATA:"]
+
+            # Profile
+            profile = summary.get("profile")
+            if profile:
+                parts = []
+                if profile.get("fitness_goal"):
+                    parts.append(f"Goal: {profile['fitness_goal'].replace('_', ' ')}")
+                if profile.get("experience_level"):
+                    parts.append(f"Level: {profile['experience_level']}")
+                if profile.get("training_days_per_week"):
+                    parts.append(f"Trains: {profile['training_days_per_week']}x/week")
+                if profile.get("limitations"):
+                    parts.append(f"Limitations: {profile['limitations']}")
+                if profile.get("preferred_style"):
+                    parts.append(f"Style: {profile['preferred_style']}")
+                if profile.get("equipment"):
+                    parts.append(f"Equipment: {profile['equipment'].replace('_', ' ')}")
+                if parts:
+                    lines.append(f"- Profile: {', '.join(parts)}")
+
+            # Workout streak
+            streak = summary.get("streak", {})
+            ws = streak.get("current_streak", 0)
+            wbest = streak.get("longest_streak", 0)
+            last_workout = streak.get("last_workout_date")
+            if last_workout:
+                try:
+                    days_ago = (date.today() - last_workout).days
+                    lines.append(f"- Workout streak: {ws} (best: {wbest}), last workout: {days_ago}d ago")
+                except Exception:
+                    lines.append(f"- Workout streak: {ws} (best: {wbest})")
+            else:
+                lines.append("- No workouts logged yet")
+
+            # Recent workouts
+            recent = summary.get("recent_workouts", [])
+            if recent:
+                lines.append("- Last workouts:")
+                for w in recent[:3]:
+                    ex_summary = ""
+                    if w.get("exercises"):
+                        ex_names = [ex["exercise_name"] for ex in w["exercises"][:4]]
+                        ex_summary = f" — {', '.join(ex_names)}"
+                        if len(w["exercises"]) > 4:
+                            ex_summary += f" +{len(w['exercises']) - 4} more"
+                    rpe_str = f" (RPE {w['rpe']})" if w.get("rpe") else ""
+                    date_str = w["created_at"].strftime("%a %b %d") if hasattr(w.get("created_at"), "strftime") else "?"
+                    lines.append(f"  {date_str}: {w.get('title', '?')}{ex_summary}{rpe_str}")
+
+            # Pattern balance
+            patterns = summary.get("pattern_balance", {})
+            if patterns:
+                parts = []
+                for p in ["horizontal_push", "horizontal_pull", "vertical_push", "vertical_pull", "squat", "hinge", "carry_rotation"]:
+                    short = p.replace("horizontal_", "h.").replace("vertical_", "v.").replace("carry_rotation", "carry/rot")
+                    parts.append(f"{short}:{patterns.get(p, 0)}")
+                lines.append(f"- Pattern balance (14d): {', '.join(parts)}")
+
+            # Volume trend
+            vol = summary.get("volume_trend", {})
+            if vol.get("trend") and vol["trend"] != "insufficient_data":
+                lines.append(f"- Volume trend: {vol['trend']} ({vol.get('this_week_sets', 0)} sets this week vs {vol.get('last_week_sets', 0)} last week)")
+
+            # Latest metrics
+            metrics = summary.get("latest_metrics", {})
+            if metrics:
+                metric_parts = []
+                for k, v in metrics.items():
+                    unit = v.get("unit", "")
+                    metric_parts.append(f"{k}: {v.get('value', '?')}{unit}")
+                lines.append(f"- Metrics: {', '.join(metric_parts)}")
+
+            # PRs
+            prs = summary.get("recent_prs", [])
+            if prs:
+                pr_parts = [f"{p.get('exercise', '?')} {p.get('new_weight', '?')}kg (was {p.get('previous_best', '?')}kg)" for p in prs[:3]]
+                lines.append(f"- Recent PRs: {', '.join(pr_parts)}")
+
+            # Deload hint
+            weeks = summary.get("active_training_weeks", 0)
+            if weeks >= 5:
+                lines.append(f"- Training weeks without deload: {weeks} — SUGGEST DELOAD")
+
+            return "\n".join(lines) + "\n" if len(lines) > 1 else ""
+        except Exception as e:
+            logger.warning(f"Fitness section build failed: {type(e).__name__}: {e}")
             return ""
-
-        lines = ["\nFITNESS DATA:"]
-
-        # Profile
-        profile = summary.get("profile")
-        if profile:
-            parts = []
-            if profile.get("fitness_goal"):
-                parts.append(f"Goal: {profile['fitness_goal'].replace('_', ' ')}")
-            if profile.get("experience_level"):
-                parts.append(f"Level: {profile['experience_level']}")
-            if profile.get("training_days_per_week"):
-                parts.append(f"Trains: {profile['training_days_per_week']}x/week")
-            if profile.get("limitations"):
-                parts.append(f"Limitations: {profile['limitations']}")
-            if profile.get("preferred_style"):
-                parts.append(f"Style: {profile['preferred_style']}")
-            if profile.get("equipment"):
-                parts.append(f"Equipment: {profile['equipment'].replace('_', ' ')}")
-            if parts:
-                lines.append(f"- Profile: {', '.join(parts)}")
-
-        # Workout streak
-        streak = summary.get("streak", {})
-        ws = streak.get("current_streak", 0)
-        wbest = streak.get("longest_streak", 0)
-        last_workout = streak.get("last_workout_date")
-        if last_workout:
-            from datetime import date as dt_date
-            days_ago = (dt_date.today() - last_workout).days
-            lines.append(f"- Workout streak: {ws} (best: {wbest}), last workout: {days_ago}d ago")
-        else:
-            lines.append("- No workouts logged yet")
-
-        # Recent workouts
-        recent = summary.get("recent_workouts", [])
-        if recent:
-            lines.append("- Last workouts:")
-            for w in recent[:3]:
-                ex_summary = ""
-                if w.get("exercises"):
-                    ex_names = [ex["exercise_name"] for ex in w["exercises"][:4]]
-                    ex_summary = f" — {', '.join(ex_names)}"
-                    if len(w["exercises"]) > 4:
-                        ex_summary += f" +{len(w['exercises']) - 4} more"
-                rpe_str = f" (RPE {w['rpe']})" if w.get("rpe") else ""
-                date_str = w["created_at"].strftime("%a %b %d") if w.get("created_at") else "?"
-                lines.append(f"  {date_str}: {w['title']}{ex_summary}{rpe_str}")
-
-        # Pattern balance
-        patterns = summary.get("pattern_balance", {})
-        if patterns:
-            parts = []
-            for p in ["horizontal_push", "horizontal_pull", "vertical_push", "vertical_pull", "squat", "hinge", "carry_rotation"]:
-                short = p.replace("horizontal_", "h.").replace("vertical_", "v.").replace("carry_rotation", "carry/rot")
-                parts.append(f"{short}:{patterns.get(p, 0)}")
-            lines.append(f"- Pattern balance (14d): {', '.join(parts)}")
-
-        # Volume trend
-        vol = summary.get("volume_trend", {})
-        if vol.get("trend") and vol["trend"] != "insufficient_data":
-            lines.append(f"- Volume trend: {vol['trend']} ({vol.get('this_week_sets', 0)} sets this week vs {vol.get('last_week_sets', 0)} last week)")
-
-        # Latest metrics
-        metrics = summary.get("latest_metrics", {})
-        if metrics:
-            metric_parts = []
-            for k, v in metrics.items():
-                unit = v.get("unit", "")
-                metric_parts.append(f"{k}: {v['value']}{unit}")
-            lines.append(f"- Metrics: {', '.join(metric_parts)}")
-
-        # PRs
-        prs = summary.get("recent_prs", [])
-        if prs:
-            pr_parts = [f"{p['exercise']} {p['new_weight']}kg (was {p['previous_best']}kg)" for p in prs[:3]]
-            lines.append(f"- Recent PRs: {', '.join(pr_parts)}")
-
-        # Deload hint
-        weeks = summary.get("active_training_weeks", 0)
-        if weeks >= 5:
-            lines.append(f"- Training weeks without deload: {weeks} — SUGGEST DELOAD")
-
-        return "\n".join(lines) + "\n" if len(lines) > 1 else ""
 
     def _build_biohacking_section(self, user_id: int) -> str:
         """Build biohacking context section for system prompt."""
         try:
             from bot.services import biohacking_service
             summary = biohacking_service.get_biohacking_summary(user_id)
-        except Exception:
+
+            lines = ["\nBIOHACKING DATA:"]
+            has_data = False
+
+            # Active protocols
+            protocols = summary.get("protocols", [])
+            if protocols:
+                has_data = True
+                lines.append("- Active peptide protocols:")
+                for p in protocols:
+                    dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
+                    freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
+                    route_str = f" {p.get('route', '')}" if p.get("route") else ""
+                    cycle_str = ""
+                    if p.get("cycle_day") is not None:
+                        cycle_str = f", Day {p.get('cycle_day')}/{p.get('cycle_total')}"
+                        if p.get("days_remaining") is not None and p["days_remaining"] <= 7:
+                            cycle_str += f" — ENDING SOON ({p['days_remaining']}d left)"
+                    adherence_str = f", {p.get('doses_last_7d', 0)} doses in 7d"
+                    lines.append(f"  {p.get('peptide_name', '?')}: {dose_str}{freq_str}{route_str}{cycle_str}{adherence_str}")
+
+            # Supplement stack
+            supplements = summary.get("supplements", [])
+            if supplements:
+                has_data = True
+                supp_parts = []
+                for s in supplements:
+                    dose_str = f" {s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
+                    timing_str = f" ({s.get('timing')})" if s.get("timing") else ""
+                    supp_parts.append(f"{s.get('supplement_name', '?')}{dose_str}{timing_str}")
+                lines.append(f"- Supplements: {', '.join(supp_parts)}")
+                adherence = summary.get("supplement_adherence", {})
+                if adherence.get("overall_rate") is not None:
+                    lines.append(f"- Supplement adherence (7d): {adherence['overall_rate']}%")
+
+            # Latest bloodwork
+            bw = summary.get("latest_bloodwork")
+            if bw:
+                has_data = True
+                date_str = bw["test_date"].isoformat() if hasattr(bw.get("test_date"), "isoformat") else "?"
+                marker_count = len(bw.get("markers", []))
+                lines.append(f"- Latest bloodwork: {date_str} ({marker_count} markers)")
+
+            # Flagged biomarkers
+            flagged = summary.get("flagged_biomarkers", [])
+            if flagged:
+                flag_parts = [f"{f.get('marker_name', '?')}: {f.get('value', '?')}{f.get('unit', '')} ({f.get('flag', '?')})" for f in flagged[:5]]
+                lines.append(f"- Flagged markers: {', '.join(flag_parts)}")
+
+            if not has_data:
+                return ""
+
+            return "\n".join(lines) + "\n"
+        except Exception as e:
+            logger.warning(f"Biohacking section build failed: {type(e).__name__}: {e}")
             return ""
-
-        lines = ["\nBIOHACKING DATA:"]
-        has_data = False
-
-        # Active protocols
-        protocols = summary.get("protocols", [])
-        if protocols:
-            has_data = True
-            lines.append("- Active peptide protocols:")
-            from datetime import date as dt_date
-            today = dt_date.today()
-            for p in protocols:
-                dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
-                freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
-                route_str = f" {p.get('route', '')}" if p.get("route") else ""
-                cycle_str = ""
-                if p.get("cycle_day") is not None:
-                    cycle_str = f", Day {p['cycle_day']}/{p['cycle_total']}"
-                    if p.get("days_remaining") is not None and p["days_remaining"] <= 7:
-                        cycle_str += f" — ENDING SOON ({p['days_remaining']}d left)"
-                adherence_str = f", {p.get('doses_last_7d', 0)} doses in 7d"
-                lines.append(f"  {p['peptide_name']}: {dose_str}{freq_str}{route_str}{cycle_str}{adherence_str}")
-
-        # Supplement stack
-        supplements = summary.get("supplements", [])
-        if supplements:
-            has_data = True
-            supp_parts = []
-            for s in supplements:
-                dose_str = f" {s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
-                timing_str = f" ({s['timing']})" if s.get("timing") else ""
-                supp_parts.append(f"{s['supplement_name']}{dose_str}{timing_str}")
-            lines.append(f"- Supplements: {', '.join(supp_parts)}")
-            adherence = summary.get("supplement_adherence", {})
-            if adherence.get("overall_rate") is not None:
-                lines.append(f"- Supplement adherence (7d): {adherence['overall_rate']}%")
-
-        # Latest bloodwork
-        bw = summary.get("latest_bloodwork")
-        if bw:
-            has_data = True
-            date_str = bw["test_date"].isoformat() if bw.get("test_date") else "?"
-            marker_count = len(bw.get("markers", []))
-            lines.append(f"- Latest bloodwork: {date_str} ({marker_count} markers)")
-
-        # Flagged biomarkers
-        flagged = summary.get("flagged_biomarkers", [])
-        if flagged:
-            flag_parts = [f"{f['marker_name']}: {f['value']}{f.get('unit', '')} ({f['flag']})" for f in flagged[:5]]
-            lines.append(f"- Flagged markers: {', '.join(flag_parts)}")
-
-        if not has_data:
-            return ""
-
-        return "\n".join(lines) + "\n"
 
     def _build_memory_section(self, user_id: int) -> str:
         """Build user memory section for system prompt."""
@@ -1078,61 +1080,62 @@ TASKS:
             if not whoop_service.is_connected(user_id):
                 return "\nWHOOP: Not connected. User can link via /connect_whoop or 'connect my WHOOP'.\n"
 
-            summary = whoop_service.get_whoop_summary(user_id)
-        except Exception:
+            summary = whoop_service.get_whoop_summary_cached(user_id)
+
+            lines = ["\nWHOOP DATA (today):"]
+            today = summary.get("today")
+
+            if today:
+                recovery = today.get("recovery_score")
+                zone = whoop_service.get_recovery_zone(recovery) if recovery is not None else "unknown"
+                hrv = today.get("hrv_rmssd")
+                rhr = today.get("resting_hr")
+                sleep = today.get("sleep_performance")
+                deep = today.get("deep_sleep_minutes")
+                rem = today.get("rem_sleep_minutes")
+                strain = today.get("daily_strain")
+                spo2 = today.get("spo2")
+                skin_temp = today.get("skin_temp")
+
+                if recovery is not None:
+                    lines.append(f"- Recovery: {recovery}% ({zone})")
+                if hrv is not None:
+                    lines.append(f"- HRV: {hrv}ms")
+                if rhr is not None:
+                    lines.append(f"- Resting HR: {rhr}bpm")
+                if sleep is not None:
+                    sleep_detail = f"{sleep}%"
+                    if deep is not None:
+                        sleep_detail += f", {deep}min deep"
+                    if rem is not None:
+                        sleep_detail += f", {rem}min REM"
+                    lines.append(f"- Sleep: {sleep_detail}")
+                if strain is not None:
+                    lines.append(f"- Strain (yesterday): {strain}")
+                if spo2 is not None:
+                    lines.append(f"- SpO2: {spo2}%")
+                if skin_temp is not None:
+                    lines.append(f"- Skin temp: {skin_temp}C")
+            else:
+                lines.append("- No data synced today (may need refresh)")
+
+            # Trends
+            trends = summary.get("trends", {})
+            if trends.get("days", 0) > 2:
+                trend_parts = []
+                if trends.get("recovery_avg") is not None:
+                    trend_parts.append(f"recovery avg {trends['recovery_avg']}% ({trends.get('recovery_trend', '?')})")
+                if trends.get("hrv_avg") is not None:
+                    trend_parts.append(f"HRV avg {trends['hrv_avg']}ms ({trends.get('hrv_trend', '?')})")
+                if trends.get("sleep_avg") is not None:
+                    trend_parts.append(f"sleep avg {trends['sleep_avg']}%")
+                if trend_parts:
+                    lines.append(f"- 7d trends: {', '.join(trend_parts)}")
+
+            return "\n".join(lines) + "\n" if len(lines) > 1 else ""
+        except Exception as e:
+            logger.warning(f"WHOOP section build failed: {type(e).__name__}: {e}")
             return ""
-
-        lines = ["\nWHOOP DATA (today):"]
-        today = summary.get("today")
-
-        if today:
-            recovery = today.get("recovery_score")
-            zone = whoop_service.get_recovery_zone(recovery) if recovery is not None else "unknown"
-            hrv = today.get("hrv_rmssd")
-            rhr = today.get("resting_hr")
-            sleep = today.get("sleep_performance")
-            deep = today.get("deep_sleep_minutes")
-            rem = today.get("rem_sleep_minutes")
-            strain = today.get("daily_strain")
-            spo2 = today.get("spo2")
-            skin_temp = today.get("skin_temp")
-
-            if recovery is not None:
-                lines.append(f"- Recovery: {recovery}% ({zone})")
-            if hrv is not None:
-                lines.append(f"- HRV: {hrv}ms")
-            if rhr is not None:
-                lines.append(f"- Resting HR: {rhr}bpm")
-            if sleep is not None:
-                sleep_detail = f"{sleep}%"
-                if deep is not None:
-                    sleep_detail += f", {deep}min deep"
-                if rem is not None:
-                    sleep_detail += f", {rem}min REM"
-                lines.append(f"- Sleep: {sleep_detail}")
-            if strain is not None:
-                lines.append(f"- Strain (yesterday): {strain}")
-            if spo2 is not None:
-                lines.append(f"- SpO2: {spo2}%")
-            if skin_temp is not None:
-                lines.append(f"- Skin temp: {skin_temp}C")
-        else:
-            lines.append("- No data synced today (may need refresh)")
-
-        # Trends
-        trends = summary.get("trends", {})
-        if trends.get("days", 0) > 2:
-            trend_parts = []
-            if trends.get("recovery_avg") is not None:
-                trend_parts.append(f"recovery avg {trends['recovery_avg']}% ({trends.get('recovery_trend', '?')})")
-            if trends.get("hrv_avg") is not None:
-                trend_parts.append(f"HRV avg {trends['hrv_avg']}ms ({trends.get('hrv_trend', '?')})")
-            if trends.get("sleep_avg") is not None:
-                trend_parts.append(f"sleep avg {trends['sleep_avg']}%")
-            if trend_parts:
-                lines.append(f"- 7d trends: {', '.join(trend_parts)}")
-
-        return "\n".join(lines) + "\n" if len(lines) > 1 else ""
 
     def _build_kb_awareness_section(self) -> str:
         """Build knowledge base awareness section — tells the brain what reference data is available."""
@@ -1349,7 +1352,12 @@ JSON:"""
 
             # Build system prompt as cached blocks (static = cached, dynamic = fresh)
             static_text = self._get_static_prompt()
-            dynamic_text = self._build_dynamic_context(user, tasks or [])
+            try:
+                dynamic_text = self._build_dynamic_context(user, tasks or [])
+            except Exception as e:
+                logger.error(f"Dynamic context build failed: {type(e).__name__}: {e}")
+                name = user.get("first_name", "friend")
+                dynamic_text = f"RIGHT NOW:\n- User: {name}\n- Status: context unavailable\n"
             system = [
                 {"type": "text", "text": static_text, "cache_control": {"type": "ephemeral"}},
                 {"type": "text", "text": dynamic_text},
@@ -1495,7 +1503,7 @@ JSON:"""
         except Exception as e:
             import traceback
             logger.error(f"Agent loop failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-            return "Something went wrong processing that. Try again or use a /command."
+            return f"Hit an error ({type(e).__name__}). Try again or use a /command."
 
 
 # Singleton

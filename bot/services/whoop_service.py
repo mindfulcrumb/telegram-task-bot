@@ -618,6 +618,22 @@ def get_whoop_summary(user_id: int) -> dict:
     }
 
 
+def get_whoop_summary_cached(user_id: int) -> dict:
+    """DB-only WHOOP summary — never syncs via HTTP. For system prompt building."""
+    today = date.today()
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT * FROM whoop_daily
+               WHERE user_id = %s AND cycle_date >= %s
+               ORDER BY cycle_date DESC LIMIT 1""",
+            (user_id, today - timedelta(days=1)),
+        )
+        row = cur.fetchone()
+    today_data = dict(row) if row else None
+    trends = get_whoop_trends(user_id, days=7)
+    return {"connected": True, "today": today_data, "trends": trends}
+
+
 # --- Webhook handling ---
 
 def verify_webhook_signature(body: bytes, signature: str, timestamp: str) -> bool:
