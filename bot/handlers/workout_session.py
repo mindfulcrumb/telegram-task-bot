@@ -1,4 +1,5 @@
 """Interactive workout session handler — one exercise at a time, set tracking, rest timers."""
+import html
 import logging
 import os
 from datetime import datetime, timezone
@@ -18,14 +19,8 @@ logger = logging.getLogger(__name__)
 # Cleared when timer fires or user skips rest.
 _rest_state = {}
 
-
-def _escape_md(text: str) -> str:
-    """Escape Telegram Markdown v1 special characters in user-generated text."""
-    if not text:
-        return text
-    for ch in ("\\", "`", "*", "_", "[", "]"):
-        text = text.replace(ch, f"\\{ch}")
-    return text
+# All card text uses parse_mode="HTML" — safe with any user content via html.escape()
+_PARSE_MODE = "HTML"
 
 
 def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
@@ -33,24 +28,24 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
                          rest_label: str = "", rest_seconds: int = 0) -> tuple:
     """Render a single exercise card with inline buttons.
 
-    Returns (text, reply_markup) tuple.
+    Returns (text, reply_markup) tuple. Text uses HTML formatting.
     """
     ex_id = exercise["id"]
-    name = _escape_md(exercise["exercise_name"])
+    name = html.escape(exercise["exercise_name"])
     sets_target = exercise["target_sets"]
     sets_done = exercise["sets_completed"]
-    reps = exercise["target_reps"]
+    reps = html.escape(str(exercise["target_reps"]))
     weight = exercise.get("target_weight")
-    unit = exercise.get("weight_unit", "kg")
+    unit = html.escape(exercise.get("weight_unit", "kg"))
     rpe = exercise.get("target_rpe")
-    notes = _escape_md(exercise.get("notes") or "")
+    notes = html.escape(exercise.get("notes") or "")
     all_done = sets_done >= sets_target
     is_last = exercise_index == total_exercises - 1
     is_first = exercise_index == 0
 
     # ── Header ──
-    text = f"*Exercise {exercise_index + 1} of {total_exercises}*\n\n"
-    text += f"*{name}*\n"
+    text = f"<b>Exercise {exercise_index + 1} of {total_exercises}</b>\n\n"
+    text += f"<b>{name}</b>\n"
 
     # Weight/reps line
     if weight:
@@ -63,11 +58,11 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
 
     # Coaching note
     if notes and notes.strip():
-        text += f"_{notes}_\n"
+        text += f"<i>{notes}</i>\n"
 
     # ── Rest indicator ──
     if is_resting:
-        text += f"\n\u23f1 *Resting — {rest_label}*\n"
+        text += f"\n\u23f1 <b>Resting — {html.escape(rest_label)}</b>\n"
 
     text += "\n"
 
@@ -99,7 +94,7 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
 
     elif all_done:
         # All sets complete
-        text += "\n\u2705 *All sets complete!*"
+        text += "\n\u2705 <b>All sets complete!</b>"
 
         nav_row = []
         if sets_done > 0:
@@ -173,15 +168,19 @@ async def send_current_exercise(chat, context, session_id: int):
     if not session:
         logger.error(f"WORKOUT CARDS: session {session_id} NOT FOUND in DB!")
         raise ValueError(f"Workout session {session_id} not found")
-    logger.info(f"WORKOUT CARDS: session found — {len(session.get('exercises', []))} exercises, status={session.get('status')}")
+
+    exercises = session["exercises"]
+    total = len(exercises)
+    if total == 0:
+        logger.error(f"WORKOUT CARDS: session {session_id} has 0 exercises!")
+        raise ValueError(f"Workout session {session_id} has no exercises")
+
+    logger.info(f"WORKOUT CARDS: session found — {total} exercises, status={session.get('status')}")
 
     # Store chat_id for timer callbacks
     fitness_service.update_session_chat_id(session_id, chat.id)
 
-    exercises = session["exercises"]
-    total = len(exercises)
     idx = session.get("current_exercise_idx", 0) or 0
-
     if idx >= total:
         idx = total - 1
 
@@ -204,30 +203,16 @@ async def send_current_exercise(chat, context, session_id: int):
                 message_id=existing_msg_id,
                 text=text,
                 reply_markup=markup,
-                parse_mode="Markdown",
+                parse_mode=_PARSE_MODE,
             )
             return
         except Exception:
-            # Markdown failed or message too old — try without parse_mode
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat.id,
-                    message_id=existing_msg_id,
-                    text=text,
-                    reply_markup=markup,
-                )
-                return
-            except Exception:
-                # Message too old or deleted — send new one
-                pass
+            pass  # Message too old or deleted — send new one
 
-    # Send new card message — fallback to plaintext if Markdown fails
-    try:
-        msg = await chat.send_message(text, reply_markup=markup, parse_mode="Markdown")
-    except Exception as md_err:
-        logger.warning(f"Markdown send failed for session {session_id}, falling back to plain: {md_err}")
-        msg = await chat.send_message(text, reply_markup=markup)
+    # Send new card message
+    msg = await chat.send_message(text, reply_markup=markup, parse_mode=_PARSE_MODE)
     fitness_service.set_card_message_id(session_id, msg.message_id)
+    logger.info(f"WORKOUT CARDS: card sent, message_id={msg.message_id}")
 
 
 async def handle_workout_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -450,13 +435,9 @@ async def _refresh_card(query, context, session_id: int):
     )
 
     try:
-        await query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=markup, parse_mode=_PARSE_MODE)
     except Exception:
-        # Markdown failed or text identical — try without parse_mode
-        try:
-            await query.edit_message_text(text, reply_markup=markup)
-        except Exception:
-            pass  # Text truly identical or message too old
+        pass  # Text truly identical or message too old
 
 
 def _cancel_timer(context, user_id: int, session_id: int):
@@ -510,15 +491,7 @@ async def _rest_timer_callback(context: ContextTypes.DEFAULT_TYPE):
             message_id=msg_id,
             text=text,
             reply_markup=markup,
-            parse_mode="Markdown",
+            parse_mode=_PARSE_MODE,
         )
     except Exception:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=msg_id,
-                text=text,
-                reply_markup=markup,
-            )
-        except Exception:
-            pass
+        pass
