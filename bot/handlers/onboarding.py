@@ -960,6 +960,25 @@ async def cmd_google(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Google disconnected.")
         return
 
+    # Switch account — disconnect + reconnect
+    if args and args[0].lower() == "switch":
+        google_auth.revoke_access(user["id"])
+        if google_auth.is_configured():
+            url = google_auth.get_auth_url(user["id"])
+            if url:
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Connect a different Google account", url=url)]
+                ])
+                await _typing_pause(update.message.chat, 0.5)
+                await update.message.reply_text(
+                    "Previous account disconnected.\n\n"
+                    "Tap below to connect a different Google account.",
+                    reply_markup=keyboard,
+                )
+                return
+        await update.message.reply_text("Previous account disconnected.")
+        return
+
     if not google_auth.is_configured():
         await update.message.reply_text(
             "Google integration isn't set up yet."
@@ -982,7 +1001,8 @@ async def cmd_google(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "Google Workspace is connected.\n"
                 "Calendar, Gmail, Drive, Tasks, Docs — all good.\n\n"
-                "To disconnect: /google disconnect"
+                "Switch account: /google switch\n"
+                "Disconnect: /google disconnect"
             )
         else:
             # Connected with limited scopes — prompt upgrade
@@ -1031,6 +1051,25 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Calendar disconnected.")
         return
 
+    # Switch account — disconnect + reconnect
+    if args and args[0].lower() == "switch":
+        calendar_service.revoke_access(user["id"])
+        if calendar_service.is_configured():
+            url = calendar_service.get_auth_url(user["id"])
+            if url:
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Connect a different Google account", url=url)]
+                ])
+                await _typing_pause(update.message.chat, 0.5)
+                await update.message.reply_text(
+                    "Previous calendar disconnected.\n\n"
+                    "Tap below to connect a different Google account.",
+                    reply_markup=keyboard,
+                )
+                return
+        await update.message.reply_text("Previous calendar disconnected.")
+        return
+
     # Legacy iCal URL support (if OAuth not configured)
     if args and args[0].startswith("http"):
         url = args[0]
@@ -1067,13 +1106,15 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dt = e["start"]
                 time_str = dt.strftime("%b %d") if e.get("all_day") else dt.strftime("%b %d %I:%M %p")
                 lines.append(f"  {e['title']} \u2014 {time_str}")
-            lines.append("\nTo disconnect: /calendar disconnect")
+            lines.append("\nSwitch account: /calendar switch")
+            lines.append("Disconnect: /calendar disconnect")
             await update.message.reply_text("\n".join(lines))
         else:
             await update.message.reply_text(
                 "Your Google Calendar is connected.\n\n"
                 "No upcoming events in the next 3 days.\n\n"
-                "To disconnect: /calendar disconnect"
+                "Switch account: /calendar switch\n"
+                "Disconnect: /calendar disconnect"
             )
         return
 
