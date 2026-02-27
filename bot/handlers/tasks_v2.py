@@ -64,7 +64,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(context.args) if context.args else ""
     if not text:
-        await update.message.reply_text("What's the task?\n/add buy groceries")
+        await update.message.reply_text("Add what?\n\n/add buy groceries")
         return
 
     # Check tier limit
