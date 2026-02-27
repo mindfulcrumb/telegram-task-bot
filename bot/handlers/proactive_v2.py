@@ -905,42 +905,78 @@ def _generate_briefing(user, tasks, streak, patterns):
         except Exception:
             pass
 
+        # Determine user's timezone for time-blocked schedule
+        tz = _get_tz(user)
+        now_local = datetime.now(tz)
+        current_time = now_local.strftime("%I:%M %p")
+
+        # Supplement/peptide data
+        dose_section = ""
+        try:
+            from bot.services import biohacking_service
+            protocols = biohacking_service.get_active_protocols(user["id"])
+            supplements = biohacking_service.get_active_supplements(user["id"])
+            dose_lines = []
+            if protocols:
+                dose_lines.append("Active peptide protocols:")
+                for p in protocols[:5]:
+                    dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
+                    freq = p.get("frequency", "")
+                    dose_lines.append(f"- {p.get('peptide_name', 'Unknown')} {dose_str} ({freq})")
+            if supplements:
+                dose_lines.append("Active supplements:")
+                for s in supplements[:5]:
+                    dose_str = f"{s.get('dose_amount', '')}{s.get('dose_unit', '')}" if s.get("dose_amount") else ""
+                    timing = s.get("timing", "")
+                    dose_lines.append(f"- {s.get('supplement_name', 'Unknown')} {dose_str} ({timing})")
+            if dose_lines:
+                dose_section = "\n".join(dose_lines) + "\n\n"
+        except Exception:
+            pass
+
         prompt = (
-            f"Generate a morning briefing for {user.get('first_name', 'friend')}.\n\n"
+            f"Generate a DETAILED morning routine and daily plan for {user.get('first_name', 'friend')}.\n"
+            f"Current time: {current_time}\n\n"
             f"Tasks ({len(tasks)} total, {len(overdue)} overdue, {len(due_today)} due today):\n"
             + "\n".join(task_lines) + "\n\n"
             + cal_section
             + whoop_section
             + fitness_section
+            + dose_section
             + cross_domain
-            + f"Streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
+            + f"Task streak: {streak.get('current_streak', 0)} days (best: {streak.get('longest_streak', 0)})\n"
             f"Most productive: {patterns.get('most_productive_day', 'varies')}\n"
             f"Best time: {patterns.get('preferred_time', 'varies')}\n\n"
-            "Write 2-3 SHORT paragraphs separated by blank lines (double newline).\n"
-            "Each paragraph is 1-2 sentences. Under 15 words per sentence.\n"
-            "Total under 400 chars.\n\n"
-            "CROSS-DOMAIN INTELLIGENCE (use these correlations to give smarter advice):\n"
-            "- If WHOOP recovery < 40% AND intense workout scheduled: suggest swapping to recovery/mobility\n"
-            "- If WHOOP recovery < 40% AND big meeting on calendar: suggest lighter prep, mention low energy\n"
-            "- If 5+ overdue tasks AND workout scheduled: prioritize tasks, keep workout short\n"
-            "- If sleep < 6 hours: suggest caffeine timing, lighter training, earlier bedtime\n"
-            "- If workout streak at risk (last workout 2+ days ago): mention it, suggest quick session\n"
-            "- If habit streaks are active: acknowledge them, encourage consistency\n\n"
-            "If WHOOP data is available, mention recovery zone and suggest training intensity.\n"
-            "Mention calendar events if any. Say which task to start with.\n"
-            "Mention unread emails if significant (5+). Mention habit streaks if active.\n"
-            "Mention streak if > 0.\n\n"
-            "CRITICAL: Use blank lines between paragraphs. NEVER write one continuous block.\n"
-            "No markdown formatting. No asterisks, no hyphens as bullets."
+            "FORMAT: Create a TIME-BLOCKED daily routine. Structure it like this:\n"
+            "1. Start with a one-line greeting + WHOOP recovery status if available\n"
+            "2. Then a time-blocked schedule from now through the day:\n"
+            "   - Use actual times (8:00 AM, 9:30 AM, etc.)\n"
+            "   - Include: supplements/doses, workouts, tasks, calendar events, meals/breaks\n"
+            "   - Group related items into time blocks\n"
+            "   - Adapt training intensity to WHOOP recovery if available\n"
+            "3. End with one motivational line\n\n"
+            "CROSS-DOMAIN INTELLIGENCE:\n"
+            "- If WHOOP recovery < 40%: suggest lighter training, recovery-focused session\n"
+            "- If recovery > 80%: suggest pushing harder, good day for PRs\n"
+            "- If 5+ overdue tasks: front-load the most important ones\n"
+            "- If habit streaks active: weave them into the schedule naturally\n"
+            "- If calendar events exist: schedule tasks around them\n\n"
+            "RULES:\n"
+            "- Be specific with supplement names and doses\n"
+            "- Be specific with task names (what to work on)\n"
+            "- Use plain text, no markdown, no asterisks, no bullet hyphens\n"
+            "- Separate sections with blank lines\n"
+            "- Keep it under 800 chars total — concise but detailed\n"
+            "- If a task title looks technical (env vars, API keys), describe it simply"
         )
 
         response, error = _call_api(
-            "You are Zoe, a warm productivity companion. Brief, specific, calm. "
-            "Structure responses as short paragraphs separated by blank lines. "
-            "Each paragraph is 1-2 sentences. Never write one continuous block. "
-            "Never say 'I'm an AI'. No markdown formatting.",
+            "You are Zoe, a personal performance coach. You create structured daily plans "
+            "that are specific, actionable, and time-blocked. You know the user's supplements, "
+            "workouts, tasks, and recovery data. Write like a real coach texting their client — "
+            "warm but direct. Never say 'I'm an AI'. No markdown formatting.",
             [{"role": "user", "content": prompt}],
-            max_tokens=200,
+            max_tokens=500,
         )
 
         if not error and response and response.content:
