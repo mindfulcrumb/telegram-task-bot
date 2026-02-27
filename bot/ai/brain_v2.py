@@ -670,7 +670,6 @@ If someone asks "can you do X?" and X is on this list, say YES and do it. Don't 
 
 DAILY ROUTINE / PLAN REQUESTS:
 When the user asks "what's my routine?", "plan my day", "give me today's schedule", "what should I do today?", or anything about their daily plan:
-- Respond with TEXT ONLY. Do NOT call start_workout_session. Do NOT create exercise cards.
 - Create a TIME-BLOCKED schedule using actual times (8:00 AM, 9:30 AM, etc.)
 - Include ALL of: supplements/peptide doses due, workout plan (adjusted to WHOOP recovery), tasks/work blocks, calendar events, habit reminders
 - Adapt training intensity to WHOOP recovery: green = push hard, yellow = moderate, red = recovery/mobility only
@@ -678,8 +677,8 @@ When the user asks "what's my routine?", "plan my day", "give me today's schedul
 - Be SPECIFIC: real task names, real supplement names and doses, real event names
 - If a task title is technical (env vars, configs), describe it simply
 - Separate sections with blank lines. No markdown. No asterisks.
-- For the workout portion, DESCRIBE it in the schedule (e.g. "9:00 AM Upper Pull: rows, pulldowns, curls"). Do NOT launch an interactive session.
-- Only use start_workout_session when the user explicitly says "start my workout", "let's train", "begin the session", or similar.
+- If the plan includes a workout, use start_workout_session to create the interactive cards.
+- CRITICAL: When calling start_workout_session, you MUST ALSO include a text message in the SAME response. Write the full daily plan as text FIRST, then call start_workout_session. The user will see your text, then the workout cards below it. If you call start_workout_session WITHOUT text, the user sees BLANK CHAT — this is a bug. Always include text.
 This should feel like a personal coach handing you a structured daily game plan.
 
 HABIT TRACKING:
@@ -1336,6 +1335,7 @@ JSON:"""
             model, max_tokens = self._select_model(user_input)
             max_turns = int(os.environ.get("AGENT_MAX_TURNS", "7"))
             response = None
+            all_text_parts = []  # Collect text from ALL turns, not just the last
 
             for turn in range(max_turns):
                 # Refresh typing indicator between turns so dots stay visible
@@ -1377,6 +1377,11 @@ JSON:"""
 
                 messages.append({"role": "assistant", "content": assistant_content})
 
+                # Collect text from this turn (so we don't lose it if later turns have no text)
+                for block in response.content:
+                    if hasattr(block, "text") and block.text and block.text.strip():
+                        all_text_parts.append(block.text.strip())
+
                 # Check stop reason — break on max_tokens to avoid truncated loops
                 if hasattr(response, "stop_reason") and response.stop_reason == "max_tokens":
                     logger.warning(f"Agent hit max_tokens on turn {turn}")
@@ -1406,14 +1411,8 @@ JSON:"""
 
                 messages.append({"role": "user", "content": tool_results})
 
-            # Extract final text
-            text_parts = []
-            if response and response.content:
-                for block in response.content:
-                    if hasattr(block, "text") and block.text:
-                        text_parts.append(block.text)
-
-            final_text = "\n".join(text_parts) if text_parts else None
+            # Use all collected text from every turn
+            final_text = "\n\n".join(all_text_parts) if all_text_parts else None
 
             # If agent exhausted all turns with tool calls but no text response,
             # force a final text-only API call so the user always gets a reply
@@ -1427,8 +1426,8 @@ JSON:"""
                 if final_resp and final_resp.content:
                     for block in final_resp.content:
                         if hasattr(block, "text") and block.text:
-                            text_parts.append(block.text)
-                    final_text = "\n".join(text_parts) if text_parts else None
+                            all_text_parts.append(block.text)
+                    final_text = "\n\n".join(all_text_parts) if all_text_parts else None
 
             # Save to persistent memory
             memory.save_turn(user_id, "user", user_input)
