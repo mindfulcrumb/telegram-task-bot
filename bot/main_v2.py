@@ -269,12 +269,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             success, error_msg = whoop_service.exchange_code(user_id, code)
 
             if success:
-                # Try initial sync
-                try:
-                    whoop_service.sync_all(user_id)
-                except Exception:
-                    pass
-
+                # Send response FIRST so Telegram WebView doesn't time out
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
@@ -285,6 +280,13 @@ class _HealthCheck(BaseHTTPRequestHandler):
                     b"<p>Zoe now has access to your recovery, sleep, and strain data.</p>"
                     b"</body></html>"
                 )
+                self.wfile.flush()
+
+                # Sync data AFTER response is sent (user already sees success page)
+                try:
+                    whoop_service.sync_all(user_id)
+                except Exception:
+                    pass
             else:
                 self.send_response(500)
                 self.send_header("Content-Type", "text/html")
