@@ -799,8 +799,8 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach wh
             events = calendar_service.fetch_upcoming_events(user.get("id", 0), days=3)
             if events:
                 calendar_section = "\n" + calendar_service.format_events_for_ai(events) + "\n"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Calendar section failed: {type(e).__name__}: {e}")
 
         # Google Workspace status
         google_section = ""
@@ -821,8 +821,8 @@ Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach wh
                     google_section = "\nGOOGLE WORKSPACE: Connected (calendar only — limited scopes)\n"
             else:
                 google_section = "\nGOOGLE WORKSPACE: Not connected (user can link via /google)\n"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Google section failed: {type(e).__name__}: {e}")
 
         # Coaching context (streaks, patterns)
         coaching_section = ""
@@ -845,8 +845,8 @@ COACHING STYLE:
 - Reference patterns: "You crush it on {patterns.get('most_productive_day', 'Mondays')}"
 - For overdue tasks, suggest a concrete next step, not generic "just do it"
 - When they're overwhelmed, help triage: pick the ONE thing to do next"""
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Coaching section failed: {type(e).__name__}: {e}")
 
         # Fitness context
         fitness_section = self._build_fitness_section(user.get("id", 0))
@@ -1503,7 +1503,7 @@ JSON:"""
         except Exception as e:
             import traceback
             logger.error(f"Agent loop failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-            return f"Hit an error ({type(e).__name__}). Try again or use a /command."
+            return f"Hit an error: {type(e).__name__}: {str(e)[:150]}. Try again or use a /command."
 
 
 # Singleton

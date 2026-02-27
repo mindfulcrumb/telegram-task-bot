@@ -1150,9 +1150,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"WORKOUT CARDS: no pending session for user {user['id']}")
 
     except Exception as e:
-        logger.error(f"handle_message failed for user: {e}", exc_info=True)
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"handle_message failed: {type(e).__name__}: {e}\n{tb}")
+        # Include error details so user can report the exact issue
+        error_detail = f"{type(e).__name__}: {str(e)[:150]}"
         try:
-            await update.message.reply_text(f"Something broke ({type(e).__name__}). Try again.")
+            await update.message.reply_text(f"Error: {error_detail}\nTry again or use a /command.")
         except Exception:
             pass
 

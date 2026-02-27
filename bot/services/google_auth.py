@@ -213,13 +213,16 @@ def _refresh_tokens(user_id: int, refresh_token: str) -> str | None:
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
-    with get_cursor() as cur:
-        cur.execute(
-            """UPDATE google_calendar_tokens
-               SET access_token = %s, refresh_token = %s, expires_at = %s, updated_at = NOW()
-               WHERE user_id = %s""",
-            (new_access, new_refresh, expires_at, user_id),
-        )
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """UPDATE google_calendar_tokens
+                   SET access_token = %s, refresh_token = %s, expires_at = %s, updated_at = NOW()
+                   WHERE user_id = %s""",
+                (new_access, new_refresh, expires_at, user_id),
+            )
+    except Exception as e:
+        logger.error(f"Google token DB update failed for user {user_id}: {e}")
 
     logger.info(f"Google token refreshed for user {user_id}")
     return new_access
