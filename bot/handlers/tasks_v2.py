@@ -1145,7 +1145,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"WORKOUT CARDS: cards sent successfully for session {pending_session_id}")
             except Exception as e:
                 logger.error(f"WORKOUT CARDS: FAILED to send cards for session {pending_session_id}: {e}", exc_info=True)
-                await update.message.reply_text(f"Workout created but card failed: {type(e).__name__}: {e}")
+                await update.message.reply_text("Workout's ready but the cards didn't load. Try /wtest to pull them up.")
         else:
             logger.info(f"WORKOUT CARDS: no pending session for user {user['id']}")
 
@@ -1153,10 +1153,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import traceback
         tb = traceback.format_exc()
         logger.error(f"handle_message failed: {type(e).__name__}: {e}\n{tb}")
-        # Include error details so user can report the exact issue
-        error_detail = f"{type(e).__name__}: {str(e)[:150]}"
         try:
-            await update.message.reply_text(f"Error: {error_detail}\nTry again or use a /command.")
+            await update.message.reply_text("Something went sideways. Try again or hit /help.")
         except Exception:
             pass
 
