@@ -27,29 +27,36 @@ IMAGE_CLASSIFICATION_PROMPT = """Look at this image and classify it. Return ONLY
 
 type must be one of:
 - "bloodwork": Lab results, blood test reports, medical test documents with biomarker values
-- "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos
+- "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos, inside of a fridge or pantry
 - "other": Everything else (screenshots, memes, selfies, documents, etc.)
+
+For the description, describe what you ACTUALLY see. Do not infer or assume items that are not clearly visible.
 
 Return ONLY the JSON object, nothing else."""
 
 
-FOOD_EXTRACTION_PROMPT = """Identify all food items in this image. Return ONLY a JSON object:
+FOOD_EXTRACTION_PROMPT = """Look at this image carefully. List ONLY the food items you can clearly see. Return a JSON object:
 {
-  "items": ["grilled chicken breast", "white rice", "steamed broccoli"],
-  "estimated_calories": 550,
-  "estimated_protein_g": 45,
-  "estimated_carbs_g": 50,
-  "estimated_fat_g": 15,
-  "meal_description": "Grilled chicken with rice and broccoli - a balanced high-protein meal",
-  "possible_recipe": true
+  "scene": "fridge" | "plate" | "ingredients" | "label" | "cooking",
+  "items": ["red bell pepper", "block of cheddar cheese", "jar of pickles"],
+  "estimated_calories": null,
+  "estimated_protein_g": null,
+  "estimated_carbs_g": null,
+  "estimated_fat_g": null,
+  "meal_description": "Inside of a refrigerator with vegetables, cheese, and condiments",
+  "possible_recipe": false
 }
 
-Rules:
-- Be specific with food names: "grilled chicken breast" not just "chicken"
-- Estimate portion sizes from visual cues (plate size, serving depth, comparisons)
-- If it's a recipe photo or cooking in progress, set possible_recipe to true
-- If it's a nutrition label, extract the exact values shown on the label
-- Return ONLY the JSON object, nothing else"""
+STRICT RULES — follow these exactly:
+1. ONLY list items you can actually SEE in the image. If you cannot clearly identify it, skip it.
+2. DO NOT guess or infer items that might logically be there. No "eggs" unless you see eggs. No "milk" unless you see a milk container.
+3. For packaged items, read the label if visible. Say "bottle of Sriracha" not just "hot sauce".
+4. For containers/bottles where the label is not readable, say "unidentified bottle" or "container (contents unclear)" — do NOT guess.
+5. Be specific: "bunch of green onions" not "onions", "block of white cheese" not "cheese".
+6. Scene types: "fridge" = inside a fridge/pantry, "plate" = a prepared meal, "ingredients" = raw items on counter, "label" = nutrition label, "cooking" = food being cooked.
+7. Only estimate calories/macros for PLATED MEALS where portions are visible. For fridge/pantry/ingredients scenes, set all nutrition values to null.
+8. Set possible_recipe to true only for cooking scenes or ingredient spreads that suggest meal prep.
+9. Return ONLY the JSON object, nothing else."""
 
 
 BLOODWORK_EXTRACTION_PROMPT = """Analyze this blood test / lab results image and extract ALL biomarkers you can find.
@@ -319,14 +326,30 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
 
     # Build rich context for the brain
     items = food_data.get("items", [])
-    image_context = "[PHOTO: Food image]\n"
+    # Filter out uncertain items
+    items = [i for i in items if "unclear" not in i.lower() and "unidentified" not in i.lower()]
+    scene = food_data.get("scene", "plate")
+
+    if scene == "fridge":
+        image_context = "[PHOTO: Inside of a fridge/pantry]\n"
+    elif scene == "ingredients":
+        image_context = "[PHOTO: Ingredients/groceries]\n"
+    elif scene == "cooking":
+        image_context = "[PHOTO: Cooking in progress]\n"
+    elif scene == "label":
+        image_context = "[PHOTO: Nutrition label]\n"
+    else:
+        image_context = "[PHOTO: Prepared meal/food]\n"
+
     if items:
-        image_context += f"Items identified: {', '.join(items)}\n"
+        image_context += f"Items clearly visible: {', '.join(items)}\n"
+
+    # Only include nutrition for plated meals / labels where values are real
     cal = food_data.get("estimated_calories")
     prot = food_data.get("estimated_protein_g")
     carbs = food_data.get("estimated_carbs_g")
     fat = food_data.get("estimated_fat_g")
-    if cal:
+    if cal and scene in ("plate", "label"):
         image_context += f"Estimated nutrition: {cal} cal, {prot}g protein, {carbs}g carbs, {fat}g fat\n"
     if food_data.get("possible_recipe"):
         image_context += "This looks like a recipe or cooking photo.\n"
@@ -334,7 +357,14 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
     if meal_desc:
         image_context += f"Description: {meal_desc}\n"
 
-    text_for_brain = f"{image_context}\n{caption}" if caption else f"{image_context}\nUser sent this food photo."
+    if scene == "fridge":
+        default_msg = "User sent a photo of their fridge. They likely want recipe ideas or want to know what they can make with what's available."
+    elif scene == "ingredients":
+        default_msg = "User sent a photo of ingredients. They likely want recipe suggestions or nutrition info."
+    else:
+        default_msg = "User sent this food photo."
+
+    text_for_brain = f"{image_context}\n{caption}" if caption else f"{image_context}\n{default_msg}"
 
     # Pass to brain
     from bot.ai.brain_v2 import ai_brain
