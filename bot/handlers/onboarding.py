@@ -92,6 +92,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data["db_user"] = user
 
+    # Block users who already burned through free tier today (prevents delete-and-recreate abuse)
+    tier = user.get("tier", "free")
+    if tier != "pro" and not user.get("is_admin"):
+        from bot.services.tier_service import get_persistent_usage_today, LIMITS
+        persistent_used = get_persistent_usage_today(tg_user.id, "ai_message")
+        max_msgs = LIMITS["free"]["max_ai_messages_per_day"]
+        if max_msgs and persistent_used >= max_msgs:
+            from bot.handlers.payments import get_subscribe_keyboard
+            keyboard = get_subscribe_keyboard(tg_user.id)
+            await update.message.reply_text(
+                f"You've used your {max_msgs} free messages for today. "
+                "Go unlimited with /upgrade, or they reset at midnight.",
+                reply_markup=keyboard,
+            )
+            return
+
     # Handle referral deep link: /start ref_12345
     payload = context.args[0] if context.args else ""
     if payload.startswith("ref_"):
