@@ -783,6 +783,19 @@ def initialize():
             );
 
             CREATE INDEX IF NOT EXISTS idx_url_summaries_user ON url_summaries(user_id, created_at);
+
+            -- Persistent usage tracking — survives account deletion to prevent
+            -- delete-and-recreate abuse of free tier limits
+            CREATE TABLE IF NOT EXISTS usage_persistent (
+                id SERIAL PRIMARY KEY,
+                telegram_user_id BIGINT NOT NULL,
+                action TEXT NOT NULL,
+                usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                count INT NOT NULL DEFAULT 0,
+                UNIQUE(telegram_user_id, action, usage_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_usage_persistent_lookup
+                ON usage_persistent(telegram_user_id, action, usage_date);
         """)
     logger.info("PostgreSQL schema initialized")
 

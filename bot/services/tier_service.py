@@ -31,13 +31,25 @@ LIMITS = {
 }
 
 
-def track_usage(user_id: int, action: str):
-    """Record a usage event."""
+def track_usage(user_id: int, action: str, telegram_user_id: int | None = None):
+    """Record a usage event (both per-user and persistent by telegram_user_id)."""
     with get_cursor() as cur:
         cur.execute(
             "INSERT INTO usage (user_id, action) VALUES (%s, %s)",
             (user_id, action)
         )
+        # Also track in persistent table (survives account deletion)
+        if telegram_user_id:
+            try:
+                cur.execute(
+                    """INSERT INTO usage_persistent (telegram_user_id, action, usage_date, count)
+                       VALUES (%s, %s, CURRENT_DATE, 1)
+                       ON CONFLICT (telegram_user_id, action, usage_date)
+                       DO UPDATE SET count = usage_persistent.count + 1""",
+                    (telegram_user_id, action)
+                )
+            except Exception as e:
+                logger.debug(f"Persistent usage tracking failed: {e}")
 
 
 def get_usage_today(user_id: int, action: str) -> int:
@@ -50,6 +62,26 @@ def get_usage_today(user_id: int, action: str) -> int:
             (user_id, action)
         )
         return cur.fetchone()["cnt"]
+
+
+def get_persistent_usage_today(telegram_user_id: int, action: str) -> int:
+    """Get persistent usage count for today by telegram_user_id.
+
+    This survives account deletion — prevents delete-and-recreate abuse.
+    """
+    if not telegram_user_id:
+        return 0
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT count FROM usage_persistent
+                   WHERE telegram_user_id = %s AND action = %s AND usage_date = CURRENT_DATE""",
+                (telegram_user_id, action)
+            )
+            row = cur.fetchone()
+            return row["count"] if row else 0
+    except Exception:
+        return 0
 
 
 def _check_supabase_upgrade(user_id: int, telegram_user_id: int | None) -> bool:
@@ -96,6 +128,10 @@ def check_limit(
         max_msgs = limits["max_ai_messages_per_day"]
         if max_msgs is not None:
             used = get_usage_today(user_id, "ai_message")
+            # Also check persistent usage (survives account deletion)
+            if telegram_user_id:
+                persistent_used = get_persistent_usage_today(telegram_user_id, "ai_message")
+                used = max(used, persistent_used)
             if used >= max_msgs:
                 if _check_supabase_upgrade(user_id, telegram_user_id):
                     return True, None

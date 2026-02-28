@@ -1477,8 +1477,8 @@ JSON:"""
             return msg
 
         try:
-            # Track usage
-            track_usage(user_id, "ai_message")
+            # Track usage (both per-user and persistent by telegram_user_id)
+            track_usage(user_id, "ai_message", telegram_user_id=telegram_user_id)
 
             # Cap input length to prevent cost abuse (Telegram max is 4096, but voice
             # transcriptions could be longer)
