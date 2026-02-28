@@ -474,7 +474,7 @@ def initialize():
                 logged_at TIMESTAMPTZ DEFAULT NOW()
             );
             CREATE INDEX IF NOT EXISTS idx_meal_logs_user ON meal_logs(user_id, logged_at);
-            CREATE INDEX IF NOT EXISTS idx_meal_logs_date ON meal_logs(user_id, (logged_at::date));
+            CREATE INDEX IF NOT EXISTS idx_meal_logs_date ON meal_logs(user_id, ((logged_at AT TIME ZONE 'UTC')::date));
 
             -- ═══════════════════════════════════════════════════════
             -- CONVERSATION SUMMARIES (episodic memory)
