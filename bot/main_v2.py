@@ -64,6 +64,8 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self._handle_timer()
         elif self.path == "/status":
             self._handle_status()
+        elif self.path.startswith("/admin/conversations"):
+            self._handle_admin_conversations()
         else:
             self.send_response(200)
             self.end_headers()
@@ -174,6 +176,77 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             self.wfile.write(f"Status error: {e}".encode())
+
+    def _handle_admin_conversations(self):
+        """Secure admin endpoint — returns recent conversations for review."""
+        try:
+            import urllib.parse as _up
+            parsed = _up.urlparse(self.path)
+            params = _up.parse_qs(parsed.query)
+            token = params.get("token", [None])[0]
+
+            # Auth: must provide last 8 chars of bot token
+            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            expected = bot_token[-8:] if len(bot_token) >= 8 else bot_token
+            if not token or token != expected:
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Forbidden")
+                return
+
+            if not _db_ready:
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b"DB not ready")
+                return
+
+            from bot.db.database import get_cursor
+
+            # Get recent conversations (last 7 days)
+            with get_cursor() as cur:
+                cur.execute("""
+                    SELECT c.user_id, u.first_name, u.telegram_username,
+                           c.role, c.content, c.created_at
+                    FROM conversations c
+                    LEFT JOIN users u ON c.user_id = u.id
+                    WHERE c.created_at > NOW() - INTERVAL '7 days'
+                    ORDER BY c.user_id, c.created_at ASC
+                """)
+                rows = cur.fetchall()
+
+            # Group by user
+            users = {}
+            for r in rows:
+                uid = r["user_id"]
+                if uid not in users:
+                    users[uid] = {
+                        "user_id": uid,
+                        "first_name": r["first_name"],
+                        "username": r["telegram_username"],
+                        "messages": [],
+                    }
+                users[uid]["messages"].append({
+                    "role": r["role"],
+                    "content": r["content"][:500],  # Truncate for readability
+                    "time": r["created_at"].isoformat() if r["created_at"] else None,
+                })
+
+            result = {
+                "total_users": len(users),
+                "total_messages": len(rows),
+                "users": list(users.values()),
+            }
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(result, indent=2, default=str).encode())
+
+        except Exception as e:
+            logger.error(f"Admin conversations error: {e}")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f"Error: {e}".encode())
 
     def _handle_google_callback(self):
         """Handle Google OAuth callback — exchange code for tokens (Calendar or full Workspace)."""
