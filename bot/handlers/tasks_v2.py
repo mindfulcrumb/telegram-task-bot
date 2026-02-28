@@ -1167,16 +1167,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # URL detection — extract content from links and prepend as context
         urls = []
+        url_extractions = []  # Store for saving after brain response
         try:
-            from bot.services.url_summarizer import extract_urls_from_entities, extract_content
+            from bot.services.url_summarizer import extract_urls_from_entities, async_extract_content
             urls = extract_urls_from_entities(update.message)
             if urls:
                 for url in urls[:2]:  # Max 2 URLs per message
-                    content_type, extracted = extract_content(url)
-                    if extracted:
-                        from urllib.parse import urlparse
-                        domain = urlparse(url).hostname or "link"
-                        text = f"[URL content from {domain} ({content_type}): {extracted[:4000]}]\n\n{text}"
+                    try:
+                        content_type, extracted, title = await asyncio.wait_for(
+                            async_extract_content(url), timeout=10.0
+                        )
+                        if extracted:
+                            from urllib.parse import urlparse
+                            domain = urlparse(url).hostname or "link"
+                            text = f"[URL CONTENT from {domain}]\nType: {content_type}\nTitle: {title}\nContent: {extracted[:4000]}\n\n{text}"
+                            url_extractions.append({
+                                "url": url, "title": title,
+                                "summary": extracted[:500],
+                                "content_type": content_type,
+                            })
+                    except asyncio.TimeoutError:
+                        logger.warning(f"URL extraction timed out for {url}")
         except Exception as e:
             logger.warning(f"URL extraction failed: {e}")
 
@@ -1214,22 +1225,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             typing_task.cancel()
 
         # Save URL summaries for later recall (fire-and-forget)
-        if response and urls:
+        if url_extractions:
             try:
                 from bot.services.url_summarizer import save_url_summary
-                for url in urls[:2]:
-                    # Use first 150 chars of response as summary, URL as title
-                    from urllib.parse import urlparse as _urlparse
-                    _domain = _urlparse(url).hostname or "link"
-                    _title = f"Content from {_domain}"
-                    _summary = response[:300] if response else ""
-                    _ct = "article"
-                    try:
-                        from bot.services.url_summarizer import classify_url
-                        _ct = classify_url(url)
-                    except Exception:
-                        pass
-                    save_url_summary(user["id"], url, _title, _summary, _ct)
+                for ext in url_extractions:
+                    save_url_summary(
+                        user["id"], ext["url"], ext["title"],
+                        ext["summary"], ext["content_type"],
+                    )
             except Exception as e:
                 logger.warning(f"Failed to save URL summary: {e}")
 

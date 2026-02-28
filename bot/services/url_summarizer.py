@@ -1,49 +1,183 @@
 """URL content extraction and summary storage."""
+import asyncio
 import logging
 import re
-from urllib.parse import urlparse
+from html import unescape
+from urllib.parse import urlparse, parse_qs
 
 from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
 
 
-def classify_url(url: str) -> str:
-    """Classify a URL into content type."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
+# ---------------------------------------------------------------------------
+# Content-type classification (keyword-based, zero LLM cost)
+# ---------------------------------------------------------------------------
 
-    if "youtube.com" in host or "youtu.be" in host:
-        return "youtube"
+_RECIPE_KEYWORDS = {
+    "ingredients", "tablespoon", "teaspoon", "cups", "preheat", "bake",
+    "recipe", "calories", "servings", "prep time", "cook time", "nutrition",
+    "oven", "whisk", "stir", "simmer", "marinate", "dice", "mince",
+}
+_WORKOUT_KEYWORDS = {
+    "sets", "reps", "exercise", "superset", "rest period", "workout",
+    "training", "warm up", "cooldown", "squat", "deadlift", "bench press",
+    "hiit", "circuit", "amrap", "emom", "wod",
+}
+_EVENT_KEYWORDS = {
+    "register", "tickets", "rsvp", "location", "venue", "event date",
+    "join us", "sign up", "admission", "conference", "meetup", "workshop",
+    "race", "marathon", "5k", "10k",
+}
+_PRODUCT_KEYWORDS = {
+    "add to cart", "buy now", "shop", "price", "checkout", "shipping",
+    "in stock", "out of stock", "discount", "coupon", "order now",
+}
+_SOCIAL_HOSTS = {
+    "instagram.com", "twitter.com", "x.com", "reddit.com", "threads.net",
+    "tiktok.com", "facebook.com", "linkedin.com",
+}
+_VIDEO_HOSTS = {
+    "youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "twitch.tv",
+}
+
+
+def classify_url(url: str, title: str = "", text: str = "") -> str:
+    """Classify a URL into content type using domain + keyword matching."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+
+    # Domain-based classification first
+    if any(vh in host for vh in _VIDEO_HOSTS):
+        return "video"
+    if any(sh in host for sh in _SOCIAL_HOSTS):
+        return "social"
     if url.lower().endswith(".pdf"):
         return "pdf"
+
+    # Keyword-based classification on content
+    combined = f"{title} {text}".lower()
+    scores = {
+        "recipe": sum(1 for kw in _RECIPE_KEYWORDS if kw in combined),
+        "workout": sum(1 for kw in _WORKOUT_KEYWORDS if kw in combined),
+        "event": sum(1 for kw in _EVENT_KEYWORDS if kw in combined),
+        "product": sum(1 for kw in _PRODUCT_KEYWORDS if kw in combined),
+    }
+    best = max(scores, key=scores.get)
+    if scores[best] >= 2:  # Need at least 2 keyword hits
+        return best
+
     return "article"
 
 
-def extract_content(url: str, max_chars: int = 8000) -> tuple[str, str]:
-    """Extract content from a URL. Returns (content_type, text)."""
-    content_type = classify_url(url)
+# ---------------------------------------------------------------------------
+# Content extraction
+# ---------------------------------------------------------------------------
 
-    if content_type == "youtube":
-        return content_type, _extract_youtube(url, max_chars)
-    elif content_type == "pdf":
-        return content_type, _extract_pdf(url, max_chars)
-    else:
-        return content_type, _extract_article(url, max_chars)
+def _strip_html(html: str) -> str:
+    """Remove HTML tags, scripts, styles. Keep readable text."""
+    # Remove script, style, nav, footer, header blocks
+    for tag in ("script", "style", "nav", "footer", "header", "aside"):
+        html = re.sub(rf"<{tag}[^>]*>.*?</{tag}>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Strip remaining tags
+    text = re.sub(r"<[^>]+>", " ", html)
+    # Decode HTML entities
+    text = unescape(text)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
-def _extract_article(url: str, max_chars: int) -> str:
-    """Extract article text using trafilatura."""
+def _extract_title(html: str) -> str:
+    """Extract <title> from HTML."""
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.DOTALL | re.IGNORECASE)
+    if match:
+        return unescape(match.group(1)).strip()
+    # Try og:title
+    match = re.search(r'property=["\']og:title["\'][^>]*content=["\']([^"\']+)', html, re.IGNORECASE)
+    if match:
+        return unescape(match.group(1)).strip()
+    return ""
+
+
+def extract_content(url: str, max_chars: int = 8000) -> tuple[str, str, str]:
+    """Extract content from a URL. Returns (content_type, text, title).
+
+    This is synchronous — call via asyncio.to_thread() from async code.
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+
+    # YouTube
+    if any(vh in host for vh in ("youtube.com", "youtu.be")):
+        text = _extract_youtube(url, max_chars)
+        title = _extract_youtube_title(url)
+        content_type = classify_url(url, title, text)
+        return content_type, text, title
+
+    # PDF
+    if url.lower().endswith(".pdf"):
+        text = _extract_pdf(url, max_chars)
+        return "pdf", text, ""
+
+    # Everything else — try trafilatura first, httpx fallback
+    title, text = _extract_article(url, max_chars)
+    content_type = classify_url(url, title, text)
+    return content_type, text, title
+
+
+def _extract_article(url: str, max_chars: int) -> tuple[str, str]:
+    """Extract article text. Trafilatura first, httpx+regex fallback.
+
+    Returns (title, text).
+    """
+    title = ""
+    text = ""
+
+    # Try trafilatura
     try:
         import trafilatura
         downloaded = trafilatura.fetch_url(url)
-        if not downloaded:
-            return ""
-        text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
-        return (text or "")[:max_chars]
+        if downloaded:
+            title = _extract_title(downloaded)
+            text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            text = (text or "")[:max_chars]
+            if text:
+                return title, text
     except Exception as e:
-        logger.error(f"Article extraction failed for {url}: {type(e).__name__}: {e}")
-        return ""
+        logger.warning(f"Trafilatura failed for {url}: {type(e).__name__}: {e}")
+
+    # Fallback: httpx + HTML stripping
+    try:
+        import httpx
+        resp = httpx.get(url, timeout=10.0, follow_redirects=True, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ZoeBot/1.0)"
+        })
+        if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
+            html = resp.text
+            title = title or _extract_title(html)
+            text = _strip_html(html)[:max_chars]
+            return title, text
+    except Exception as e:
+        logger.warning(f"httpx fallback failed for {url}: {type(e).__name__}: {e}")
+
+    return title, text
+
+
+def _extract_youtube_title(url: str) -> str:
+    """Get YouTube video title via noembed (free, no API key)."""
+    try:
+        import httpx
+        resp = httpx.get(
+            f"https://noembed.com/embed?url={url}",
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("title", "")
+    except Exception:
+        pass
+    return ""
 
 
 def _extract_youtube(url: str, max_chars: int) -> str:
@@ -56,7 +190,6 @@ def _extract_youtube(url: str, max_chars: int) -> str:
         if "youtu.be" in (parsed.hostname or ""):
             video_id = parsed.path.lstrip("/")
         else:
-            from urllib.parse import parse_qs
             video_id = parse_qs(parsed.query).get("v", [""])[0]
 
         if not video_id:
@@ -90,6 +223,19 @@ def _extract_pdf(url: str, max_chars: int) -> str:
         logger.error(f"PDF extraction failed for {url}: {type(e).__name__}: {e}")
         return ""
 
+
+# ---------------------------------------------------------------------------
+# Async wrapper for use from handlers
+# ---------------------------------------------------------------------------
+
+async def async_extract_content(url: str, max_chars: int = 8000) -> tuple[str, str, str]:
+    """Async wrapper — runs extract_content in a thread to avoid blocking."""
+    return await asyncio.to_thread(extract_content, url, max_chars)
+
+
+# ---------------------------------------------------------------------------
+# DB operations
+# ---------------------------------------------------------------------------
 
 def save_url_summary(
     user_id: int, url: str, title: str, summary: str, content_type: str
