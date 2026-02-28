@@ -694,6 +694,7 @@ def finish_session(session_id: int) -> dict:
 
     session["workout"] = workout
     session["duration_minutes"] = duration
+    session["exercises"] = exercises
     return session
 
 

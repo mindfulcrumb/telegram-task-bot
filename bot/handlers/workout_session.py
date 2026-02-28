@@ -387,26 +387,107 @@ async def handle_workout_session_callback(update: Update, context: ContextTypes.
 
         workout = session.get("workout", {})
         duration = session.get("duration_minutes", 0)
+        exercises = session.get("exercises", [])
 
-        # Build completion summary
+        # Build detailed completion summary
         prs = workout.get("prs", [])
         streak = fitness_service.get_workout_streak(user["id"])
         ws = streak.get("current_streak", 0)
 
-        lines = ["\U0001f3c1 Workout complete\n"]
-        lines.append(f"{session['title']} \u2014 {duration} min")
+        lines = ["\U0001f3c1 <b>Workout complete</b>\n"]
+        lines.append(f"<b>{html.escape(session['title'])}</b> \u2014 {duration} min")
         if ws > 1:
             lines.append(f"{ws}-session streak \U0001f525")
         if prs:
             for p in prs:
-                lines.append(f"PR: {p['exercise']} {p['new_weight']}kg")
-        lines.append("\nLogged and tracked. Nice work.")
+                lines.append(f"PR: {html.escape(p['exercise'])} {p['new_weight']}kg")
 
-        # Edit the card to show summary (replace the exercise card)
+        # Exercise-by-exercise breakdown
+        total_volume = 0
+        completed_exercises = []
+        skipped_exercises = []
+        for ex in exercises:
+            name = ex["exercise_name"]
+            done = ex["sets_completed"]
+            target = ex["target_sets"]
+            reps = ex.get("target_reps", "?")
+            weight = ex.get("target_weight")
+            unit = ex.get("weight_unit", "kg")
+
+            if done > 0:
+                weight_str = f" @ {weight}{unit}" if weight else ""
+                status = "\u2705" if done >= target else f"({done}/{target})"
+                lines.append(f"  {status} {html.escape(name)}: {done}x{reps}{weight_str}")
+                completed_exercises.append(ex)
+                # Calculate volume (sets x reps x weight)
+                try:
+                    reps_num = int(str(reps).split("-")[0])
+                    w = float(weight) if weight else 0
+                    total_volume += done * reps_num * w
+                except (ValueError, TypeError):
+                    pass
+            else:
+                skipped_exercises.append(name)
+
+        if skipped_exercises:
+            lines.append(f"  Skipped: {', '.join(html.escape(n) for n in skipped_exercises)}")
+
+        if total_volume > 0:
+            lines.append(f"\nTotal volume: {total_volume:,.0f} {unit}")
+
+        lines.append("\nLogged and tracked.")
+
+        # Edit the card to show detailed summary
+        summary_text = "\n".join(lines)
         try:
-            await query.edit_message_text("\n".join(lines))
+            await query.edit_message_text(summary_text, parse_mode=_PARSE_MODE)
         except Exception:
-            await query.message.reply_text("\n".join(lines))
+            await query.message.reply_text(summary_text, parse_mode=_PARSE_MODE)
+
+        # Feed workout data to AI brain for personalized coaching response
+        try:
+            from bot.ai.brain_v2 import ai_brain
+            from bot.services import task_service
+
+            # Build context for the brain
+            ex_summary = []
+            for ex in completed_exercises:
+                w = f" @ {ex.get('target_weight', '?')}{ex.get('weight_unit', 'kg')}" if ex.get("target_weight") else ""
+                ex_summary.append(
+                    f"{ex['exercise_name']}: {ex['sets_completed']}x{ex.get('target_reps', '?')}{w}"
+                )
+
+            brain_prompt = (
+                f"[WORKOUT JUST FINISHED — AUTO-SUMMARY]\n"
+                f"Title: {session['title']}\n"
+                f"Duration: {duration} min\n"
+                f"Exercises completed: {len(completed_exercises)}/{len(exercises)}\n"
+                f"{''.join(chr(10) + e for e in ex_summary)}\n"
+                f"Total volume: {total_volume:,.0f}kg\n"
+                f"Streak: {ws} sessions\n"
+                f"{'PRs: ' + ', '.join(p['exercise'] + ' ' + str(p['new_weight']) + 'kg' for p in prs) if prs else 'No PRs'}\n"
+                f"\nGive a SHORT coaching response (2-4 sentences). Comment on the session — what went well, "
+                f"what to focus on next. Reference their actual numbers. Be Zoe."
+            )
+
+            chat = query.message.chat
+            await chat.send_action(ChatAction.TYPING)
+
+            async def _keep_typing():
+                await chat.send_action(ChatAction.TYPING)
+
+            tasks = task_service.get_tasks(user["id"])
+            response = await ai_brain.process(brain_prompt, user, tasks, typing_callback=_keep_typing)
+
+            if response:
+                from bot.utils import send_chunked
+                await send_chunked(
+                    bot=context.bot,
+                    chat_id=chat.id,
+                    text=response,
+                )
+        except Exception as e:
+            logger.warning(f"Post-workout AI coaching failed: {type(e).__name__}: {e}")
 
     else:
         await query.answer()
