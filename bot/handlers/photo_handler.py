@@ -35,28 +35,35 @@ For the description, describe what you ACTUALLY see. Do not infer or assume item
 Return ONLY the JSON object, nothing else."""
 
 
-FOOD_EXTRACTION_PROMPT = """Look at this image carefully. List ONLY the food items you can clearly see. Return a JSON object:
+FOOD_EXTRACTION_PROMPT = """Look at this image carefully. Identify ONLY the food items you can clearly see.
+
+Return a JSON object:
 {
   "scene": "fridge" | "plate" | "ingredients" | "label" | "cooking",
-  "items": ["red bell pepper", "block of cheddar cheese", "jar of pickles"],
-  "estimated_calories": null,
-  "estimated_protein_g": null,
-  "estimated_carbs_g": null,
-  "estimated_fat_g": null,
-  "meal_description": "Inside of a refrigerator with vegetables, cheese, and condiments",
-  "possible_recipe": false
+  "items": [
+    {"name": "grilled chicken breast", "usda_query": "chicken breast meat only cooked grilled", "grams": 150},
+    {"name": "white rice", "usda_query": "rice white medium-grain cooked", "grams": 200},
+    {"name": "steamed broccoli", "usda_query": "broccoli cooked boiled", "grams": 100}
+  ],
+  "meal_description": "Grilled chicken breast with white rice and steamed broccoli"
 }
 
-STRICT RULES — follow these exactly:
-1. ONLY list items you can actually SEE in the image. If you cannot clearly identify it, skip it.
-2. DO NOT guess or infer items that might logically be there. No "eggs" unless you see eggs. No "milk" unless you see a milk container.
-3. For packaged items, read the label if visible. Say "bottle of Sriracha" not just "hot sauce".
-4. For containers/bottles where the label is not readable, say "unidentified bottle" or "container (contents unclear)" — do NOT guess.
-5. Be specific: "bunch of green onions" not "onions", "block of white cheese" not "cheese".
-6. Scene types: "fridge" = inside a fridge/pantry, "plate" = a prepared meal, "ingredients" = raw items on counter, "label" = nutrition label, "cooking" = food being cooked.
-7. Only estimate calories/macros for PLATED MEALS where portions are visible. For fridge/pantry/ingredients scenes, set all nutrition values to null.
-8. Set possible_recipe to true only for cooking scenes or ingredient spreads that suggest meal prep.
-9. Return ONLY the JSON object, nothing else."""
+STRICT RULES:
+1. ONLY list items you can actually SEE. Do NOT guess or infer items that might logically be there.
+2. For each item provide THREE fields:
+   - "name": what a person would call it (e.g., "grilled chicken breast")
+   - "usda_query": a USDA FoodData Central searchable name — plain English, include cooking method, no brand names (e.g., "chicken breast meat only cooked grilled")
+   - "grams": estimated portion weight in grams using visual cues:
+     * standard dinner plate = ~26cm diameter
+     * fist-sized portion of rice/pasta = ~150g cooked
+     * palm-sized meat = ~100-120g
+     * cup of vegetables = ~90-100g
+     * a whole chicken breast = ~170g
+3. For packaged items, read the label if visible. Use the product name for "name" and generic food for "usda_query".
+4. For containers where contents are unclear, skip them entirely.
+5. Scene types: "fridge" = inside fridge/pantry, "plate" = prepared meal, "ingredients" = raw items, "label" = nutrition label, "cooking" = food being cooked.
+6. For FRIDGE/INGREDIENTS scenes: still include items with usda_query but set grams to null (portions unknown).
+7. Return ONLY the JSON object, nothing else."""
 
 
 BLOODWORK_EXTRACTION_PROMPT = """Analyze this blood test / lab results image and extract ALL biomarkers you can find.
@@ -319,48 +326,145 @@ async def _handle_bloodwork(update, context, user, b64_data, media_type, api_key
 
 
 async def _handle_food(update, context, user, b64_data, media_type, api_key, caption, description, chat_id):
-    """Extract food items, estimate nutrition, pass to brain with context."""
+    """Extract food items, look up USDA nutrition, pass to brain with verified data."""
     food_data = await asyncio.to_thread(
         _extract_food_vision, b64_data, media_type, api_key
     )
 
-    # Build rich context for the brain
-    items = food_data.get("items", [])
-    # Filter out uncertain items
-    items = [i for i in items if "unclear" not in i.lower() and "unidentified" not in i.lower()]
+    raw_items = food_data.get("items", [])
     scene = food_data.get("scene", "plate")
+    meal_desc = food_data.get("meal_description", description)
 
-    if scene == "fridge":
+    # Items are now dicts: {name, usda_query, grams}
+    # Filter out items with unclear names
+    items = []
+    for item in raw_items:
+        if isinstance(item, str):
+            # Fallback if model returned old format
+            items.append({"name": item, "usda_query": item, "grams": None})
+        elif isinstance(item, dict) and item.get("name"):
+            name = item["name"]
+            if "unclear" not in name.lower() and "unidentified" not in name.lower():
+                items.append(item)
+
+    # --- USDA lookup for plated meals / cooking / labels ---
+    usda_available = scene in ("plate", "cooking", "label") and items
+    enriched_items = []
+    usda_failures = []
+
+    if usda_available:
+        from bot.services import usda_service
+        for item in items:
+            query = item.get("usda_query") or item.get("name", "")
+            grams = item.get("grams")
+            if not query or not grams:
+                usda_failures.append(item.get("name", "unknown"))
+                continue
+            try:
+                nutrients = await usda_service.search_and_get_nutrients(query)
+                if nutrients:
+                    scaled = usda_service.scale_nutrients(nutrients, grams)
+                    scaled["name"] = item["name"]
+                    scaled["grams"] = grams
+                    scaled["usda_description"] = nutrients.get("usda_description", "")
+                    enriched_items.append(scaled)
+                else:
+                    usda_failures.append(item["name"])
+            except Exception as e:
+                logger.warning(f"USDA lookup failed for '{query}': {type(e).__name__}: {e}")
+                usda_failures.append(item.get("name", "unknown"))
+
+    # --- Build context for brain ---
+    if enriched_items:
+        # USDA-verified nutrition context
+        from bot.services import usda_service as _usda
+        meal_total = _usda.sum_nutrients(enriched_items)
+
+        image_context = "[FOOD PHOTO — USDA-VERIFIED NUTRITION]\n"
+        image_context += "Items:\n"
+        for ei in enriched_items:
+            image_context += (
+                f"  {ei['name']} ({ei['grams']}g): "
+                f"{ei.get('calories', '?')} cal, "
+                f"{ei.get('protein', '?')}g P, "
+                f"{ei.get('carbs', '?')}g C, "
+                f"{ei.get('fat', '?')}g F\n"
+            )
+        image_context += (
+            f"Meal total: {meal_total.get('calories', 0):.0f} cal, "
+            f"{meal_total.get('protein', 0):.0f}g protein, "
+            f"{meal_total.get('carbs', 0):.0f}g carbs, "
+            f"{meal_total.get('fat', 0):.0f}g fat, "
+            f"{meal_total.get('fiber', 0):.0f}g fiber\n"
+        )
+        # Micronutrients
+        micro_parts = []
+        for label, key, unit in [
+            ("Vit D", "vitamin_d", "mcg"), ("Mg", "magnesium", "mg"),
+            ("Zinc", "zinc", "mg"), ("Iron", "iron", "mg"),
+            ("B12", "b12", "mcg"), ("K", "potassium", "mg"),
+            ("Vit C", "vitamin_c", "mg"), ("Ca", "calcium", "mg"),
+            ("Na", "sodium", "mg"),
+        ]:
+            val = meal_total.get(key, 0)
+            if val:
+                micro_parts.append(f"{label}: {val:.1f}{unit}")
+        if micro_parts:
+            image_context += f"Micros: {', '.join(micro_parts)}\n"
+        image_context += "Source: USDA FoodData Central (lab-verified)\n"
+        image_context += "Call log_meal with this data (source='usda'). Confirm items and ask if portions look right.\n"
+
+        if usda_failures:
+            image_context += f"Could not find USDA data for: {', '.join(usda_failures)} — estimate these from your knowledge.\n"
+
+    elif scene == "fridge":
         image_context = "[PHOTO: Inside of a fridge/pantry]\n"
+        if items:
+            item_names = [i.get("name", "") for i in items if i.get("name")]
+            image_context += f"Items clearly visible: {', '.join(item_names)}\n"
+        if meal_desc:
+            image_context += f"Description: {meal_desc}\n"
+
     elif scene == "ingredients":
         image_context = "[PHOTO: Ingredients/groceries]\n"
-    elif scene == "cooking":
-        image_context = "[PHOTO: Cooking in progress]\n"
-    elif scene == "label":
-        image_context = "[PHOTO: Nutrition label]\n"
+        if items:
+            item_names = [i.get("name", "") for i in items if i.get("name")]
+            image_context += f"Items clearly visible: {', '.join(item_names)}\n"
+        if meal_desc:
+            image_context += f"Description: {meal_desc}\n"
+
     else:
-        image_context = "[PHOTO: Prepared meal/food]\n"
+        # Fallback — no USDA data available
+        image_context = "[PHOTO: Food image]\n"
+        if items:
+            item_names = [i.get("name", "") for i in items if i.get("name")]
+            image_context += f"Items visible: {', '.join(item_names)}\n"
+        if meal_desc:
+            image_context += f"Description: {meal_desc}\n"
+        image_context += "No USDA data — estimate nutrition from your knowledge if user wants to log.\n"
 
-    if items:
-        image_context += f"Items clearly visible: {', '.join(items)}\n"
+    # Add daily context if we have USDA data
+    if enriched_items:
+        try:
+            from bot.services import nutrition_service
+            daily = nutrition_service.get_daily_intake(user["id"])
+            if daily.get("meal_count", 0) > 0:
+                image_context += (
+                    f"Today so far: {daily['total_calories']:.0f} cal, "
+                    f"{daily['total_protein']:.0f}g protein "
+                    f"({daily['meal_count']} meal{'s' if daily['meal_count'] != 1 else ''})\n"
+                )
+            targets = daily.get("targets", {})
+            if targets.get("calories"):
+                image_context += f"Daily target: {targets['calories']} cal, {targets.get('protein_g', '?')}g protein\n"
+        except Exception:
+            pass
 
-    # Only include nutrition for plated meals / labels where values are real
-    cal = food_data.get("estimated_calories")
-    prot = food_data.get("estimated_protein_g")
-    carbs = food_data.get("estimated_carbs_g")
-    fat = food_data.get("estimated_fat_g")
-    if cal and scene in ("plate", "label"):
-        image_context += f"Estimated nutrition: {cal} cal, {prot}g protein, {carbs}g carbs, {fat}g fat\n"
-    if food_data.get("possible_recipe"):
-        image_context += "This looks like a recipe or cooking photo.\n"
-    meal_desc = food_data.get("meal_description", description)
-    if meal_desc:
-        image_context += f"Description: {meal_desc}\n"
-
+    # Default message based on scene
     if scene == "fridge":
-        default_msg = "User sent a photo of their fridge. They likely want recipe ideas or want to know what they can make with what's available."
+        default_msg = "User sent a photo of their fridge. Suggest recipes with ONLY the visible ingredients."
     elif scene == "ingredients":
-        default_msg = "User sent a photo of ingredients. They likely want recipe suggestions or nutrition info."
+        default_msg = "User sent a photo of ingredients. Suggest recipes or ask what they want to make."
     else:
         default_msg = "User sent this food photo."
 
@@ -472,7 +576,7 @@ def _classify_image(b64_data: str, media_type: str, api_key: str, is_pdf: bool =
 
 
 def _extract_food_vision(b64_data: str, media_type: str, api_key: str) -> dict:
-    """Extract food items and estimate nutrition from an image."""
+    """Extract food items with USDA-friendly names and portion estimates. Uses Sonnet for accuracy."""
     import anthropic
 
     try:
@@ -484,13 +588,13 @@ def _extract_food_vision(b64_data: str, media_type: str, api_key: str) -> dict:
         }
 
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=500,
+            model="claude-sonnet-4-5-20250514",
+            max_tokens=1000,
             messages=[{
                 "role": "user",
                 "content": [file_block, {"type": "text", "text": FOOD_EXTRACTION_PROMPT}],
             }],
-            timeout=30.0,
+            timeout=60.0,
         )
 
         text = response.content[0].text.strip()

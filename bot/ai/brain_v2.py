@@ -680,16 +680,23 @@ FITNESS TOOL USE:
 - Structured logs ("bench 4x8 at 75, OHP 3x10 at 40") -> capture full exercise data
 
 NUTRITION TOOL USE:
-- "I had chicken and rice for lunch" -> log_meal. Estimate calories and macros from what they describe. Use food_reference DB for accuracy.
+- "I had chicken and rice for lunch" -> log_meal with source="ai_estimated". Estimate calories, macros, and any micros you can.
 - "Just had a protein shake" -> log_meal with type=snack. Estimate ~130 cal, 25g protein for a standard shake unless they specify.
-- "How many calories today?" / "am I on track?" -> get_daily_nutrition
+- "How many calories today?" / "am I on track?" -> get_daily_nutrition (returns macros + micronutrients + 7-day trends + deficiency flags)
 - "I eat 2500 calories a day" / "I want to cut to 2000" -> update_nutrition_profile with daily_calorie_target
 - "I'm vegan" / "no dairy" / "doing keto" -> update_nutrition_profile with dietary_restrictions
 - "I eat 4 meals a day" -> update_nutrition_profile with meals_per_day=4
-- When logging meals, ALWAYS estimate even if rough. Partial data > no data. Use food_reference DB for specific foods.
+- When logging meals, ALWAYS estimate even if rough. Partial data > no data.
 - If user has blood type set, auto-include blood type classification when discussing foods.
 - After logging a meal, mention daily total briefly: "Logged. That's 1,450 cal today — 1,050 left."
 - NEVER lecture about nutrition. Be concise: log it, report the numbers, move on.
+
+MICRONUTRIENT AWARENESS (9 tracked: Vit D, Mg, Zinc, Iron, B12, Potassium, Vit C, Calcium, Sodium):
+- When get_daily_nutrition returns potential_deficiencies, mention the top 1-2 naturally: "You've been low on magnesium this week — spinach or dark chocolate would help."
+- Connect to supplements: if they supplement magnesium and food intake is still low, mention food sources.
+- Connect to bloodwork: if blood Vitamin D was low, track dietary intake and mention it.
+- Don't dump all 9 micros in every response — highlight only what's notable (very low or very high).
+- Sodium over 2300mg: mention once, don't nag.
 
 BIOHACKING TOOL USE:
 - "Starting BPC-157, 250mcg twice a day for 6 weeks" -> manage_peptide_protocol action=add with dose, frequency, cycle dates
@@ -793,16 +800,27 @@ EXPENSE TRACKING:
 - "spending breakdown" / "how much on food?" -> get_spending_summary
 
 IMAGE INTELLIGENCE:
-When a user sends a photo, it's automatically classified and described in [PHOTO: ...] brackets. You receive a text description and data — ACT on it:
-- [PHOTO: Prepared meal/food] -> you get item names + estimated macros. Offer to log as a meal (log_meal with the extracted macros). If it's a recipe photo, offer to save it to memory.
-- [PHOTO: Inside of a fridge/pantry] -> you get a list of visible ingredients. Suggest 2-3 specific recipes they could make with ONLY those ingredients (plus common pantry staples like salt, oil, spices). Include macros and cooking time for each suggestion. Do NOT add ingredients that weren't in the list.
-- [PHOTO: Ingredients/groceries] -> same as fridge — suggest recipes using ONLY those ingredients. Ask if they want a specific cuisine or dietary focus.
-- [PHOTO: Cooking in progress] -> identify what they're making, offer tips, and estimate final macros.
+When a user sends a photo, it's automatically classified and described in brackets. You receive text data — ACT on it:
+
+USDA-VERIFIED FOOD PHOTOS:
+- [FOOD PHOTO — USDA-VERIFIED NUTRITION] -> you receive lab-verified nutrition for each item from USDA FoodData Central. This data is MORE accurate than any consumer nutrition app. Call log_meal with ALL the provided data including micronutrients, source="usda". Confirm items and portions, ask "does that look right?" so user can correct portions if needed.
+- After logging: mention daily total + any notable micronutrients ("Good vitamin C from that broccoli — 89mg, almost your full daily target").
+
+NON-USDA FOOD PHOTOS (fridge, ingredients):
+- [PHOTO: Inside of a fridge/pantry] -> you get a list of visible ingredients. Suggest 2-3 specific recipes using ONLY those ingredients (plus common pantry staples). Include macros and cooking time. Do NOT add items not listed.
+- [PHOTO: Ingredients/groceries] -> same as fridge. Ask if they want a specific cuisine or dietary focus.
+- [PHOTO: Cooking in progress] -> identify what they're making, offer tips.
 - [PHOTO: Nutrition label] -> use the exact values shown for log_meal.
-- Food photo + "make me a recipe" / "what can I cook?" -> use ONLY the identified ingredients to suggest a specific recipe with macros, cooking time, and steps. Save to memory if they like it.
-- Food photo + "log this" -> log_meal immediately with the estimated macros from the extraction.
-- General photo -> respond naturally based on the description. Don't say "I can't see images."
-CRITICAL: The item list comes from vision extraction. Trust it — those are the items actually visible. Do NOT add items that aren't listed (no hallucinating eggs, milk, or items "that are probably in there"). Work with exactly what's listed.
+- [PHOTO: Food image] with "No USDA data" -> estimate nutrition from your knowledge, use source="ai_estimated".
+
+OTHER:
+- Food photo + "make me a recipe" -> use ONLY the identified ingredients. Save to memory if they like it.
+- Food photo + "log this" -> log_meal immediately with the provided data.
+- General photo -> respond naturally. Don't say "I can't see images."
+
+PORTION CORRECTION: If user says "that was more like 200g" or "smaller portion", acknowledge and tell them you'll adjust next time. The USDA data scales linearly — more grams = proportionally more nutrients.
+
+CRITICAL: Trust the item list — those are what's actually visible. Do NOT add items not listed.
 
 URL INTELLIGENCE:
 When a user sends a URL, the content is automatically extracted and shown in [URL CONTENT] brackets with type, title, and text. Use this to take SMART ACTION — don't just summarize it back:
@@ -1123,7 +1141,7 @@ TASKS:
             return ""
 
     def _build_nutrition_section(self, user: dict) -> str:
-        """Build nutrition context section for system prompt."""
+        """Build nutrition context section with macros, micros, and deficiency flags."""
         try:
             from bot.services import nutrition_service
             user_id = user.get("id", 0)
@@ -1142,21 +1160,77 @@ TASKS:
                 if profile.get("daily_calorie_target"):
                     parts.append(f"Target: {profile['daily_calorie_target']} cal/day")
                 if profile.get("protein_target_g"):
-                    parts.append(f"{profile['protein_target_g']}g protein")
+                    parts.append(f"{profile['protein_target_g']}g P")
+                if profile.get("carbs_target_g"):
+                    parts.append(f"{profile['carbs_target_g']}g C")
+                if profile.get("fat_target_g"):
+                    parts.append(f"{profile['fat_target_g']}g F")
                 if profile.get("dietary_restrictions"):
                     parts.append(f"Diet: {', '.join(profile['dietary_restrictions'])}")
                 if parts:
                     lines.append(f"- Nutrition: {', '.join(parts)}")
 
-            # Today's intake
+            # Today's intake — macros + micros
             daily = nutrition_service.get_daily_intake(user_id)
             if daily["meal_count"] > 0:
                 remaining = daily.get("remaining", {})
                 cal_left = remaining.get("calories")
+                macro_str = (
+                    f"{daily['total_calories']} cal, "
+                    f"{daily['total_protein']}g P, "
+                    f"{daily['total_carbs']}g C, "
+                    f"{daily['total_fat']}g F, "
+                    f"{daily['total_fiber']}g fiber"
+                )
                 if cal_left is not None:
-                    lines.append(f"- Today: {daily['total_calories']} cal eaten ({daily['meal_count']} meals), {cal_left} cal remaining")
+                    lines.append(f"- Today ({daily['meal_count']} meals): {macro_str} | {cal_left} cal left")
                 else:
-                    lines.append(f"- Today: {daily['total_calories']} cal eaten ({daily['meal_count']} meals)")
+                    lines.append(f"- Today ({daily['meal_count']} meals): {macro_str}")
+
+                # Micronutrient summary — only show notable values
+                micros = daily.get("micros", {})
+                # RDA targets for comparison
+                rda = {
+                    "vitamin_d_mcg": 15, "magnesium_mg": 400, "zinc_mg": 11,
+                    "iron_mg": 8, "b12_mcg": 2.4, "potassium_mg": 2600,
+                    "vitamin_c_mg": 90, "calcium_mg": 1000, "sodium_mg": 2300,
+                }
+                labels = {
+                    "vitamin_d_mcg": "Vit D", "magnesium_mg": "Mg", "zinc_mg": "Zinc",
+                    "iron_mg": "Iron", "b12_mcg": "B12", "potassium_mg": "K",
+                    "vitamin_c_mg": "Vit C", "calcium_mg": "Ca", "sodium_mg": "Na",
+                }
+                if any(v for v in micros.values() if v):
+                    micro_parts = []
+                    for key, label in labels.items():
+                        val = micros.get(key, 0) or 0
+                        target = rda.get(key, 0)
+                        if val > 0:
+                            pct = round(val / target * 100) if target else 0
+                            micro_parts.append(f"{label} {val} ({pct}%)")
+                    if micro_parts:
+                        lines.append(f"- Today's micros: {', '.join(micro_parts)}")
+
+            # 7-day micro trends — flag deficiencies
+            try:
+                trends = nutrition_service.get_micro_trends(user_id, days=7)
+                if trends and trends.get("days_with_data", 0) >= 2:
+                    rda_check = {
+                        "vitamin_d_mcg": ("Vit D", 15), "magnesium_mg": ("Mg", 400),
+                        "zinc_mg": ("Zinc", 11), "iron_mg": ("Iron", 8),
+                        "b12_mcg": ("B12", 2.4), "potassium_mg": ("K", 2600),
+                        "vitamin_c_mg": ("Vit C", 90), "calcium_mg": ("Ca", 1000),
+                    }
+                    low = []
+                    for key, (label, target) in rda_check.items():
+                        avg = trends.get(key, 0) or 0
+                        if target and avg < target * 0.5:
+                            pct = round(avg / target * 100)
+                            low.append(f"{label} ({pct}% of RDA)")
+                    if low:
+                        lines.append(f"- 7-day LOW micros: {', '.join(low)} — mention naturally when relevant")
+            except Exception:
+                pass
 
             if lines:
                 return "\nNUTRITION DATA:\n" + "\n".join(lines) + "\n"

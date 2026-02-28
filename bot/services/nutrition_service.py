@@ -64,16 +64,26 @@ def log_meal(user_id: int, meal_type: str = None, description: str = "",
              calories: int = None, protein_g: float = None,
              carbs_g: float = None, fat_g: float = None,
              fiber_g: float = None, source: str = "manual",
-             photo_analysis: str = None) -> dict:
-    """Log a meal with optional calorie/macro data."""
+             photo_analysis: str = None,
+             vitamin_d_mcg: float = None, magnesium_mg: float = None,
+             zinc_mg: float = None, iron_mg: float = None,
+             b12_mcg: float = None, potassium_mg: float = None,
+             vitamin_c_mg: float = None, calcium_mg: float = None,
+             sodium_mg: float = None) -> dict:
+    """Log a meal with optional calorie/macro/micro data."""
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO meal_logs
                (user_id, meal_type, description, calories, protein_g,
-                carbs_g, fat_g, fiber_g, source, photo_analysis)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+                carbs_g, fat_g, fiber_g, source, photo_analysis,
+                vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
+                potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                       %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
             (user_id, meal_type, description, calories, protein_g,
-             carbs_g, fat_g, fiber_g, source, photo_analysis)
+             carbs_g, fat_g, fiber_g, source, photo_analysis,
+             vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
+             potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
         )
         return dict(cur.fetchone())
 
@@ -103,7 +113,16 @@ def get_daily_intake(user_id: int, target_date: date = None) -> dict:
                  COALESCE(SUM(protein_g), 0) as total_protein,
                  COALESCE(SUM(carbs_g), 0) as total_carbs,
                  COALESCE(SUM(fat_g), 0) as total_fat,
-                 COALESCE(SUM(fiber_g), 0) as total_fiber
+                 COALESCE(SUM(fiber_g), 0) as total_fiber,
+                 COALESCE(SUM(vitamin_d_mcg), 0) as total_vitamin_d,
+                 COALESCE(SUM(magnesium_mg), 0) as total_magnesium,
+                 COALESCE(SUM(zinc_mg), 0) as total_zinc,
+                 COALESCE(SUM(iron_mg), 0) as total_iron,
+                 COALESCE(SUM(b12_mcg), 0) as total_b12,
+                 COALESCE(SUM(potassium_mg), 0) as total_potassium,
+                 COALESCE(SUM(vitamin_c_mg), 0) as total_vitamin_c,
+                 COALESCE(SUM(calcium_mg), 0) as total_calcium,
+                 COALESCE(SUM(sodium_mg), 0) as total_sodium
                FROM meal_logs
                WHERE user_id = %s AND logged_at::date = %s""",
             (user_id, target_date)
@@ -140,6 +159,17 @@ def get_daily_intake(user_id: int, target_date: date = None) -> dict:
         "total_carbs": round(row["total_carbs"], 1),
         "total_fat": round(row["total_fat"], 1),
         "total_fiber": round(row["total_fiber"], 1),
+        "micros": {
+            "vitamin_d_mcg": round(row["total_vitamin_d"], 2),
+            "magnesium_mg": round(row["total_magnesium"], 1),
+            "zinc_mg": round(row["total_zinc"], 2),
+            "iron_mg": round(row["total_iron"], 2),
+            "b12_mcg": round(row["total_b12"], 2),
+            "potassium_mg": round(row["total_potassium"], 1),
+            "vitamin_c_mg": round(row["total_vitamin_c"], 1),
+            "calcium_mg": round(row["total_calcium"], 1),
+            "sodium_mg": round(row["total_sodium"], 1),
+        },
         "targets": targets,
         "remaining": remaining,
     }
@@ -174,3 +204,52 @@ def get_weekly_intake_summary(user_id: int) -> dict:
         "avg_fat": round(sum(d["fat"] for d in days) / n, 1),
         "daily_breakdown": days,
     }
+
+
+def get_micro_trends(user_id: int, days: int = 7) -> dict:
+    """Average daily intake of each tracked micronutrient over N days."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT
+                 COUNT(DISTINCT logged_at::date) as days_with_data,
+                 COALESCE(AVG(daily_vd), 0) as avg_vitamin_d,
+                 COALESCE(AVG(daily_mg), 0) as avg_magnesium,
+                 COALESCE(AVG(daily_zn), 0) as avg_zinc,
+                 COALESCE(AVG(daily_fe), 0) as avg_iron,
+                 COALESCE(AVG(daily_b12), 0) as avg_b12,
+                 COALESCE(AVG(daily_k), 0) as avg_potassium,
+                 COALESCE(AVG(daily_vc), 0) as avg_vitamin_c,
+                 COALESCE(AVG(daily_ca), 0) as avg_calcium,
+                 COALESCE(AVG(daily_na), 0) as avg_sodium
+               FROM (
+                 SELECT logged_at::date as day,
+                   SUM(vitamin_d_mcg) as daily_vd,
+                   SUM(magnesium_mg) as daily_mg,
+                   SUM(zinc_mg) as daily_zn,
+                   SUM(iron_mg) as daily_fe,
+                   SUM(b12_mcg) as daily_b12,
+                   SUM(potassium_mg) as daily_k,
+                   SUM(vitamin_c_mg) as daily_vc,
+                   SUM(calcium_mg) as daily_ca,
+                   SUM(sodium_mg) as daily_na
+                 FROM meal_logs
+                 WHERE user_id = %s AND logged_at >= NOW() - INTERVAL '%s days'
+                 GROUP BY day
+               ) daily_sums""",
+            (user_id, days)
+        )
+        row = cur.fetchone()
+        if not row or row["days_with_data"] == 0:
+            return {}
+        return {
+            "days_with_data": row["days_with_data"],
+            "vitamin_d_mcg": round(row["avg_vitamin_d"], 2),
+            "magnesium_mg": round(row["avg_magnesium"], 1),
+            "zinc_mg": round(row["avg_zinc"], 2),
+            "iron_mg": round(row["avg_iron"], 2),
+            "b12_mcg": round(row["avg_b12"], 2),
+            "potassium_mg": round(row["avg_potassium"], 1),
+            "vitamin_c_mg": round(row["avg_vitamin_c"], 1),
+            "calcium_mg": round(row["avg_calcium"], 1),
+            "sodium_mg": round(row["avg_sodium"], 1),
+        }

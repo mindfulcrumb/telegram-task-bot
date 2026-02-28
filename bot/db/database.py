@@ -497,6 +497,28 @@ def initialize():
             -- Add importance column to user_memory for tiered loading
             ALTER TABLE user_memory ADD COLUMN IF NOT EXISTS importance SMALLINT DEFAULT 5;
 
+            -- Micronutrient columns for meal_logs
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS vitamin_d_mcg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS magnesium_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS zinc_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS iron_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS b12_mcg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS potassium_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS vitamin_c_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS calcium_mg REAL;
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS sodium_mg REAL;
+
+            -- Micronutrient daily targets for nutrition_profiles (RDA defaults)
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS vitamin_d_target_mcg REAL DEFAULT 15;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS magnesium_target_mg REAL DEFAULT 400;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS zinc_target_mg REAL DEFAULT 11;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS iron_target_mg REAL DEFAULT 8;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS b12_target_mcg REAL DEFAULT 2.4;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS potassium_target_mg REAL DEFAULT 2600;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS vitamin_c_target_mg REAL DEFAULT 90;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS calcium_target_mg REAL DEFAULT 1000;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS sodium_target_mg REAL DEFAULT 2300;
+
             -- ═══════════════════════════════════════════════════════
             -- KNOWLEDGE BASE SYSTEM
             -- ═══════════════════════════════════════════════════════

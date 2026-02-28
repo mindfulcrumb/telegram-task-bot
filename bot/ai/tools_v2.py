@@ -698,16 +698,27 @@ def get_tool_definitions() -> list:
         },
         {
             "name": "log_meal",
-            "description": "Log a meal with calorie and macro estimates. Use when user says 'I ate...', 'had lunch...', 'just had a protein shake', etc. YOU must estimate calories and macros from their description using your nutrition knowledge and the food reference database. Always log even rough estimates — partial data is better than none.",
+            "description": "Log a meal with nutrition data. For food photos, USDA-verified data is provided — use it with source='usda'. For text descriptions, estimate and use source='ai_estimated'. Always log even rough estimates.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "meal_type": {"type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"], "description": "Meal type. Infer from time of day if user doesn't specify."},
                     "description": {"type": "string", "description": "What they ate (e.g. 'grilled chicken breast with rice and broccoli')"},
-                    "calories": {"type": "integer", "description": "Estimated total calories"},
-                    "protein_g": {"type": "number", "description": "Estimated protein in grams"},
-                    "carbs_g": {"type": "number", "description": "Estimated carbs in grams"},
-                    "fat_g": {"type": "number", "description": "Estimated fat in grams"}
+                    "calories": {"type": "integer", "description": "Total calories"},
+                    "protein_g": {"type": "number", "description": "Protein in grams"},
+                    "carbs_g": {"type": "number", "description": "Carbs in grams"},
+                    "fat_g": {"type": "number", "description": "Fat in grams"},
+                    "fiber_g": {"type": "number", "description": "Fiber in grams"},
+                    "vitamin_d_mcg": {"type": "number", "description": "Vitamin D in micrograms"},
+                    "magnesium_mg": {"type": "number", "description": "Magnesium in mg"},
+                    "zinc_mg": {"type": "number", "description": "Zinc in mg"},
+                    "iron_mg": {"type": "number", "description": "Iron in mg"},
+                    "b12_mcg": {"type": "number", "description": "Vitamin B12 in micrograms"},
+                    "potassium_mg": {"type": "number", "description": "Potassium in mg"},
+                    "vitamin_c_mg": {"type": "number", "description": "Vitamin C in mg"},
+                    "calcium_mg": {"type": "number", "description": "Calcium in mg"},
+                    "sodium_mg": {"type": "number", "description": "Sodium in mg"},
+                    "source": {"type": "string", "enum": ["usda", "ai_estimated", "manual"], "description": "Data source. 'usda' for USDA-verified photo data, 'ai_estimated' for text-based estimates, 'manual' for user-entered."}
                 },
                 "required": ["description", "calories"]
             }
@@ -1799,9 +1810,20 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 protein_g=args.get("protein_g"),
                 carbs_g=args.get("carbs_g"),
                 fat_g=args.get("fat_g"),
+                fiber_g=args.get("fiber_g"),
+                source=args.get("source", "ai_estimated"),
+                vitamin_d_mcg=args.get("vitamin_d_mcg"),
+                magnesium_mg=args.get("magnesium_mg"),
+                zinc_mg=args.get("zinc_mg"),
+                iron_mg=args.get("iron_mg"),
+                b12_mcg=args.get("b12_mcg"),
+                potassium_mg=args.get("potassium_mg"),
+                vitamin_c_mg=args.get("vitamin_c_mg"),
+                calcium_mg=args.get("calcium_mg"),
+                sodium_mg=args.get("sodium_mg"),
             )
             daily = nutrition_service.get_daily_intake(user_id)
-            return {
+            result = {
                 "logged": {
                     "meal_type": meal.get("meal_type"),
                     "description": meal.get("description"),
@@ -1809,6 +1831,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     "protein_g": meal.get("protein_g"),
                     "carbs_g": meal.get("carbs_g"),
                     "fat_g": meal.get("fat_g"),
+                    "source": meal.get("source"),
                 },
                 "daily_total": {
                     "meals": daily["meal_count"],
@@ -1820,16 +1843,22 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 "remaining": daily.get("remaining", {}),
                 "targets": daily.get("targets", {}),
             }
+            # Include micronutrient totals if available
+            micros = daily.get("micros", {})
+            if any(v > 0 for v in micros.values()):
+                result["daily_micros"] = micros
+            return result
 
         elif name == "get_daily_nutrition":
             from bot.services import nutrition_service
             daily = nutrition_service.get_daily_intake(user_id)
             meals = nutrition_service.get_meals_today(user_id)
-            return {
+            result = {
                 "date": daily["date"],
                 "meal_count": daily["meal_count"],
                 "meals": [{"type": m.get("meal_type"), "description": m.get("description"),
-                           "calories": m.get("calories"), "protein_g": m.get("protein_g")}
+                           "calories": m.get("calories"), "protein_g": m.get("protein_g"),
+                           "source": m.get("source")}
                           for m in meals],
                 "totals": {
                     "calories": daily["total_calories"],
@@ -1840,6 +1869,29 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 "targets": daily.get("targets", {}),
                 "remaining": daily.get("remaining", {}),
             }
+            # Include daily micronutrient totals
+            micros = daily.get("micros", {})
+            if any(v > 0 for v in micros.values()):
+                result["daily_micros"] = micros
+            # Include 7-day micro trends and flag deficiencies
+            try:
+                trends = nutrition_service.get_micro_trends(user_id, days=7)
+                if trends:
+                    result["micro_7d_averages"] = trends
+                    # Flag deficiencies (below 50% of RDA)
+                    rda = {"vitamin_d_mcg": 15, "magnesium_mg": 400, "zinc_mg": 11,
+                           "iron_mg": 8, "b12_mcg": 2.4, "potassium_mg": 2600,
+                           "vitamin_c_mg": 90, "calcium_mg": 1000, "sodium_mg": 2300}
+                    deficiencies = []
+                    for key, target in rda.items():
+                        avg = trends.get(key, 0)
+                        if avg < target * 0.5:
+                            deficiencies.append(f"{key}: avg {avg:.1f} vs RDA {target}")
+                    if deficiencies:
+                        result["potential_deficiencies"] = deficiencies
+            except Exception:
+                pass
+            return result
 
         else:
             return {"error": f"Unknown tool: {name}"}
