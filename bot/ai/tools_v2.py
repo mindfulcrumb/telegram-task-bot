@@ -326,6 +326,11 @@ def get_tool_definitions() -> list:
             "description": "Generate WHOOP OAuth URL for user to link their WHOOP device. Use when user says 'connect WHOOP', 'link my WHOOP', etc.",
             "input_schema": {"type": "object", "properties": {}}
         },
+        {
+            "name": "get_whoop_insights",
+            "description": "Get cross-domain intelligence: how recovery correlates with training strain, sleep quality, peptide dosing, and rest patterns over 30 days. Call when user asks 'do you see patterns?', 'how are peptides affecting my recovery?', 'am I overtraining?', or any question about long-term trends connecting WHOOP data to their training and protocols.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
         # --- Memory tools ---
         {
             "name": "save_user_memory",
@@ -1288,6 +1293,19 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if url:
                 return {"auth_url": url, "message": "Click the link to connect your WHOOP account."}
             return {"error": "Could not generate WHOOP authorization URL."}
+
+        elif name == "get_whoop_insights":
+            from bot.services import whoop_service
+            if not whoop_service.is_connected(user_id):
+                return {"error": "WHOOP not connected. Use connect_whoop to link your device."}
+            try:
+                whoop_service.sync_all(user_id)
+            except Exception:
+                pass
+            insights = whoop_service.get_whoop_insights(user_id)
+            if insights:
+                return {"insights": insights, "count": len(insights)}
+            return {"insights": [], "message": "Not enough data yet — need 7-10+ days of WHOOP + training data to find patterns."}
 
         # --- Memory tools ---
         elif name == "save_user_memory":

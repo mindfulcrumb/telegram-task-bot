@@ -442,6 +442,9 @@ def initialize():
             -- Blood type on user profile (for food recommendations)
             ALTER TABLE users ADD COLUMN IF NOT EXISTS blood_type TEXT;
 
+            -- WHOOP daily data freshness tracking
+            ALTER TABLE whoop_daily ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
             -- ═══════════════════════════════════════════════════════
             -- NUTRITION SYSTEM
             -- ═══════════════════════════════════════════════════════

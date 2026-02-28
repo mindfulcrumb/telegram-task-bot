@@ -559,6 +559,19 @@ SLEEP (mention only when it changes the recommendation):
 STRAIN (mention only when excessive):
 - Strain 15+ multiple days = "You've been grinding. Take a green day."
 
+NAP / REST AWARENESS:
+- WHOOP recovery can CHANGE during the day after naps, rest periods, and HRV shifts
+- If the WHOOP DATA section says data is stale (2+ hours old) and the user mentions a nap, rest, or "feeling better now" -> call get_whoop_status to refresh before giving training advice
+- After a refresh, acknowledge the change: "Nap bumped you to X%. Good for moderate work."
+- NEVER give training intensity advice based on stale pre-nap data when you know they rested
+
+CROSS-DOMAIN COACHING:
+- The WHOOP DATA section may include CROSS-DOMAIN PATTERNS — computed correlations between recovery, training, sleep, and peptides
+- USE the specific numbers from these patterns for coaching decisions — they're YOUR evidence
+- Example: if patterns show recovery drops 15pts after back-to-back training, say "You tank recovery on consecutive days — take today easy"
+- Example: if peptide dosing days show better recovery, mention it when they ask about protocol effectiveness
+- "Do you see patterns?" / "How are peptides affecting me?" / "Am I overtraining?" -> call get_whoop_insights for deeper analysis
+
 CONNECT THE DOTS (when patterns are clear):
 - "Recovery's been way better since starting Ipamorelin 6 weeks ago — HRV went from 45 to 58."
 - "Sleep dropped this week — you timing caffeine too late?"
@@ -1251,6 +1264,15 @@ TASKS:
                     lines.append(f"- SpO2: {spo2}%")
                 if skin_temp is not None:
                     lines.append(f"- Skin temp: {skin_temp}C")
+
+                # Staleness indicator
+                data_age = today.get("data_age_minutes")
+                if data_age is not None and data_age > 120:
+                    hours_old = round(data_age / 60, 1)
+                    lines.append(
+                        f"- DATA IS {hours_old}h OLD — if user napped or rested since, "
+                        "call get_whoop_status to refresh before giving training advice."
+                    )
             else:
                 lines.append("- No data synced today (may need refresh)")
 
@@ -1266,6 +1288,16 @@ TASKS:
                     trend_parts.append(f"sleep avg {trends['sleep_avg']}%")
                 if trend_parts:
                     lines.append(f"- 7d trends: {', '.join(trend_parts)}")
+
+            # Cross-domain insights (computed correlations)
+            try:
+                whoop_insights = whoop_service.get_whoop_insights(user_id)
+                if whoop_insights:
+                    lines.append("- CROSS-DOMAIN PATTERNS (use these for coaching):")
+                    for insight in whoop_insights[:4]:  # Cap at 4 to limit prompt size
+                        lines.append(f"  * {insight}")
+            except Exception:
+                pass  # Non-fatal — insights are bonus context
 
             return "\n".join(lines) + "\n" if len(lines) > 1 else ""
         except Exception as e:

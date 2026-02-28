@@ -495,6 +495,7 @@ def _upsert_daily(user_id: int, cycle_date: date, **kwargs):
 
         if existing:
             set_clause = ", ".join(f"{k} = %s" for k in fields)
+            set_clause += ", updated_at = NOW()"
             values = list(fields.values()) + [user_id, cycle_date]
             cur.execute(
                 f"UPDATE whoop_daily SET {set_clause} WHERE user_id = %s AND cycle_date = %s",
@@ -623,7 +624,10 @@ def get_whoop_summary_cached(user_id: int) -> dict:
     today = date.today()
     with get_cursor() as cur:
         cur.execute(
-            """SELECT * FROM whoop_daily
+            """SELECT *,
+               EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 60.0
+                   AS data_age_minutes
+               FROM whoop_daily
                WHERE user_id = %s AND cycle_date >= %s
                ORDER BY cycle_date DESC LIMIT 1""",
             (user_id, today - timedelta(days=1)),
@@ -632,6 +636,222 @@ def get_whoop_summary_cached(user_id: int) -> dict:
     today_data = dict(row) if row else None
     trends = get_whoop_trends(user_id, days=7)
     return {"connected": True, "today": today_data, "trends": trends}
+
+
+# --- Cross-domain insights ---
+
+def get_whoop_insights(user_id: int) -> list[str]:
+    """Compute cross-domain correlations from WHOOP + fitness + biohacking data.
+
+    Returns list of plain-English insight strings for AI coaching.
+    All queries: bounded to 30 days, indexed columns, HAVING COUNT >= 2.
+    """
+    insights: list[str] = []
+
+    try:
+        with get_cursor() as cur:
+            # 1. Recovery vs previous-day strain
+            cur.execute("""
+                SELECT
+                    CASE WHEN prev.daily_strain >= 14 THEN 'high'
+                         WHEN prev.daily_strain < 8 THEN 'low'
+                         ELSE 'moderate' END AS bucket,
+                    ROUND(AVG(curr.recovery_score)) AS avg_rec,
+                    COUNT(*) AS days
+                FROM whoop_daily curr
+                JOIN whoop_daily prev
+                    ON prev.user_id = curr.user_id
+                    AND prev.cycle_date = curr.cycle_date - 1
+                WHERE curr.user_id = %s
+                    AND curr.recovery_score IS NOT NULL
+                    AND prev.daily_strain IS NOT NULL
+                    AND curr.cycle_date >= CURRENT_DATE - 30
+                GROUP BY bucket
+                HAVING COUNT(*) >= 2
+            """, (user_id,))
+            rows = {r["bucket"]: r for r in cur.fetchall()}
+            if "high" in rows and "low" in rows:
+                high = int(rows["high"]["avg_rec"])
+                low = int(rows["low"]["avg_rec"])
+                diff = low - high
+                if diff > 5:
+                    insights.append(
+                        f"Recovery after heavy strain days (14+) averages {high}% "
+                        f"vs {low}% after easy days — {diff}pt drop. "
+                        f"Space out high-strain sessions."
+                    )
+
+            # 2. Recovery vs sleep quality
+            cur.execute("""
+                SELECT
+                    CASE WHEN sleep_performance >= 85 THEN 'good'
+                         WHEN sleep_performance < 70 THEN 'poor'
+                         ELSE 'ok' END AS bucket,
+                    ROUND(AVG(recovery_score)) AS avg_rec,
+                    COUNT(*) AS days
+                FROM whoop_daily
+                WHERE user_id = %s
+                    AND recovery_score IS NOT NULL
+                    AND sleep_performance IS NOT NULL
+                    AND cycle_date >= CURRENT_DATE - 30
+                GROUP BY bucket
+                HAVING COUNT(*) >= 2
+            """, (user_id,))
+            rows = {r["bucket"]: r for r in cur.fetchall()}
+            if "good" in rows and "poor" in rows:
+                good = int(rows["good"]["avg_rec"])
+                poor = int(rows["poor"]["avg_rec"])
+                diff = good - poor
+                if diff > 5:
+                    insights.append(
+                        f"Recovery is {diff}pts higher on good sleep nights "
+                        f"({good}%) vs poor sleep ({poor}%). "
+                        f"Sleep quality is the biggest lever."
+                    )
+
+            # 3. Recovery on peptide dosing vs non-dosing days
+            cur.execute("""
+                SELECT
+                    CASE WHEN pl.id IS NOT NULL THEN 'dosing' ELSE 'off' END AS status,
+                    ROUND(AVG(wd.recovery_score)) AS avg_rec,
+                    ROUND(AVG(wd.hrv_rmssd)::numeric, 1) AS avg_hrv,
+                    COUNT(DISTINCT wd.cycle_date) AS days
+                FROM whoop_daily wd
+                LEFT JOIN peptide_logs pl
+                    ON pl.user_id = wd.user_id
+                    AND pl.administered_at::date = wd.cycle_date
+                WHERE wd.user_id = %s
+                    AND wd.recovery_score IS NOT NULL
+                    AND wd.cycle_date >= CURRENT_DATE - 30
+                GROUP BY status
+                HAVING COUNT(DISTINCT wd.cycle_date) >= 3
+            """, (user_id,))
+            rows = {r["status"]: r for r in cur.fetchall()}
+            if "dosing" in rows and "off" in rows:
+                dose_rec = int(rows["dosing"]["avg_rec"])
+                off_rec = int(rows["off"]["avg_rec"])
+                diff = dose_rec - off_rec
+                if abs(diff) > 3:
+                    direction = "higher" if diff > 0 else "lower"
+                    dose_hrv = rows["dosing"]["avg_hrv"] or 0
+                    off_hrv = rows["off"]["avg_hrv"] or 0
+                    insights.append(
+                        f"Recovery on peptide dosing days: {dose_rec}% (HRV {dose_hrv}ms) "
+                        f"vs off days: {off_rec}% (HRV {off_hrv}ms) — "
+                        f"{abs(diff)}pts {direction} with peptides."
+                    )
+
+            # 4. Deep sleep after high vs low strain
+            cur.execute("""
+                SELECT
+                    CASE WHEN prev.daily_strain >= 14 THEN 'high'
+                         ELSE 'low' END AS bucket,
+                    ROUND(AVG(curr.deep_sleep_minutes)) AS avg_deep,
+                    COUNT(*) AS days
+                FROM whoop_daily curr
+                JOIN whoop_daily prev
+                    ON prev.user_id = curr.user_id
+                    AND prev.cycle_date = curr.cycle_date - 1
+                WHERE curr.user_id = %s
+                    AND curr.deep_sleep_minutes IS NOT NULL
+                    AND prev.daily_strain IS NOT NULL
+                    AND curr.cycle_date >= CURRENT_DATE - 30
+                GROUP BY bucket
+                HAVING COUNT(*) >= 2
+            """, (user_id,))
+            rows = {r["bucket"]: r for r in cur.fetchall()}
+            if "high" in rows and "low" in rows:
+                deep_hard = int(rows["high"]["avg_deep"])
+                deep_easy = int(rows["low"]["avg_deep"])
+                diff = deep_hard - deep_easy
+                if abs(diff) > 5:
+                    if diff > 0:
+                        insights.append(
+                            f"Deep sleep after heavy training: {deep_hard}min "
+                            f"vs easy days: {deep_easy}min (+{diff}min). "
+                            f"Body recovers well through sleep after hard sessions."
+                        )
+                    else:
+                        insights.append(
+                            f"Deep sleep after heavy training: {deep_hard}min "
+                            f"vs easy days: {deep_easy}min ({diff}min). "
+                            f"Hard training may be disrupting deep sleep."
+                        )
+
+            # 5. HRV vs 14-day baseline
+            cur.execute("""
+                SELECT
+                    AVG(hrv_rmssd) AS baseline,
+                    (SELECT hrv_rmssd FROM whoop_daily
+                     WHERE user_id = %s AND hrv_rmssd IS NOT NULL
+                     ORDER BY cycle_date DESC LIMIT 1) AS latest
+                FROM whoop_daily
+                WHERE user_id = %s
+                    AND hrv_rmssd IS NOT NULL
+                    AND cycle_date >= CURRENT_DATE - 14
+            """, (user_id, user_id))
+            row = cur.fetchone()
+            if row and row["baseline"] and row["latest"]:
+                baseline = round(float(row["baseline"]), 1)
+                latest = round(float(row["latest"]), 1)
+                if baseline > 0:
+                    pct = ((latest - baseline) / baseline) * 100
+                    if pct < -15:
+                        insights.append(
+                            f"HRV today ({latest}ms) is {abs(round(pct))}% below "
+                            f"14d baseline ({baseline}ms). Fatigue signal — prioritize recovery."
+                        )
+                    elif pct > 15:
+                        insights.append(
+                            f"HRV today ({latest}ms) is {round(pct)}% above "
+                            f"14d baseline ({baseline}ms). Excellent readiness — can push intensity."
+                        )
+
+            # 6. Recovery after consecutive training vs rest days
+            cur.execute("""
+                WITH training_days AS (
+                    SELECT created_at::date AS wd
+                    FROM workouts
+                    WHERE user_id = %s AND created_at >= CURRENT_DATE - 30
+                ),
+                day_ctx AS (
+                    SELECT wd.cycle_date, wd.recovery_score,
+                        CASE WHEN t1.wd IS NOT NULL THEN 1 ELSE 0 END AS prev_trained,
+                        CASE WHEN t2.wd IS NOT NULL THEN 1 ELSE 0 END AS prev2_trained
+                    FROM whoop_daily wd
+                    LEFT JOIN training_days t1 ON t1.wd = wd.cycle_date - 1
+                    LEFT JOIN training_days t2 ON t2.wd = wd.cycle_date - 2
+                    WHERE wd.user_id = %s AND wd.recovery_score IS NOT NULL
+                        AND wd.cycle_date >= CURRENT_DATE - 30
+                )
+                SELECT
+                    CASE
+                        WHEN prev_trained = 1 AND prev2_trained = 1 THEN 'consecutive'
+                        WHEN prev_trained = 0 THEN 'after_rest'
+                        ELSE 'other'
+                    END AS ctx,
+                    ROUND(AVG(recovery_score)) AS avg_rec,
+                    COUNT(*) AS days
+                FROM day_ctx
+                GROUP BY ctx
+                HAVING COUNT(*) >= 2
+            """, (user_id, user_id))
+            rows = {r["ctx"]: r for r in cur.fetchall()}
+            if "consecutive" in rows and "after_rest" in rows:
+                consec = int(rows["consecutive"]["avg_rec"])
+                rest = int(rows["after_rest"]["avg_rec"])
+                diff = rest - consec
+                if diff > 5:
+                    insights.append(
+                        f"Recovery after rest days: {rest}% vs after "
+                        f"back-to-back training: {consec}% ({diff}pt drop). "
+                        f"Consider adding rest days between hard sessions."
+                    )
+
+    except Exception as e:
+        logger.warning(f"WHOOP insights failed for user {user_id}: {type(e).__name__}: {e}")
+
+    return insights
 
 
 # --- Webhook handling ---
