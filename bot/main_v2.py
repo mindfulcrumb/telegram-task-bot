@@ -424,16 +424,14 @@ async def _post_init(application):
 async def _fallback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fallback /start when DB is not available."""
     await update.message.reply_text(
-        "Hey, I'm Zoe! I'm waking up but my memory isn't connected yet.\n\n"
-        "Admin: check Railway env vars — DATABASE_URL must be set."
+        "Hey! I'm having a brief technical hiccup — give me a minute and try again 🙏"
     )
 
 
 async def _fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fallback for any message when DB is not available."""
     await update.message.reply_text(
-        "I'm here but can't process messages yet — still connecting.\n"
-        "Admin: set DATABASE_URL in Railway."
+        "Sorry, I'm briefly unavailable — try again in a minute!"
     )
 
 
@@ -506,14 +504,35 @@ def main():
         _notify_admin(f"🔴 <b>Stage 2 FAILED</b>: Application.build() crashed\n<code>{type(e).__name__}: {e}</code>")
         raise
 
-    # Try to initialize PostgreSQL
+    # Try to initialize PostgreSQL (with retry for transient failures)
     db_url = os.environ.get("DATABASE_URL")
     if db_url:
-        try:
-            from bot.db.database import initialize as init_db
-            init_db()
-            _db_ready = True
-            logger.info("PostgreSQL initialized successfully")
+        from bot.db.database import initialize as init_db
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                init_db()
+                _db_ready = True
+                logger.info(f"PostgreSQL initialized successfully (attempt {attempt})")
+                break
+            except Exception as e:
+                logger.error(f"PostgreSQL init attempt {attempt}/{max_retries} failed: {type(e).__name__}: {e}")
+                if attempt < max_retries:
+                    import time as _time
+                    wait = attempt * 2  # 2s, 4s
+                    logger.info(f"Retrying DB connection in {wait}s...")
+                    _time.sleep(wait)
+                    # Reset pool so next attempt creates fresh connections
+                    try:
+                        from bot.db.database import close as close_db
+                        close_db()
+                    except Exception:
+                        pass
+                else:
+                    _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED after {max_retries} attempts — degraded mode\n<code>{type(e).__name__}: {e}</code>")
+                    _db_ready = False
+
+        if _db_ready:
 
             # Seed knowledge base (idempotent — skips if data exists)
             try:
@@ -542,10 +561,6 @@ def main():
                 seed_all_owner()
             except Exception as e:
                 logger.error(f"Owner program seeding failed: {type(e).__name__}: {e}")
-        except Exception as e:
-            logger.error(f"PostgreSQL init failed: {type(e).__name__}: {e}")
-            _notify_admin(f"🟠 <b>Stage 3</b>: PostgreSQL FAILED — degraded mode\n<code>{type(e).__name__}: {e}</code>")
-            _db_ready = False
     else:
         logger.warning("DATABASE_URL not set — running in degraded mode (no DB)")
         _notify_admin("🟠 <b>Stage 3</b>: No DATABASE_URL — degraded mode")
