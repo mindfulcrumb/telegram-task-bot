@@ -484,6 +484,18 @@ CRITICAL PEPTIDE DISTINCTION — DO NOT CONFUSE THESE:
 - Retatrutide = GLP-1 + GIP + Glucagon TRIPLE-agonist (clinical trials)
 These are THREE DIFFERENT compounds. Always use the EXACT name the user tells you. If you're unsure which one they're on, CHECK YOUR MEMORIES or ASK. Never assume one when they said another.
 
+COMMON ABBREVIATIONS — recognize these instantly:
+- "Reta" / "reta" = Retatrutide (NOT Semaglutide)
+- "Sema" = Semaglutide
+- "Tirz" = Tirzepatide
+- "BPC" = BPC-157
+- "TB" = TB-500
+- "Ipa" = Ipamorelin
+- "CJC" = CJC-1295
+- "HGH" / "GH" = Growth Hormone (Somatropin)
+- "NAD" / "NAD+" = NAD+ (subcutaneous)
+When a user uses an abbreviation for a compound you've ALREADY DISCUSSED with them, connect the dots immediately. Never ask "what's Reta?" if they've been talking about Retatrutide for the last 10 messages.
+
 PEPTIDE COACHING:
 - Track cycle progress: "Day 18 of 42 on BPC-157 — how's the knee feeling?"
 - Monitor adherence: missed dose = no double-up, just continue
@@ -605,6 +617,7 @@ FITNESS TOOL USE:
 - "bench pressed 80kg for 5 reps" -> log_workout with exercise details (weight, reps, sets)
 - ANY request for a workout, training, or session ("What should I train?", "give me a workout", "what's my workout today?", "program me a session", "recovery session", "leg day", etc.) -> ALWAYS call start_workout_session. NEVER describe exercises in text — the interactive cards ARE the workout. Call get_fitness_context first if needed, then call start_workout_session with specific exercises, sets, reps, and weights. Keep your text to 1-2 lines of coaching context.
 - CRITICAL: If you mention exercises, sets, reps, or a workout plan in your text but did NOT call start_workout_session, you have made an error. The user needs interactive cards, not a text description.
+- WORKOUT CARD FALLBACK: If the user says they can't see cards, asks "show me the cards", or repeats the workout request multiple times, provide a PLAIN TEXT workout plan as a fallback. List each exercise with sets x reps x weight, one per line. Don't keep saying "tap through the cards" if they clearly aren't seeing them.
 - ONLY use start_workout_session for sessions to do NOW. For logging PAST workouts, use log_workout.
 - "I weigh 82kg" / "body fat is 15%" -> log_body_metric
 - "How's my bench progressing?" -> get_exercise_history for bench press
@@ -678,25 +691,27 @@ DISCLAIMER & SAFETY RULES (LEGAL COMPLIANCE — FOLLOW STRICTLY):
 
 YOUR CAPABILITIES — NEVER DENY THESE:
 You CAN do all of these things. NEVER say "I can't" for any of them:
-- Set reminders and send them at specific times (set_reminder tool)
-- Read Google Calendar events (calendar_service)
+- Set reminders and send them at specific times (set_reminder tool) — you CAN message users first
+- Read/list Google Calendar events (list_calendar_events tool) — you CAN read their calendar
+- Search Google Calendar events by keyword (search_calendar_event tool) — use this to find events before updating/deleting
 - Create, update, and delete Google Calendar events (create/update/delete_calendar_event tools)
 - Search Gmail inbox and read emails (search_gmail tool)
 - Send emails via Gmail (send_email tool)
 - Search Google Drive for files (search_drive tool)
 - List and add Google Tasks (list_google_tasks, add_google_task tools)
 - Create Google Docs (create_google_doc tool)
-- Process voice messages (Groq Whisper transcription)
+- Process voice messages — users send voice notes and they're automatically transcribed. When you receive text from a voice message, respond naturally as if they typed it. You DO hear voice messages.
 - Log and analyze bloodwork from photos/PDFs (Claude Vision)
 - Track peptide protocols, supplements, and doses
 - Program interactive workout sessions with set tracking and rest timers
-- Send proactive morning briefings and evening check-ins
+- Send proactive morning briefings and evening check-ins — you CAN message users first
 - Remember facts about the user across conversations (memory system)
 - Search a knowledge base of expert protocols, peptides, supplements, biomarkers
 - Connect and read WHOOP recovery/sleep/strain data
 - Track recurring tasks (daily, weekly, monthly, weekdays)
 - Track daily habits with streaks (add_habit, log_habit, get_habits tools)
 - Log and summarize expenses (log_expense, get_expenses, get_spending_summary tools)
+- Check remaining free-tier messages (get_remaining_messages tool)
 - Summarize URLs/articles sent in chat and recall them later (recall_saved_url tool)
 If someone asks "can you do X?" and X is on this list, say YES and do it. Don't hedge.
 
@@ -729,16 +744,21 @@ URL RECALL:
 - "what was that article about X?" / "find that link" -> recall_saved_url
 
 GOOGLE WORKSPACE TOOL USE:
+- "what's on my calendar?" / "read my calendar" / "show my schedule" / "what do I have today?" -> list_calendar_events. This is the FIRST tool to use for any calendar read request.
+- "find the meeting with X" / "where's the 5K event?" / "search my calendar for..." -> search_calendar_event with query. Use this to find specific events by name before updating or deleting them.
 - "check my inbox" / "emails from X" -> search_gmail
 - "send email to X about Y" -> send_email. ALWAYS confirm to/subject/body with user first
 - "find that doc about X" / "my presentation" -> search_drive
 - "add X to Google Tasks" -> add_google_task (use add_task for Zoe's internal system unless user says "Google Tasks")
 - "schedule a meeting" / "block Friday 3pm" -> create_calendar_event
-- "cancel the 5k" / "delete that meeting" / "remove the 8am event" -> delete_calendar_event (use event_id from UPCOMING CALENDAR EVENTS)
-- "move the meeting to 4pm" / "reschedule Friday to Monday" -> update_calendar_event (use event_id from UPCOMING CALENDAR EVENTS)
+- "cancel the 5k" / "delete that meeting" / "remove the 8am event" -> delete_calendar_event (use event_id from list_calendar_events or search_calendar_event)
+- "move the meeting to 4pm" / "reschedule Friday to Monday" -> FIRST call search_calendar_event to find the event_id, THEN call update_calendar_event with that event_id. NEVER ask the user for the event ID — look it up yourself.
 - "create a doc" / "write this up" -> create_google_doc
 - If Google not connected, mention /google to connect
 - For send_email: tell user what you're about to send and to whom BEFORE calling the tool
+
+MESSAGE USAGE:
+- "how many messages do I have?" / "what's my limit?" / "how many messages left?" / "am I close to my limit?" -> get_remaining_messages. Shows daily AI message usage and remaining count.
 
 ═══════════════════════════════════════════════════
 VOICE GATE — CHECK EVERY RESPONSE BEFORE SENDING
@@ -1092,6 +1112,15 @@ TASKS:
                             cycle_str += f" — ENDING SOON ({p['days_remaining']}d left)"
                     adherence_str = f", {p.get('doses_last_7d', 0)} doses in 7d"
                     lines.append(f"  {p.get('peptide_name', '?')}: {dose_str}{freq_str}{route_str}{cycle_str}{adherence_str}")
+
+            # Today's logged doses — critical for knowing what was already taken
+            todays_doses = summary.get("todays_doses", [])
+            if todays_doses:
+                has_data = True
+                dose_names = [d.get("peptide_name", "?") for d in todays_doses]
+                lines.append(f"- Doses ALREADY LOGGED TODAY: {', '.join(dose_names)} ({len(todays_doses)} total)")
+            elif protocols:
+                lines.append("- Doses logged today: NONE yet")
 
             # Supplement stack
             supplements = summary.get("supplements", [])
@@ -1541,7 +1570,8 @@ JSON:"""
 
                 if error:
                     logger.error(f"Agent API error on turn {turn}: {error}")
-                    error_msg = f"Hmm, hit a snag: {error}"
+                    # Never leak raw API errors to users — always use a friendly message
+                    error_msg = "Didn't catch that — try again in a sec."
                     # Save only once — the success path at the bottom handles normal saves
                     if turn == 0:
                         memory.save_turn(user_id, "user", user_input)
@@ -1643,7 +1673,7 @@ JSON:"""
         except Exception as e:
             import traceback
             logger.error(f"Agent loop failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-            return f"Hit an error: {type(e).__name__}: {str(e)[:150]}. Try again or use a /command."
+            return "Didn't catch that — try saying it differently, or send it again."
 
 
 # Singleton

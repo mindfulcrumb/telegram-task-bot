@@ -438,6 +438,20 @@ def get_enriched_bloodwork(user_id: int) -> dict | None:
 
 # --- Full biohacking summary (for AI context) ---
 
+def get_todays_doses(user_id: int) -> list:
+    """Get all peptide doses logged today, across all protocols."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT pl.*, pp.peptide_name
+               FROM peptide_logs pl
+               JOIN peptide_protocols pp ON pl.protocol_id = pp.id
+               WHERE pl.user_id = %s AND pl.administered_at >= CURRENT_DATE
+               ORDER BY pl.administered_at DESC""",
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
 def get_biohacking_summary(user_id: int) -> dict:
     """Everything the AI brain needs for biohacking context."""
     protocols = get_protocol_summary(user_id)
@@ -445,6 +459,7 @@ def get_biohacking_summary(user_id: int) -> dict:
     adherence = get_supplement_adherence(user_id, days=7)
     bloodwork = get_bloodwork_history(user_id, limit=1)
     flagged = get_flagged_biomarkers(user_id)
+    todays_doses = get_todays_doses(user_id)
 
     return {
         "protocols": protocols,
@@ -452,4 +467,5 @@ def get_biohacking_summary(user_id: int) -> dict:
         "supplement_adherence": adherence,
         "latest_bloodwork": bloodwork[0] if bloodwork else None,
         "flagged_biomarkers": flagged,
+        "todays_doses": todays_doses,
     }

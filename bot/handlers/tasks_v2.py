@@ -1280,7 +1280,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_human(update, "Session ready. Let's go.")
         else:
             logger.error(f"Brain returned no response for user {user['id']}, text={text[:100]}")
-            await update.message.reply_text("Couldn't process that. Try again or use a /command.")
+            await update.message.reply_text("Didn't catch that — try saying it differently, or send it again.")
 
         if pending_session_id:
             logger.info(f"WORKOUT CARDS: sending cards for session {pending_session_id}")
@@ -1299,7 +1299,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tb = traceback.format_exc()
         logger.error(f"handle_message failed: {type(e).__name__}: {e}\n{tb}")
         try:
-            await update.message.reply_text("Something went sideways. Try again or hit /help.")
+            await update.message.reply_text("Didn't catch that — try again in a sec.")
         except Exception:
             pass
 
