@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 LIMITS = {
     "free": {
         "max_tasks": 25,
-        "max_ai_messages_per_day": 20,
+        "max_ai_messages_per_day": 15,
         "daily_briefing": False,
         "check_ins": False,
         "weekly_insights": False,
@@ -115,5 +115,10 @@ def check_limit(
 
     elif action == "daily_briefing":
         return limits["daily_briefing"], None
+
+    elif action == "pro_feature":
+        if _check_supabase_upgrade(user_id, telegram_user_id):
+            return True, None
+        return False, "That's a Pro feature — unlock it with /upgrade."
 
     return True, None

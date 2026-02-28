@@ -70,6 +70,48 @@ async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict 
     return user
 
 
+async def _send_paywall(update: Update, msg: str):
+    """Send paywall message, works from both message and callback handlers."""
+    from bot.handlers.payments import get_subscribe_keyboard
+    keyboard = get_subscribe_keyboard(update.effective_user.id)
+    if update.message:
+        await update.message.reply_text(msg, reply_markup=keyboard)
+    elif update.callback_query:
+        await update.callback_query.message.chat.send_message(msg, reply_markup=keyboard)
+
+
+async def _check_ai_limit(update: Update, user: dict) -> bool:
+    """Check if user can use an AI-powered feature. Returns True if BLOCKED."""
+    tier = user.get("tier", "free")
+    if tier == "pro" or user.get("is_admin"):
+        return False
+    allowed, msg = tier_service.check_limit(
+        user["id"], "ai_message", tier,
+        is_admin=user.get("is_admin", False),
+        telegram_user_id=user.get("telegram_user_id"),
+    )
+    if not allowed:
+        await _send_paywall(update, msg)
+        return True
+    return False
+
+
+async def _check_pro_feature(update: Update, user: dict) -> bool:
+    """Check if user has Pro access for a gated feature. Returns True if BLOCKED."""
+    tier = user.get("tier", "free")
+    if tier == "pro" or user.get("is_admin"):
+        return False
+    allowed, msg = tier_service.check_limit(
+        user["id"], "pro_feature", tier,
+        is_admin=user.get("is_admin", False),
+        telegram_user_id=user.get("telegram_user_id"),
+    )
+    if not allowed:
+        await _send_paywall(update, msg)
+        return True
+    return False
+
+
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /add command."""
     user = await _get_user(update, context)
@@ -337,6 +379,10 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Or just tell me what you did."
         )
         return
+    # Check AI limit before calling brain
+    if await _check_ai_limit(update, user):
+        return
+
     # Feed into AI brain as a workout log
     chat = update.message.chat
     await chat.send_action(ChatAction.TYPING)
@@ -625,6 +671,10 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Or just say \"took my BPC.\""
         )
         return
+    # Check AI limit before calling brain
+    if await _check_ai_limit(update, user):
+        return
+
     # Feed into AI brain
     chat = update.message.chat
     await chat.send_action(ChatAction.TYPING)
@@ -640,10 +690,15 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_connect_whoop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /connect_whoop command — link WHOOP device."""
+    """Handle /connect_whoop command — link WHOOP device (Pro only)."""
     user = await _get_user(update, context)
     if not user:
         return
+
+    # Pro-only feature
+    if await _check_pro_feature(update, user):
+        return
+
     from bot.services import whoop_service
 
     if not whoop_service.is_configured():
@@ -874,6 +929,10 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat = query.message.chat
 
     if query.data == "whoop_train":
+        # Check AI limit
+        if await _check_ai_limit(update, user):
+            return
+
         from bot.services import whoop_service
         if not whoop_service.is_connected(user["id"]):
             await chat.send_message("WHOOP not connected. Use /connect_whoop to link.")
@@ -927,6 +986,10 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 await chat.send_message("Workout created but couldn't display the card. Try 'show my workout'.")
 
     elif query.data.startswith("whoop_goal:"):
+        # Check AI limit
+        if await _check_ai_limit(update, user):
+            return
+
         # User picked a training goal from the mini-onboarding
         goal_key = query.data.split(":")[1]
         goal_map = {

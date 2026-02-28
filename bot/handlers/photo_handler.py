@@ -59,6 +59,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Check AI message limit
+    from bot.services import tier_service
+    tier = user.get("tier", "free")
+    if tier != "pro" and not user.get("is_admin"):
+        allowed, msg = tier_service.check_limit(
+            user["id"], "ai_message", tier,
+            is_admin=user.get("is_admin", False),
+            telegram_user_id=user.get("telegram_user_id"),
+        )
+        if not allowed:
+            from bot.handlers.payments import get_subscribe_keyboard
+            keyboard = get_subscribe_keyboard(update.effective_user.id)
+            await update.message.reply_text(msg, reply_markup=keyboard)
+            return
+
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         await update.message.reply_text("Can't process images right now — try again later.")
