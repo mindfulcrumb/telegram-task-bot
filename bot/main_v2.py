@@ -44,6 +44,7 @@ _db_ready = False
 
 
 _startup_status = "starting"
+_last_db_error = None  # Stores the last DB init error for diagnostics
 
 # Cache for timer HTML (loaded once)
 _timer_html_cache = None
@@ -133,25 +134,31 @@ class _HealthCheck(BaseHTTPRequestHandler):
     def _handle_status(self):
         """Diagnostic endpoint — shows DB status, env vars (names only), startup info."""
         try:
+            # Always try a live DB connection test
             db_test = "unknown"
-            db_error = None
-            if _db_ready:
-                try:
-                    from bot.db.database import get_cursor
-                    with get_cursor() as cur:
-                        cur.execute("SELECT 1")
+            db_live_error = None
+            try:
+                import psycopg2
+                db_url = os.environ.get("DATABASE_URL", "")
+                if db_url:
+                    conn = psycopg2.connect(db_url, connect_timeout=5)
+                    cur = conn.cursor()
+                    cur.execute("SELECT 1")
+                    cur.close()
+                    conn.close()
                     db_test = "connected"
-                except Exception as e:
-                    db_test = "error"
-                    db_error = f"{type(e).__name__}: {e}"
-            else:
-                db_test = "not_initialized"
+                else:
+                    db_test = "no_url"
+            except Exception as e:
+                db_test = "connection_failed"
+                db_live_error = f"{type(e).__name__}: {e}"
 
             info = {
                 "status": _startup_status,
                 "db_ready": _db_ready,
                 "db_test": db_test,
-                "db_error": db_error,
+                "db_live_error": db_live_error,
+                "db_init_error": _last_db_error,
                 "env": {
                     "DATABASE_URL": "SET" if os.environ.get("DATABASE_URL") else "MISSING",
                     "TELEGRAM_BOT_TOKEN": "SET" if os.environ.get("TELEGRAM_BOT_TOKEN") else "MISSING",
@@ -478,7 +485,7 @@ async def _fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot."""
-    global _db_ready
+    global _db_ready, _last_db_error
 
     # Print immediately — bypasses logging in case logging setup crashes
     print("[ZOE] Starting bot...", flush=True)
@@ -557,7 +564,8 @@ def main():
                 logger.info(f"PostgreSQL initialized successfully (attempt {attempt})")
                 break
             except Exception as e:
-                logger.error(f"PostgreSQL init attempt {attempt}/{max_retries} failed: {type(e).__name__}: {e}")
+                _last_db_error = f"{type(e).__name__}: {e}"
+                logger.error(f"PostgreSQL init attempt {attempt}/{max_retries} failed: {_last_db_error}")
                 if attempt < max_retries:
                     import time as _time
                     wait = attempt * 2  # 2s, 4s
