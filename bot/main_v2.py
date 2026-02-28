@@ -61,10 +61,13 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self._handle_google_callback()
         elif self.path.startswith("/timer"):
             self._handle_timer()
+        elif self.path == "/status":
+            self._handle_status()
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(f"OK - {_startup_status}".encode())
+            status = f"OK - {_startup_status} - db={'ready' if _db_ready else 'NOT_READY'}"
+            self.wfile.write(status.encode())
 
     def do_POST(self):
         if self.path == "/whoop/webhook":
@@ -126,6 +129,44 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             self.wfile.write(f"Timer error: {e}".encode())
+
+    def _handle_status(self):
+        """Diagnostic endpoint — shows DB status, env vars (names only), startup info."""
+        try:
+            db_test = "unknown"
+            db_error = None
+            if _db_ready:
+                try:
+                    from bot.db.database import get_cursor
+                    with get_cursor() as cur:
+                        cur.execute("SELECT 1")
+                    db_test = "connected"
+                except Exception as e:
+                    db_test = "error"
+                    db_error = f"{type(e).__name__}: {e}"
+            else:
+                db_test = "not_initialized"
+
+            info = {
+                "status": _startup_status,
+                "db_ready": _db_ready,
+                "db_test": db_test,
+                "db_error": db_error,
+                "env": {
+                    "DATABASE_URL": "SET" if os.environ.get("DATABASE_URL") else "MISSING",
+                    "TELEGRAM_BOT_TOKEN": "SET" if os.environ.get("TELEGRAM_BOT_TOKEN") else "MISSING",
+                    "ANTHROPIC_API_KEY": "SET" if os.environ.get("ANTHROPIC_API_KEY") else "MISSING",
+                    "ADMIN_USER_IDS": "SET" if os.environ.get("ADMIN_USER_IDS") else "MISSING",
+                },
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(info, indent=2).encode())
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f"Status error: {e}".encode())
 
     def _handle_google_callback(self):
         """Handle Google OAuth callback — exchange code for tokens (Calendar or full Workspace)."""
