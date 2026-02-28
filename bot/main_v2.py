@@ -155,12 +155,34 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 db_test = "connection_failed"
                 db_live_error = f"{type(e).__name__}: {e}"
 
+            # Extra diagnostics
+            extra = {}
+            try:
+                import psycopg2, psycopg2.extras
+                conn2 = psycopg2.connect(os.environ.get("DATABASE_URL", ""), connect_timeout=5)
+                conn2.autocommit = True
+                cur2 = conn2.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur2.execute("SELECT COUNT(*) as cnt FROM users")
+                extra["total_users"] = cur2.fetchone()["cnt"]
+                cur2.execute("SELECT COUNT(*) as cnt FROM usage WHERE created_at >= CURRENT_DATE")
+                extra["usage_today"] = cur2.fetchone()["cnt"]
+                try:
+                    cur2.execute("SELECT * FROM usage_persistent ORDER BY usage_date DESC LIMIT 10")
+                    extra["persistent_usage"] = [dict(r) for r in cur2.fetchall()]
+                except Exception as e:
+                    extra["persistent_usage_error"] = str(e)
+                cur2.close()
+                conn2.close()
+            except Exception as e:
+                extra["extra_error"] = str(e)
+
             info = {
                 "status": _startup_status,
                 "db_ready": _db_ready,
                 "db_test": db_test,
                 "db_live_error": db_live_error,
                 "db_init_error": _last_db_error,
+                "extra": extra,
                 "env": {
                     "DATABASE_URL": "SET" if os.environ.get("DATABASE_URL") else "MISSING",
                     "TELEGRAM_BOT_TOKEN": "SET" if os.environ.get("TELEGRAM_BOT_TOKEN") else "MISSING",
