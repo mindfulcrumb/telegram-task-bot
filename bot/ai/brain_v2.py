@@ -1552,8 +1552,9 @@ JSON:"""
                     logger.error(f"Agent got empty response on turn {turn}")
                     if turn == 0:
                         memory.save_turn(user_id, "user", user_input)
-                    memory.save_turn(user_id, "assistant", "Something went wrong processing that.")
-                    return None
+                    fallback = "Didn't catch that — try saying it differently, or send it again."
+                    memory.save_turn(user_id, "assistant", fallback)
+                    return fallback
 
                 # Serialize assistant response for message history
                 # Filter out empty text blocks — API rejects them on subsequent turns

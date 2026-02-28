@@ -547,6 +547,38 @@ def get_tool_definitions() -> list:
             }
         },
         {
+            "name": "list_calendar_events",
+            "description": "List upcoming Google Calendar events. Use when user asks 'what's on my calendar?', 'read my calendar', 'what do I have today?', 'show my schedule'. Returns events for the next N days.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Number of days to look ahead (default 3, max 14)"}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "search_calendar_event",
+            "description": "Search Google Calendar events by keyword. Use when user mentions a specific event by name (e.g., 'find the meeting with CEO', 'look for the 5K run'). Returns matching events with their IDs for update/delete operations.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query (event title or keywords)"},
+                    "days": {"type": "integer", "description": "How many days ahead to search (default 14)"}
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "get_remaining_messages",
+            "description": "Check how many AI messages the user has used today and how many remain. Use when user asks 'how many messages do I have?', 'what's my limit?', 'how many messages left?', 'am I close to my limit?'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        },
+        {
             "name": "create_google_doc",
             "description": "Create a new Google Doc. Use when user asks to create a document, write something up, or start a new doc. Returns the editable document link.",
             "input_schema": {
@@ -1490,6 +1522,63 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if task:
                 return {"success": True, "title": args["title"], "task_id": task.get("id")}
             return {"error": "Failed to add task to Google Tasks."}
+
+        elif name == "list_calendar_events":
+            from bot.services.google_auth import is_connected
+            from bot.services import calendar_service
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            days = min(args.get("days", 3), 14)
+            events = calendar_service.fetch_upcoming_events(user_id, days=days)
+            if not events:
+                return {"events": [], "message": f"No events in the next {days} days."}
+            result = []
+            for e in events:
+                dt = e["start"]
+                if e.get("all_day"):
+                    time_str = dt.strftime("%A %b %d") + " (all day)"
+                else:
+                    time_str = dt.strftime("%A %b %d at %I:%M %p")
+                result.append({
+                    "title": e["title"],
+                    "time": time_str,
+                    "event_id": e.get("id", ""),
+                })
+            return {"events": result, "count": len(result)}
+
+        elif name == "search_calendar_event":
+            from bot.services.google_auth import is_connected
+            from bot.services import calendar_service
+            if not is_connected(user_id):
+                return {"error": "Google not connected. Tell the user to use /google to connect."}
+            query = args["query"]
+            days = min(args.get("days", 14), 30)
+            events = calendar_service.search_events(user_id, query, days=days)
+            if not events:
+                return {"events": [], "message": f"No events matching '{query}' in the next {days} days."}
+            result = []
+            for e in events:
+                dt = e["start"]
+                if e.get("all_day"):
+                    time_str = dt.strftime("%A %b %d") + " (all day)"
+                else:
+                    time_str = dt.strftime("%A %b %d at %I:%M %p")
+                result.append({
+                    "title": e["title"],
+                    "time": time_str,
+                    "event_id": e.get("id", ""),
+                })
+            return {"events": result, "count": len(result)}
+
+        elif name == "get_remaining_messages":
+            from bot.services import tier_service
+            tier = user.get("tier", "free")
+            used = tier_service.get_usage_today(user_id, "ai_message")
+            limits = tier_service.LIMITS.get(tier, tier_service.LIMITS["free"])
+            max_msgs = limits["max_ai_messages_per_day"]
+            if max_msgs is None:
+                return {"tier": tier, "used_today": used, "remaining": "unlimited", "limit": "unlimited"}
+            return {"tier": tier, "used_today": used, "remaining": max(0, max_msgs - used), "limit": max_msgs}
 
         elif name == "create_calendar_event":
             from bot.services.google_auth import is_connected, has_scopes

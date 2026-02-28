@@ -266,6 +266,62 @@ def update_event(
         return None
 
 
+def search_events(user_id: int, query: str, days: int = 14, max_events: int = 10) -> list[dict]:
+    """Search upcoming calendar events by text query. Returns events matching the query."""
+    token = get_access_token(user_id)
+    if not token:
+        return []
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=days)
+
+    try:
+        resp = _http.get(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
+            params={
+                "timeMin": now.isoformat(),
+                "timeMax": cutoff.isoformat(),
+                "maxResults": max_events,
+                "singleEvents": "true",
+                "orderBy": "startTime",
+                "q": query,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        if resp.status_code != 200:
+            logger.error(f"Calendar search failed {resp.status_code}: {resp.text[:200]}")
+            return []
+
+        events = []
+        for item in resp.json().get("items", []):
+            start = item.get("start", {})
+            dt_str = start.get("dateTime") or start.get("date")
+            if not dt_str:
+                continue
+
+            all_day = "dateTime" not in start
+            if all_day:
+                dt = datetime.strptime(dt_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            else:
+                dt = datetime.fromisoformat(dt_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+
+            events.append({
+                "id": item.get("id"),
+                "title": item.get("summary", "Untitled"),
+                "start": dt,
+                "all_day": all_day,
+            })
+
+        return events
+
+    except Exception as e:
+        logger.error(f"Calendar search error: {type(e).__name__}: {e}")
+        return []
+
+
 def format_events_for_ai(events: list[dict]) -> str:
     """Format calendar events as text for the AI system prompt."""
     if not events:

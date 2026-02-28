@@ -1238,25 +1238,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"WORKOUT CARDS: pending_session_id={pending_session_id}, user_id={user['id']}")
 
         # Safety net: if no pending session found but user asked for a workout,
-        # check if the AI silently created a session (the _pending_session dict can
-        # miss if the agent loop structure changes or an exception path skips it)
+        # check if there's an active session to re-display (new or existing).
+        # Covers two cases:
+        # 1. AI just created a session but _pending_session flag was missed
+        # 2. User is asking to see their workout again (session exists from earlier)
         if not pending_session_id:
             _lower = text.lower()
             _workout_phrases = ("workout", "train", "session", "leg day", "push day", "pull day",
-                                "recovery session", "what should i", "give me a", "prescribe")
+                                "recovery session", "what should i", "give me a", "prescribe",
+                                "show me the card", "show me card", "show card", "show workout",
+                                "my workout", "today's workout", "exercise")
             if any(p in _lower for p in _workout_phrases):
                 try:
                     from bot.services import fitness_service as _fs
                     _active = _fs.get_active_session(user["id"])
                     if _active:
-                        # Check if this session was created in the last 60 seconds (i.e., from this request)
                         from datetime import datetime, timezone as _tz
                         _started = _active.get("started_at")
+                        _age = None
                         if _started:
                             _age = (datetime.now(_tz.utc) - _started).total_seconds()
-                            if _age < 60:
-                                pending_session_id = _active["id"]
-                                logger.info(f"WORKOUT CARDS: safety net caught active session {pending_session_id} (age={_age:.0f}s)")
+                        # Accept sessions up to 12 hours old (same-day session)
+                        if _age is None or _age < 43200:
+                            pending_session_id = _active["id"]
+                            logger.info(f"WORKOUT CARDS: safety net caught active session {pending_session_id} (age={_age:.0f}s)" if _age else f"WORKOUT CARDS: safety net caught active session {pending_session_id}")
                 except Exception as e:
                     logger.warning(f"WORKOUT CARDS: safety net check failed: {e}")
 

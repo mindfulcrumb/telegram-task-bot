@@ -47,8 +47,13 @@ def get_protocol_by_id(protocol_id: int) -> dict | None:
 
 
 def get_protocol_by_name(user_id: int, peptide_name: str) -> dict | None:
-    """Find active protocol by peptide name (case-insensitive)."""
+    """Find active protocol by peptide name (fuzzy match).
+
+    Handles common variations: 'BPC TB' matches 'BPC-157 + TB-500 Blend',
+    'BPC' matches 'BPC-157', 'reta' matches 'Retatrutide', etc.
+    """
     with get_cursor() as cur:
+        # Try exact match first (case-insensitive)
         cur.execute(
             """SELECT * FROM peptide_protocols
                WHERE user_id = %s AND LOWER(peptide_name) = LOWER(%s) AND status = 'active'
@@ -56,7 +61,53 @@ def get_protocol_by_name(user_id: int, peptide_name: str) -> dict | None:
             (user_id, peptide_name)
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+
+        # Fuzzy match: check if search term appears in protocol name or vice versa
+        cur.execute(
+            """SELECT * FROM peptide_protocols
+               WHERE user_id = %s AND status = 'active'
+               ORDER BY created_at DESC""",
+            (user_id,)
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        search_lower = peptide_name.lower().strip()
+        search_clean = search_lower.replace("-", "").replace("+", "").replace("  ", " ")
+        search_words = [w for w in search_clean.split() if len(w) >= 3]
+
+        best_match = None
+        best_score = 0
+
+        for r in rows:
+            name_lower = r["peptide_name"].lower()
+            name_clean = name_lower.replace("-", "").replace("+", "").replace("  ", " ")
+
+            # Exact normalized match
+            if search_clean == name_clean:
+                return dict(r)
+
+            # Search term contained in protocol name or vice versa
+            if search_lower in name_lower or search_clean in name_clean:
+                return dict(r)
+            if name_lower in search_lower or name_clean in search_clean:
+                if len(name_lower) > best_score:
+                    best_match = r
+                    best_score = len(name_lower)
+                continue
+
+            # Word-level matching
+            if search_words:
+                matches = sum(1 for w in search_words if w in name_clean)
+                score = matches / len(search_words)
+                if score > 0.5 and matches > best_score:
+                    best_match = r
+                    best_score = matches
+
+        return dict(best_match) if best_match else None
 
 
 def update_protocol_status(protocol_id: int, status: str) -> dict | None:
