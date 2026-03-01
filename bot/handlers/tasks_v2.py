@@ -1273,7 +1273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if ai_brain._paywall_hit:
                 from bot.handlers.payments import get_subscribe_keyboard
                 keyboard = get_subscribe_keyboard(update.effective_user.id)
-                await update.message.reply_text(response, reply_markup=keyboard)
+                await update.message.reply_text(_clean_response(response), reply_markup=keyboard)
             else:
                 # Add feedback buttons on substantive responses (longer than a quick ack)
                 show_feedback = len(response) > 80

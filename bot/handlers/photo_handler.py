@@ -49,7 +49,11 @@ Return a JSON object:
 }
 
 STRICT RULES:
-1. ONLY list items you can actually SEE. Do NOT guess or infer items that might logically be there.
+1. ONLY list items you can CLEARLY and UNAMBIGUOUSLY see. Do NOT guess, infer, or add items that might logically be present but are not visible.
+   - If you see a container but can't identify the contents, SKIP it entirely.
+   - If something MIGHT be eggs, rice, or any other item but you're not sure, DO NOT include it.
+   - NEVER add items to "round out" a meal. If you see chicken and vegetables but no rice, don't add rice.
+   - Common hallucinations to AVOID: eggs (often confused with other round objects), rice/grains (often confused with crumbs or textures), sauces (don't guess sauces), herbs (only if clearly visible).
 2. For each item provide THREE fields:
    - "name": what a person would call it (e.g., "grilled chicken breast")
    - "usda_query": a USDA FoodData Central searchable name — plain English, include cooking method, no brand names (e.g., "chicken breast meat only cooked grilled")
