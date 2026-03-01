@@ -840,6 +840,56 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS idx_pain_reports_user
                 ON pain_reports(user_id, status, created_at);
+
+            -- ═══════════════════════════════════════════════════════════
+            -- FEATURE DISCOVERY HINTS (contextual user guidance)
+            -- ═══════════════════════════════════════════════════════════
+            CREATE TABLE IF NOT EXISTS hint_log (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                hint_key TEXT NOT NULL,
+                shown_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_hint_log_user
+                ON hint_log(user_id, shown_at);
+
+            -- ═══════════════════════════════════════════════════════════
+            -- INTERACTIVE PEPTIDE PROTOCOL SYSTEM
+            -- ═══════════════════════════════════════════════════════════
+
+            -- Structured dose schedules (replaces free-text frequency)
+            CREATE TABLE IF NOT EXISTS protocol_schedules (
+                id SERIAL PRIMARY KEY,
+                protocol_id INT NOT NULL REFERENCES peptide_protocols(id) ON DELETE CASCADE,
+                dose_time TIME NOT NULL,
+                dose_days INT[] NOT NULL DEFAULT '{1,2,3,4,5,6,7}',
+                label TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_protocol_schedules_protocol
+                ON protocol_schedules(protocol_id);
+
+            -- Expected doses per day (adherence engine)
+            CREATE TABLE IF NOT EXISTS scheduled_doses (
+                id SERIAL PRIMARY KEY,
+                protocol_id INT NOT NULL REFERENCES peptide_protocols(id) ON DELETE CASCADE,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scheduled_date DATE NOT NULL,
+                scheduled_time TIME NOT NULL,
+                status TEXT DEFAULT 'pending',
+                log_id INT REFERENCES peptide_logs(id),
+                responded_at TIMESTAMPTZ,
+                reminder_message_id BIGINT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(protocol_id, scheduled_date, scheduled_time)
+            );
+            CREATE INDEX IF NOT EXISTS idx_scheduled_doses_user_date
+                ON scheduled_doses(user_id, scheduled_date, status);
+            CREATE INDEX IF NOT EXISTS idx_scheduled_doses_protocol
+                ON scheduled_doses(protocol_id, scheduled_date);
+
+            -- Dashboard card message tracking
+            ALTER TABLE peptide_protocols ADD COLUMN IF NOT EXISTS card_message_id BIGINT;
         """)
     logger.info("PostgreSQL schema initialized")
 

@@ -127,6 +127,30 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - No test suite
 - No referral system yet
 
+## Session Log — Mar 1, 2026 (Session 10)
+
+### What was done:
+1. **Interactive Peptide Protocol System** — Full implementation across 8 files + 1 new file
+   - `bot/handlers/protocol_cards.py` (NEW, ~1100 lines): wizard (pw:), dashboard (pd:), dose reminders (dr:), quick dose (qd:)
+   - `bot/db/database.py`: protocol_schedules + scheduled_doses tables, card_message_id column, hint_log table
+   - `bot/services/biohacking_service.py`: ~300 lines new — schedule CRUD, daily dose generation, adherence engine
+   - `bot/ai/tools_v2.py`: 2 new tools (start_protocol_wizard, get_protocol_dashboard) + executors
+   - `bot/ai/brain_v2.py`: _pending_protocol_wizard/_pending_protocol_dashboard detection, peptide timing rules, dose safety rules
+   - `bot/main_v2.py`: registered pw:, pd:, dr:, qd: callback handlers
+   - `bot/handlers/tasks_v2.py`: wizard text interceptor, pending detection, /protocols → dashboard, /dose → quick buttons
+   - `bot/handlers/proactive_v2.py`: interactive dose reminder cards (15-min schedule-based), generate_daily_doses_job
+2. **Feature Discovery System** — subtle UI guidance hints (brain_v2.py, database.py, proactive_v2.py, voice_v2.py)
+3. **Conversation Audit** — reviewed 232 messages, found 12 issues, fixed 3 critical:
+   - Peptide timing (HGH on empty stomach) never enforced → added comprehensive timing rules
+   - Semaglutide/Retatrutide confusion → added misspelling variants + task rename rule
+   - Dose increase recommendation → added DOSE CHANGE SAFETY section
+4. **Git state**: pulled 50+ remote commits, stashed Session 8+9 local changes (stash@{0})
+
+### Status:
+- All 8 modified files compile clean (py_compile verified)
+- NOT YET COMMITTED — needs commit + push to main → Railway auto-deploys
+- stash@{0} has Session 8+9 changes (15-bug audit + WHOOP workout analysis) — may conflict
+
 ## Session Log — Feb 25, 2026 (Session 3)
 
 ### What was done:

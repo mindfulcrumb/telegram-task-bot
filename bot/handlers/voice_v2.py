@@ -96,6 +96,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = text.strip()
 
+        # Track voice usage (for feature discovery detection)
+        try:
+            tier_service.track_usage(user["id"], "voice_message",
+                                     telegram_user_id=user.get("telegram_user_id"))
+        except Exception:
+            pass
+
         # Feed into AI brain (same path as text messages)
         async def _keep_typing():
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")

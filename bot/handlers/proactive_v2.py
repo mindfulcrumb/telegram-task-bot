@@ -382,7 +382,8 @@ async def cleanup_sessions_job(context: ContextTypes.DEFAULT_TYPE):
 # --- Dose Reminders ---
 
 async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs every 4 hours. Reminds Pro users about peptide doses and supplements."""
+    """Runs every 15 min. Sends interactive dose reminder cards for pending scheduled doses.
+    Falls back to plain text for protocols without schedules."""
     users = user_service.get_all_active_users()
     for user in users:
         try:
@@ -393,43 +394,80 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             now_user = datetime.now(tz)
             hour = now_user.hour
 
-            # Only remind at reasonable hours (8am, 12pm, 8pm)
-            if hour not in (8, 12, 20):
+            # Only remind during waking hours (7am-10pm)
+            if hour < 7 or hour > 22:
                 continue
 
-            # Check dedup
+            from bot.services import biohacking_service
+
+            # Generate today's scheduled doses (idempotent)
+            try:
+                biohacking_service.generate_daily_doses(user["id"], now_user.date())
+            except Exception as e:
+                logger.warning(f"Daily dose generation failed for user {user['id']}: {e}")
+
+            # Check for pending scheduled doses in a 30-min window around now
+            pending_doses = []
+            try:
+                pending_doses = biohacking_service.get_pending_doses_in_window(
+                    user["id"], now_user.time(), window_minutes=30
+                )
+            except Exception:
+                pass
+
+            if pending_doses:
+                # Dedup: use the earliest dose time as key
+                dose_key = f"dose_card_{pending_doses[0].get('scheduled_time', hour)}"
+                if coaching_service.was_nudged_today(user["id"], 0, dose_key):
+                    continue
+
+                # Send interactive dose reminder card
+                try:
+                    from bot.handlers.protocol_cards import render_dose_reminder_card
+                    text, markup = render_dose_reminder_card(pending_doses, user.get("first_name", "friend"), hour)
+                    msg = await context.bot.send_message(
+                        chat_id=user["telegram_user_id"],
+                        text=text,
+                        reply_markup=markup,
+                    )
+                    # Store message ID on the doses so card can be edited in place
+                    for d in pending_doses:
+                        try:
+                            biohacking_service.set_dose_reminder_message_id(d["id"], msg.message_id)
+                        except Exception:
+                            pass
+                    coaching_service.record_nudge(user["id"], 0, dose_key)
+                    logger.info(f"Interactive dose reminder sent to user {user['id']} ({len(pending_doses)} doses)")
+                except Exception as e:
+                    logger.error(f"Interactive dose reminder failed for user {user['id']}: {e}")
+                continue
+
+            # Fallback: check protocols without schedules (legacy plain text reminders)
+            # Only at key hours (8am, 20pm)
+            if hour not in (8, 20):
+                continue
+
             if coaching_service.was_nudged_today(user["id"], 0, f"dose_{hour}"):
                 continue
 
             reminders = []
-
-            # Check active peptide protocols
             try:
-                from bot.services import biohacking_service
                 protocols = biohacking_service.get_active_protocols(user["id"])
                 for p in protocols:
+                    # Skip protocols that have schedules (they get interactive cards)
+                    try:
+                        schedules = biohacking_service.get_schedules(p["id"])
+                        if schedules:
+                            continue
+                    except Exception:
+                        pass
                     freq = (p.get("frequency") or "").lower()
-                    # Match timing: morning=8, afternoon=12, evening=20
                     if hour == 8 and any(w in freq for w in ["morning", "am", "daily", "2x", "twice"]):
                         reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
                     elif hour == 20 and any(w in freq for w in ["evening", "pm", "night", "bed", "daily", "2x", "twice"]):
                         reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
-                    elif hour == 12 and "midday" in freq:
-                        reminders.append(f"{p['peptide_name']} ({p.get('dose_amount', '?')}{p.get('dose_unit', 'mcg')})")
             except Exception:
                 pass
-
-            # Check supplements at morning
-            if hour == 8:
-                try:
-                    from bot.services import biohacking_service
-                    supplements = biohacking_service.get_active_supplements(user["id"])
-                    if supplements:
-                        supp_names = [s["supplement_name"] for s in supplements[:5]]
-                        if supp_names:
-                            reminders.append(f"Supplements: {', '.join(supp_names)}")
-                except Exception:
-                    pass
 
             if not reminders:
                 continue
@@ -437,11 +475,8 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             name = user.get("first_name", "friend")
             if hour == 8:
                 text = f"Morning, {name}. Time for:\n" + "\n".join(f"  {r}" for r in reminders)
-            elif hour == 20:
-                text = f"Evening doses, {name}:\n" + "\n".join(f"  {r}" for r in reminders)
             else:
-                text = f"Dose check:\n" + "\n".join(f"  {r}" for r in reminders)
-
+                text = f"Evening doses, {name}:\n" + "\n".join(f"  {r}" for r in reminders)
             text += "\n\nJust say 'took my BPC' or 'took supplements' to log it."
 
             await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
@@ -450,10 +485,34 @@ async def dose_reminder_job(context: ContextTypes.DEFAULT_TYPE):
                 text=text,
             )
             coaching_service.record_nudge(user["id"], 0, f"dose_{hour}")
-            logger.info(f"Dose reminder sent to user {user['id']} ({len(reminders)} items)")
+            logger.info(f"Dose reminder (plain) sent to user {user['id']} ({len(reminders)} items)")
 
         except Exception as e:
             logger.error(f"Dose reminder failed for user {user.get('id')}: {e}")
+
+
+async def generate_daily_doses_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs daily at midnight. Generates scheduled dose rows for today + marks yesterday's missed."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            today = now_user.date()
+
+            from bot.services import biohacking_service
+
+            # Generate today's doses
+            biohacking_service.generate_daily_doses(user["id"], today)
+
+            # Mark yesterday's overdue doses as missed
+            biohacking_service.mark_overdue_doses_missed(user["id"])
+
+        except Exception as e:
+            logger.error(f"Daily dose generation failed for user {user.get('id')}: {e}")
 
 
 # --- Workout Reminder (pre-workout nudge) ---
@@ -932,8 +991,11 @@ def setup_proactive_jobs(application):
     # Stale session cleanup: every 2 hours
     jq.run_repeating(cleanup_sessions_job, interval=7200, first=600, name="cleanup_sessions")
 
-    # Dose reminders: every 4 hours
-    jq.run_repeating(dose_reminder_job, interval=14400, first=900, name="dose_reminders")
+    # Dose reminders: every 15 minutes (schedule-based with interactive cards)
+    jq.run_repeating(dose_reminder_job, interval=900, first=120, name="dose_reminders")
+
+    # Daily dose generation + missed dose marking: every 6 hours
+    jq.run_repeating(generate_daily_doses_job, interval=21600, first=60, name="daily_dose_gen")
 
     # Workout reminder (pre-workout nudge): every 15 min
     jq.run_repeating(workout_reminder_job, interval=900, first=180, name="workout_reminder")
@@ -956,7 +1018,7 @@ def setup_proactive_jobs(application):
     # Pain/mobility follow-up: every 6 hours
     jq.run_repeating(pain_followup_job, interval=21600, first=1200, name="pain_followup")
 
-    logger.info("Proactive coaching jobs registered (16 jobs)")
+    logger.info("Proactive coaching jobs registered (17 jobs)")
 
 
 # --- Helpers ---
@@ -967,6 +1029,80 @@ def _get_tz(user: dict):
         return ZoneInfo(user.get("timezone") or "UTC")
     except Exception:
         return ZoneInfo("UTC")
+
+
+def _get_briefing_hint(user: dict) -> str:
+    """Return a feature hint to append to the morning briefing prompt.
+
+    Only returns a hint ~30% of mornings, and only for features the user
+    hasn't tried yet. Prevents the briefing from feeling like an ad.
+    """
+    import random
+    from bot.db.database import get_cursor
+
+    # Only hint on ~30% of briefings
+    if random.random() > 0.30:
+        return ""
+
+    user_id = user.get("id", 0)
+
+    with get_cursor() as cur:
+        # Don't hint if we already hinted today (via brain or previous briefing)
+        cur.execute("""
+            SELECT COUNT(*) as c FROM hint_log
+            WHERE user_id = %s AND shown_at > NOW() - INTERVAL '1 day'
+        """, (user_id,))
+        if cur.fetchone()["c"] > 0:
+            return ""
+
+        # Build list of unused features
+        hints = []
+
+        cur.execute("SELECT COUNT(*) as c FROM whoop_tokens WHERE user_id = %s", (user_id,))
+        if cur.fetchone()["c"] == 0:
+            hints.append(("whoop", "If they wear a WHOOP, remind them they can connect it for recovery-based training adjustments — /connect_whoop"))
+
+        cur.execute("SELECT COUNT(*) as c FROM habits WHERE user_id = %s", (user_id,))
+        if cur.fetchone()["c"] == 0:
+            hints.append(("habits", "Suggest they could track a daily habit (meditation, cold plunge, reading) and you'll track streaks"))
+
+        cur.execute("SELECT COUNT(*) as c FROM meal_logs WHERE user_id = %s AND photo_analysis IS NOT NULL", (user_id,))
+        if cur.fetchone()["c"] == 0:
+            hints.append(("meal_photo", "Mention that if they snap a photo of breakfast, you'll log the macros automatically"))
+
+        cur.execute("SELECT COUNT(*) as c FROM workout_sessions WHERE user_id = %s", (user_id,))
+        if cur.fetchone()["c"] == 0:
+            cur.execute("SELECT COUNT(*) as c FROM fitness_profiles WHERE user_id = %s", (user_id,))
+            if cur.fetchone()["c"] > 0:
+                hints.append(("workout_cards", "If there's a workout scheduled, mention you can load it up as interactive cards with rest timers"))
+
+        try:
+            from bot.services import google_auth
+            if not google_auth.is_connected(user_id):
+                hints.append(("google", "Suggest connecting Google (/google) so you can weave their calendar into the schedule"))
+        except Exception:
+            pass
+
+        if not hints:
+            return ""
+
+        # Filter out hints already shown
+        cur.execute("SELECT hint_key FROM hint_log WHERE user_id = %s", (user_id,))
+        shown = {r["hint_key"] for r in cur.fetchall()}
+        fresh = [(k, t) for k, t in hints if k not in shown]
+
+        if not fresh:
+            return ""
+
+        hint_key, hint_text = random.choice(fresh)
+
+        # Record the hint
+        cur.execute("INSERT INTO hint_log (user_id, hint_key) VALUES (%s, %s)", (user_id, hint_key))
+
+    return (
+        f"\n\nOPTIONAL NUDGE (weave naturally into the briefing as a casual aside, one sentence max): "
+        f"{hint_text}. Don't make it sound like a feature announcement — just a passing tip."
+    )
 
 
 def _generate_briefing(user, tasks, streak, patterns):
@@ -1107,6 +1243,13 @@ def _generate_briefing(user, tasks, streak, patterns):
         except Exception:
             pass
 
+        # Optional: feature discovery hint for the briefing
+        discovery_hint = ""
+        try:
+            discovery_hint = _get_briefing_hint(user)
+        except Exception:
+            pass
+
         prompt = (
             f"Generate a DETAILED morning routine and daily plan for {user.get('first_name', 'friend')}.\n"
             f"Current time: {current_time}\n\n"
@@ -1141,6 +1284,7 @@ def _generate_briefing(user, tasks, streak, patterns):
             "- Separate sections with blank lines\n"
             "- Keep it under 800 chars total — concise but detailed\n"
             "- If a task title looks technical (env vars, API keys), describe it simply"
+            + discovery_hint
         )
 
         response, error = _call_api(

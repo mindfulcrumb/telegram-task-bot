@@ -221,10 +221,32 @@ def get_tool_definitions() -> list:
                 "required": ["title", "exercises"]
             }
         },
+        # --- Interactive protocol wizard & dashboard ---
+        {
+            "name": "start_protocol_wizard",
+            "description": "Launch the interactive protocol wizard — a guided card-based flow for creating a new peptide protocol. Use when user says 'start a protocol', 'add a peptide', 'set up BPC-157', 'new protocol', or wants to create a structured protocol. The wizard walks them through peptide selection, dose, frequency, route, schedule times, and cycle length via inline buttons. Keep your text response to 1-2 lines — the interactive card appears automatically. Prefer this over manage_peptide_protocol action=add for new protocols.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "peptide_hint": {
+                        "type": "string",
+                        "description": "Optional: if the user mentioned a specific peptide name, pass it here to pre-select it in the wizard (e.g. 'BPC-157', 'Ipamorelin')"
+                    }
+                }
+            }
+        },
+        {
+            "name": "get_protocol_dashboard",
+            "description": "Show the interactive protocol dashboard with progress bars, today's dose status, 7-day adherence visual, and action buttons (log dose, pause, new protocol). Use when user asks 'how are my protocols?', 'show my protocols', 'protocol status', '/protocols', or wants to see their peptide tracking overview. The dashboard card appears automatically — keep your text response to 1-2 lines.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
         # --- Biohacking tools ---
         {
             "name": "manage_peptide_protocol",
-            "description": "Add, pause, resume, or end a peptide protocol. Use when user mentions starting/stopping a peptide, adjusting dose, or managing their protocol stack.",
+            "description": "Add, pause, resume, or end a peptide protocol. For ADDING new protocols, prefer start_protocol_wizard instead (guided interactive flow). Use this tool directly for pause, resume, and end actions, or when the user provides ALL details in one message and doesn't need the wizard.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -1086,6 +1108,28 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 "title": args["title"],
                 "exercise_count": len(args["exercises"]),
                 "_interactive_session": True,
+            }
+
+        # --- Interactive protocol wizard & dashboard ---
+        elif name == "start_protocol_wizard":
+            peptide_hint = args.get("peptide_hint")
+            return {
+                "success": True,
+                "message": "Protocol wizard launched — the user will see an interactive card to set up their protocol.",
+                "_interactive_protocol_wizard": True,
+                "_peptide_hint": peptide_hint,
+            }
+
+        elif name == "get_protocol_dashboard":
+            from bot.services import biohacking_service
+            protocols = biohacking_service.get_active_protocols(user_id)
+            if not protocols:
+                return {"protocols": [], "message": "No active protocols. The user can start one with the protocol wizard."}
+            return {
+                "success": True,
+                "protocol_count": len(protocols),
+                "message": "Dashboard card sent — the user can see progress, log doses, and manage protocols interactively.",
+                "_interactive_protocol_dashboard": True,
             }
 
         # --- Biohacking tools ---

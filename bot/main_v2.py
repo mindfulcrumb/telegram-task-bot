@@ -799,6 +799,20 @@ def _register_full_handlers(application):
         except Exception:
             pass
         try:
+            from bot.handlers.protocol_cards import (
+                handle_protocol_wizard_callback,
+                handle_protocol_dashboard_callback,
+                handle_dose_reminder_callback,
+                handle_quick_dose_callback,
+            )
+            application.add_handler(CallbackQueryHandler(handle_protocol_wizard_callback, pattern="^pw:"))
+            application.add_handler(CallbackQueryHandler(handle_protocol_dashboard_callback, pattern="^pd:"))
+            application.add_handler(CallbackQueryHandler(handle_dose_reminder_callback, pattern="^dr:"))
+            application.add_handler(CallbackQueryHandler(handle_quick_dose_callback, pattern="^qd:"))
+            logger.info("Protocol card handlers registered (pw, pd, dr, qd)")
+        except Exception as e:
+            logger.error(f"Failed to register protocol card handlers: {type(e).__name__}: {e}")
+        try:
             from bot.handlers.tasks_v2 import handle_feedback_callback
             application.add_handler(CallbackQueryHandler(handle_feedback_callback, pattern="^fb:"))
         except Exception:

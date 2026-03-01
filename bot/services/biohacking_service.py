@@ -469,3 +469,441 @@ def get_biohacking_summary(user_id: int) -> dict:
         "flagged_biomarkers": flagged,
         "todays_doses": todays_doses,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# INTERACTIVE PROTOCOL SYSTEM — schedules, adherence, daily doses
+# ═══════════════════════════════════════════════════════════════
+
+# --- Schedule CRUD ---
+
+def add_schedule(protocol_id: int, dose_time: str, dose_days: list = None,
+                 label: str = None) -> dict:
+    """Attach a dose schedule to a protocol.
+
+    Args:
+        protocol_id: Protocol to schedule
+        dose_time: Time string 'HH:MM' (24h format)
+        dose_days: ISO weekdays [1=Mon..7=Sun], default all 7
+        label: e.g. 'Morning dose', 'Evening dose'
+    """
+    if dose_days is None:
+        dose_days = [1, 2, 3, 4, 5, 6, 7]
+    with get_cursor() as cur:
+        cur.execute(
+            """INSERT INTO protocol_schedules (protocol_id, dose_time, dose_days, label)
+               VALUES (%s, %s, %s, %s) RETURNING *""",
+            (protocol_id, dose_time, dose_days, label)
+        )
+        return dict(cur.fetchone())
+
+
+def get_schedules(protocol_id: int) -> list:
+    """Get all schedule entries for a protocol, ordered by time."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT * FROM protocol_schedules
+               WHERE protocol_id = %s ORDER BY dose_time""",
+            (protocol_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def delete_schedules(protocol_id: int):
+    """Remove all schedules for a protocol."""
+    with get_cursor() as cur:
+        cur.execute(
+            "DELETE FROM protocol_schedules WHERE protocol_id = %s",
+            (protocol_id,)
+        )
+
+
+# --- Frequency code helpers ---
+
+FREQUENCY_CODES = {
+    "daily":      {"label": "Daily",        "days": [1, 2, 3, 4, 5, 6, 7]},
+    "2x_daily":   {"label": "2x Daily",     "days": [1, 2, 3, 4, 5, 6, 7]},
+    "eod":        {"label": "Every Other Day", "days": [1, 3, 5, 7]},
+    "3x_weekly":  {"label": "3x Weekly",    "days": [1, 3, 5]},
+    "5on2off":    {"label": "5 on / 2 off", "days": [1, 2, 3, 4, 5]},
+}
+
+
+def add_protocol_with_schedule(
+    user_id: int, peptide_name: str,
+    dose_amount: float, dose_unit: str,
+    frequency_code: str, route: str,
+    schedule_times: list, cycle_weeks: int,
+    notes: str = None
+) -> dict:
+    """Create a protocol with structured schedule in one transaction.
+
+    Args:
+        schedule_times: list of 'HH:MM' strings (1 for daily/eod/3x/5on2off, 2 for 2x_daily)
+        cycle_weeks: 4, 6, 8, 12 etc.
+    """
+    today = date.today()
+    cycle_end = today + timedelta(weeks=cycle_weeks)
+    freq_info = FREQUENCY_CODES.get(frequency_code, FREQUENCY_CODES["daily"])
+    freq_label = freq_info["label"]
+    dose_days = freq_info["days"]
+
+    with get_cursor() as cur:
+        # 1. Create protocol
+        cur.execute(
+            """INSERT INTO peptide_protocols
+               (user_id, peptide_name, dose_amount, dose_unit, frequency, route,
+                cycle_start, cycle_end, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+            (user_id, peptide_name, dose_amount, dose_unit, freq_label, route,
+             today, cycle_end, notes)
+        )
+        protocol = dict(cur.fetchone())
+        protocol_id = protocol["id"]
+
+        # 2. Create schedule entries
+        for i, t in enumerate(schedule_times):
+            label = None
+            if len(schedule_times) == 2:
+                label = "Morning dose" if i == 0 else "Evening dose"
+            elif len(schedule_times) == 1:
+                label = "Daily dose"
+            cur.execute(
+                """INSERT INTO protocol_schedules (protocol_id, dose_time, dose_days, label)
+                   VALUES (%s, %s, %s, %s)""",
+                (protocol_id, t, dose_days, label)
+            )
+
+        # 3. Generate today's scheduled doses
+        _generate_doses_for_date(cur, protocol_id, user_id, today, dose_days, schedule_times)
+
+    protocol["cycle_total"] = cycle_weeks * 7
+    protocol["schedules"] = get_schedules(protocol_id)
+    return protocol
+
+
+# --- Daily dose generation ---
+
+def generate_daily_doses(user_id: int, target_date: date = None):
+    """Generate scheduled_doses rows for target_date. Idempotent (UNIQUE constraint)."""
+    if target_date is None:
+        target_date = date.today()
+
+    protocols = get_active_protocols(user_id)
+    if not protocols:
+        return
+
+    with get_cursor() as cur:
+        for p in protocols:
+            # Skip if outside cycle window
+            if p.get("cycle_start") and target_date < p["cycle_start"]:
+                continue
+            if p.get("cycle_end") and target_date > p["cycle_end"]:
+                continue
+
+            schedules = get_schedules(p["id"])
+            if not schedules:
+                continue
+
+            weekday_iso = target_date.isoweekday()  # 1=Mon..7=Sun
+
+            for sched in schedules:
+                dose_days = sched.get("dose_days") or [1, 2, 3, 4, 5, 6, 7]
+                if weekday_iso not in dose_days:
+                    continue
+
+                dose_time = sched["dose_time"]
+                try:
+                    cur.execute(
+                        """INSERT INTO scheduled_doses
+                           (protocol_id, user_id, scheduled_date, scheduled_time)
+                           VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (protocol_id, scheduled_date, scheduled_time) DO NOTHING""",
+                        (p["id"], user_id, target_date, dose_time)
+                    )
+                except Exception as e:
+                    logger.debug(f"Dose generation skip: {e}")
+
+
+def _generate_doses_for_date(cur, protocol_id, user_id, target_date, dose_days, schedule_times):
+    """Internal: generate doses for a specific date (within existing cursor/transaction)."""
+    weekday_iso = target_date.isoweekday()
+    if weekday_iso not in dose_days:
+        return
+    for t in schedule_times:
+        try:
+            cur.execute(
+                """INSERT INTO scheduled_doses
+                   (protocol_id, user_id, scheduled_date, scheduled_time)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (protocol_id, scheduled_date, scheduled_time) DO NOTHING""",
+                (protocol_id, user_id, target_date, t)
+            )
+        except Exception:
+            pass
+
+
+# --- Dose status management ---
+
+def get_todays_scheduled_doses(user_id: int) -> list:
+    """Get today's scheduled doses with protocol info, ordered by time."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT sd.*, pp.peptide_name, pp.dose_amount, pp.dose_unit, pp.route
+               FROM scheduled_doses sd
+               JOIN peptide_protocols pp ON sd.protocol_id = pp.id
+               WHERE sd.user_id = %s AND sd.scheduled_date = CURRENT_DATE
+               ORDER BY sd.scheduled_time""",
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_pending_doses(user_id: int) -> list:
+    """Get today's doses that are still pending."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT sd.*, pp.peptide_name, pp.dose_amount, pp.dose_unit, pp.route
+               FROM scheduled_doses sd
+               JOIN peptide_protocols pp ON sd.protocol_id = pp.id
+               WHERE sd.user_id = %s AND sd.scheduled_date = CURRENT_DATE
+                 AND sd.status = 'pending'
+               ORDER BY sd.scheduled_time""",
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_pending_doses_in_window(user_id: int, current_time, window_minutes: int = 30) -> list:
+    """Get pending doses within ±window_minutes of current_time."""
+    from datetime import time as dt_time, datetime as dt, timedelta as td
+    if isinstance(current_time, dt):
+        current_time = current_time.time()
+
+    # Calculate window boundaries
+    now_dt = dt.combine(date.today(), current_time)
+    window_start = (now_dt - td(minutes=window_minutes)).time()
+    window_end = (now_dt + td(minutes=window_minutes)).time()
+
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT sd.*, pp.peptide_name, pp.dose_amount, pp.dose_unit, pp.route
+               FROM scheduled_doses sd
+               JOIN peptide_protocols pp ON sd.protocol_id = pp.id
+               WHERE sd.user_id = %s AND sd.scheduled_date = CURRENT_DATE
+                 AND sd.status = 'pending'
+                 AND sd.scheduled_time BETWEEN %s AND %s
+               ORDER BY sd.scheduled_time""",
+            (user_id, window_start, window_end)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def mark_dose_taken(scheduled_dose_id: int, user_id: int,
+                    site: str = None, notes: str = None) -> dict:
+    """Mark a scheduled dose as taken. Creates peptide_logs entry and updates scheduled_doses."""
+    with get_cursor() as cur:
+        # Get the scheduled dose info
+        cur.execute(
+            "SELECT * FROM scheduled_doses WHERE id = %s AND user_id = %s",
+            (scheduled_dose_id, user_id)
+        )
+        sd = cur.fetchone()
+        if not sd:
+            return None
+        sd = dict(sd)
+
+        if sd["status"] != "pending":
+            return sd  # Already handled
+
+        # Get protocol for dose amount
+        cur.execute(
+            "SELECT * FROM peptide_protocols WHERE id = %s",
+            (sd["protocol_id"],)
+        )
+        protocol = dict(cur.fetchone())
+
+        # 1. Create actual dose log
+        cur.execute(
+            """INSERT INTO peptide_logs (protocol_id, user_id, dose_amount, site, notes)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (sd["protocol_id"], user_id, protocol.get("dose_amount"), site, notes)
+        )
+        log_id = cur.fetchone()["id"]
+
+        # 2. Update scheduled dose
+        cur.execute(
+            """UPDATE scheduled_doses
+               SET status = 'taken', log_id = %s, responded_at = NOW()
+               WHERE id = %s""",
+            (log_id, scheduled_dose_id)
+        )
+
+        sd["status"] = "taken"
+        sd["log_id"] = log_id
+        sd["peptide_name"] = protocol["peptide_name"]
+        return sd
+
+
+def mark_dose_skipped(scheduled_dose_id: int, user_id: int) -> dict:
+    """Mark a scheduled dose as skipped."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE scheduled_doses SET status = 'skipped', responded_at = NOW()
+               WHERE id = %s AND user_id = %s RETURNING *""",
+            (scheduled_dose_id, user_id)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def mark_overdue_doses_missed(user_id: int) -> int:
+    """Mark pending doses from previous days as missed. Returns count."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE scheduled_doses SET status = 'missed', responded_at = NOW()
+               WHERE user_id = %s AND status = 'pending'
+                 AND scheduled_date < CURRENT_DATE
+               RETURNING id""",
+            (user_id,)
+        )
+        return len(cur.fetchall())
+
+
+def set_dose_reminder_message_id(scheduled_dose_id: int, message_id: int):
+    """Store the Telegram message_id for in-place card editing."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE scheduled_doses SET reminder_message_id = %s WHERE id = %s",
+            (message_id, scheduled_dose_id)
+        )
+
+
+# --- Adherence calculations ---
+
+def get_adherence(protocol_id: int, days: int = 7) -> dict:
+    """Calculate adherence for a protocol over the last N days."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT status, COUNT(*) as c
+               FROM scheduled_doses
+               WHERE protocol_id = %s
+                 AND scheduled_date >= CURRENT_DATE - %s
+                 AND scheduled_date <= CURRENT_DATE
+               GROUP BY status""",
+            (protocol_id, days)
+        )
+        counts = {row["status"]: row["c"] for row in cur.fetchall()}
+
+    taken = counts.get("taken", 0)
+    skipped = counts.get("skipped", 0)
+    missed = counts.get("missed", 0)
+    pending = counts.get("pending", 0)
+    total = taken + skipped + missed + pending
+    rate = round(taken / total * 100) if total > 0 else 0
+
+    # Streak: consecutive days where ALL doses were taken
+    streak = _calc_adherence_streak(protocol_id)
+
+    return {
+        "total_expected": total,
+        "taken": taken,
+        "skipped": skipped,
+        "missed": missed,
+        "pending": pending,
+        "rate": rate,
+        "streak": streak,
+    }
+
+
+def _calc_adherence_streak(protocol_id: int) -> int:
+    """Count consecutive days (backwards from yesterday) with 100% adherence."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT scheduled_date,
+                      COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE status = 'taken') as taken
+               FROM scheduled_doses
+               WHERE protocol_id = %s AND scheduled_date < CURRENT_DATE
+               GROUP BY scheduled_date
+               ORDER BY scheduled_date DESC
+               LIMIT 30""",
+            (protocol_id,)
+        )
+        streak = 0
+        for row in cur.fetchall():
+            if row["taken"] == row["total"]:
+                streak += 1
+            else:
+                break
+        return streak
+
+
+def get_daily_adherence(user_id: int, days: int = 7) -> list:
+    """Get day-by-day adherence for the 7-day visual across all protocols."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT scheduled_date,
+                      COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE status = 'taken') as taken
+               FROM scheduled_doses
+               WHERE user_id = %s
+                 AND scheduled_date >= CURRENT_DATE - %s
+                 AND scheduled_date <= CURRENT_DATE
+               GROUP BY scheduled_date
+               ORDER BY scheduled_date""",
+            (user_id, days)
+        )
+        results = []
+        for row in cur.fetchall():
+            total = row["total"]
+            taken = row["taken"]
+            if total == 0:
+                status = "none"
+            elif taken == total:
+                status = "full"
+            elif taken > 0:
+                status = "partial"
+            else:
+                status = "missed"
+            results.append({
+                "date": row["scheduled_date"],
+                "total": total,
+                "taken": taken,
+                "status": status,
+            })
+        return results
+
+
+def get_protocol_adherence(protocol_id: int, days: int = 7) -> list:
+    """Day-by-day adherence for a single protocol (for dashboard visual)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT scheduled_date,
+                      COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE status = 'taken') as taken
+               FROM scheduled_doses
+               WHERE protocol_id = %s
+                 AND scheduled_date >= CURRENT_DATE - %s
+                 AND scheduled_date <= CURRENT_DATE
+               GROUP BY scheduled_date
+               ORDER BY scheduled_date""",
+            (protocol_id, days)
+        )
+        results = []
+        for row in cur.fetchall():
+            total = row["total"]
+            taken = row["taken"]
+            if taken == total:
+                status = "full"
+            elif taken > 0:
+                status = "partial"
+            else:
+                status = "missed"
+            results.append({
+                "date": row["scheduled_date"],
+                "total": total,
+                "taken": taken,
+                "status": status,
+            })
+        return results

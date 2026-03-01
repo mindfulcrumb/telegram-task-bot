@@ -532,32 +532,33 @@ async def cmd_gains(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_protocols(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /protocols command — show active peptide protocols."""
+    """Handle /protocols command — show interactive protocol dashboard."""
     user = await _get_user(update, context)
     if not user:
         return
-    from bot.services import biohacking_service
-    protocols = biohacking_service.get_protocol_summary(user["id"])
-    if not protocols:
-        await update.message.reply_text(
-            "No active protocols.\n\n"
-            "Just tell me naturally to start one:\n"
-            '"Starting BPC-157, 250mcg twice a day for 6 weeks"'
-        )
-        return
-    lines = ["Your protocols:\n"]
-    for p in protocols:
-        dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
-        freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
-        line = f"{p['peptide_name']}: {dose_str}{freq_str}"
-        if p.get("cycle_day") is not None:
-            line += f"\n  Day {p['cycle_day']}/{p['cycle_total']}"
-            if p.get("days_remaining") is not None:
-                line += f" ({p['days_remaining']}d remaining)"
-        line += f"\n  Doses (7d): {p.get('doses_last_7d', 0)}"
-        lines.append(line)
-    await typing_pause(update.message.chat, 0.8)
-    await update.message.reply_text("\n\n".join(lines))
+    try:
+        from bot.handlers.protocol_cards import send_protocol_dashboard
+        await send_protocol_dashboard(update.message.chat, context, user["id"])
+    except Exception as e:
+        logger.error(f"Protocol dashboard failed: {e}")
+        # Fallback to plain text
+        from bot.services import biohacking_service
+        protocols = biohacking_service.get_protocol_summary(user["id"])
+        if not protocols:
+            await update.message.reply_text(
+                "No active protocols. Tell me to start one or say \"start a protocol.\""
+            )
+            return
+        lines = ["Your protocols:\n"]
+        for p in protocols:
+            dose_str = f"{p.get('dose_amount', '?')} {p.get('dose_unit', 'mcg')}" if p.get("dose_amount") else ""
+            freq_str = f" {p.get('frequency', '')}" if p.get("frequency") else ""
+            line = f"{p['peptide_name']}: {dose_str}{freq_str}"
+            if p.get("cycle_day") is not None:
+                line += f"\n  Day {p['cycle_day']}/{p['cycle_total']}"
+            line += f"\n  Doses (7d): {p.get('doses_last_7d', 0)}"
+            lines.append(line)
+        await update.message.reply_text("\n\n".join(lines))
 
 
 async def cmd_supplements(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -664,11 +665,17 @@ async def cmd_dose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(context.args) if context.args else ""
     if not text:
+        # Show quick dose buttons for active protocols
+        try:
+            from bot.handlers.protocol_cards import send_quick_dose_buttons
+            sent = await send_quick_dose_buttons(update.message.chat, context, user["id"])
+            if sent:
+                return
+        except Exception as e:
+            logger.warning(f"Quick dose buttons failed: {e}")
         await update.message.reply_text(
-            "Which one?\n\n"
-            "/dose BPC-157\n"
-            "/dose Ipamorelin abdomen\n\n"
-            "Or just say \"took my BPC.\""
+            "No active protocols to dose.\n\n"
+            "Say \"start a protocol\" to set one up."
         )
         return
     # Check AI limit before calling brain
@@ -1164,6 +1171,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # Protocol wizard text input (custom name, dose, or cycle length)
+    pw_state = context.user_data.get("pw")
+    if pw_state and pw_state.get("awaiting"):
+        try:
+            from bot.handlers.protocol_cards import handle_wizard_text_input
+            handled = await handle_wizard_text_input(update, context, text)
+            if handled:
+                return
+        except Exception as e:
+            logger.warning(f"Wizard text input failed: {e}")
+
     try:
         # URL detection — extract content from links and prepend as context
         urls = []
@@ -1296,6 +1314,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Workout's ready but the cards didn't load. Try /wtest to pull them up.")
         else:
             logger.info(f"WORKOUT CARDS: no pending session for user {user['id']}")
+
+        # Check for pending protocol wizard
+        pending_wizard_hint = ai_brain._pending_protocol_wizard.pop(user["id"], None)
+        if pending_wizard_hint is not None:
+            try:
+                from bot.handlers.protocol_cards import start_protocol_wizard
+                await start_protocol_wizard(update.message.chat, context, peptide_hint=pending_wizard_hint or None)
+                logger.info(f"PROTOCOL WIZARD: launched for user {user['id']}, hint={pending_wizard_hint}")
+            except Exception as e:
+                logger.error(f"PROTOCOL WIZARD: failed to launch: {e}", exc_info=True)
+
+        # Check for pending protocol dashboard
+        pending_dashboard = ai_brain._pending_protocol_dashboard.pop(user["id"], None)
+        if pending_dashboard:
+            try:
+                from bot.handlers.protocol_cards import send_protocol_dashboard
+                await send_protocol_dashboard(update.message.chat, context, user["id"])
+                logger.info(f"PROTOCOL DASHBOARD: sent for user {user['id']}")
+            except Exception as e:
+                logger.error(f"PROTOCOL DASHBOARD: failed to send: {e}", exc_info=True)
 
     except Exception as e:
         import traceback

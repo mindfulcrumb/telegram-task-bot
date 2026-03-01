@@ -91,6 +91,10 @@ class AIBrain:
         # Tracks pending interactive sessions: user_id -> session_id
         # Set during tool execution, consumed by handler after process() returns
         self._pending_session = {}
+        # Tracks pending protocol wizard launches: user_id -> peptide_hint
+        self._pending_protocol_wizard = {}
+        # Tracks pending protocol dashboard sends: user_id -> True
+        self._pending_protocol_dashboard = {}
         # Cached static prompt — built once, reused for every request
         self._static_prompt = None
         # Set to True when process() hits the paywall (AI message limit)
@@ -596,7 +600,7 @@ CRITICAL PEPTIDE DISTINCTION — DO NOT CONFUSE THESE:
 These are THREE DIFFERENT compounds. Always use the EXACT name the user tells you. If you're unsure which one they're on, CHECK YOUR MEMORIES or ASK. Never assume one when they said another.
 
 COMMON ABBREVIATIONS — recognize these instantly:
-- "Reta" / "reta" = Retatrutide (NOT Semaglutide, NOT Tirzepatide)
+- "Reta" / "reta" / "retatutride" / "retatutide" = Retatrutide (NOT Semaglutide, NOT Tirzepatide)
 - "Sema" = Semaglutide
 - "Tirz" = Tirzepatide
 - "BPC" = BPC-157
@@ -606,6 +610,7 @@ COMMON ABBREVIATIONS — recognize these instantly:
 - "HGH" / "GH" = Growth Hormone (Somatropin)
 - "NAD" / "NAD+" = NAD+ (subcutaneous)
 When a user uses an abbreviation for a compound you've ALREADY DISCUSSED with them, connect the dots immediately. Never ask "what's Reta?" if they've been talking about Retatrutide for the last 10 messages.
+CRITICAL BUG TO AVOID: If a user corrects you about which compound they're on (e.g., "I'm on Retatrutide, not Semaglutide"), you MUST also update any tasks/reminders that reference the wrong name. Don't just acknowledge the correction — FIX the data. Call edit_task to rename any affected task.
 
 PEPTIDE NAME ACCURACY — ZERO TOLERANCE FOR CONFUSION:
 Before EVERY response that mentions a peptide compound, CHECK:
@@ -618,8 +623,23 @@ PEPTIDE COACHING:
 - Track cycle progress: "Day 18 of 42 on BPC-157 — feeling any difference?" (NEVER mention a body part or condition the user hasn't told you about. Only reference what's in your MEMORY.)
 - Monitor adherence: missed dose = no double-up, just continue
 - Cycle management: alert when cycle ends soon
-- Timing: GH peptides on empty stomach. BPC-157 close to injury site. Evening for sleep peptides. GLP-1 agonists weekly on same day.
 - Side effects: water retention on GH peptides, nausea on GLP-1 agonists (semaglutide/retatrutide/tirzepatide), injection site reactions
+
+PEPTIDE TIMING — CRITICAL (proactively remind users about this):
+- HGH / GH peptides: MUST be taken on EMPTY STOMACH. Minimum 2 hours fasted before injection AND 30-60 min after before eating. Food (especially carbs/sugar) blunts GH release by spiking insulin. If user mentions eating soon after HGH, FLAG IT: "Heads up — eating right after HGH reduces its effectiveness. Try to wait 30-60 min before food."
+- GLP-1 agonists (Semaglutide, Retatrutide, Tirzepatide): Take on empty stomach or anytime, but food doesn't affect absorption. HOWEVER, eating large meals right after injection can worsen nausea.
+- BPC-157: Can be taken with or without food. Best injected close to injury/target site. For gut healing, take orally on empty stomach.
+- Ipamorelin / CJC-1295: EMPTY STOMACH required. Same 2-hour fasting rule as HGH. Best before bed (amplifies natural GH pulse during sleep).
+- TB-500: No fasting requirement. Can be taken anytime.
+- NAD+ (subcutaneous): Best on empty stomach for absorption. Morning dosing preferred.
+- DSIP: Before bed, no food requirement.
+- WHEN USER LOGS FOOD NEAR PEPTIDE TIMING: If user mentions eating within 1 hour of taking HGH, Ipamorelin, or other GH-related peptides, gently remind them about the fasting window. Don't nag every time — remind once, save to memory, then only mention if they repeatedly do it.
+
+DOSE CHANGE SAFETY:
+- NEVER recommend increasing or decreasing a peptide dose. You are not a prescriber.
+- If asked "should I increase my dose?", say something like: "That's a call for your provider. What I can tell you is [how you're tolerating current dose / what side effects you're reporting / what your bloodwork shows]."
+- You CAN share clinical trial dosing ranges for educational context: "Retatrutide trials used 1-12mg weekly, most titrating every 4 weeks."
+- Frame it as information, not a recommendation. Let the user decide with their provider.
 
 SUPPLEMENT KNOWLEDGE:
 - Creatine monohydrate: 3-5g daily, no cycling. Strength, recovery, cognitive.
@@ -793,17 +813,20 @@ MICRONUTRIENT AWARENESS (9 tracked: Vit D, Mg, Zinc, Iron, B12, Potassium, Vit C
 - Sodium over 2300mg: mention once, don't nag.
 
 BIOHACKING TOOL USE:
-- "Starting BPC-157, 250mcg twice a day for 6 weeks" -> manage_peptide_protocol action=add with dose, frequency, cycle dates
+- "Start a protocol" / "add a peptide" / "set up BPC-157" / "new protocol" -> start_protocol_wizard (with peptide_hint if they named one). This launches an interactive card wizard. Keep your text to 1-2 lines — the card does the heavy lifting.
+- "Starting BPC-157, 250mcg twice a day for 6 weeks" (ALL details in one message) -> you MAY use manage_peptide_protocol action=add directly, but prefer start_protocol_wizard for better UX.
 - "Stopping my TB-500" / "done with Ipamorelin cycle" -> manage_peptide_protocol action=end
 - "Took my BPC" / "just pinned" / "did my dose" -> log_peptide_dose with peptide name
+- "How are my protocols?" / "show my protocols" / "protocol status" -> get_protocol_dashboard. This sends an interactive dashboard card. Keep your text to 1-2 lines.
 - "I take creatine 5g daily" / "adding magnesium to my stack" -> manage_supplement action=add
 - "Dropping ashwagandha" -> manage_supplement action=remove
 - "Took my supplements" / "had my creatine" -> log_supplement_taken. Use "all" for full stack.
 - "My testosterone came back at 650" / sharing lab results -> log_bloodwork with markers array
-- "What peptides am I on?" / "how's my protocol going?" -> get_biohacking_context
+- "What peptides am I on?" / general biohacking questions -> get_biohacking_context
 - "Show my bloodwork" / "what were my last labs?" -> get_biohacking_context
 - Batch multiple biomarker values into one log_bloodwork call
 - Infer test_date as today if not specified
+- CRITICAL: When you call start_protocol_wizard or get_protocol_dashboard, you MUST include a short text response too. The user will see your text, then the interactive card below it. If you call these tools WITHOUT text, the user sees blank chat.
 
 WHOOP TOOL USE:
 - "What's my recovery?" / "how should I train?" (when WHOOP connected) -> call get_whoop_status, then give ONE short recommendation (2-3 lines max)
@@ -857,6 +880,8 @@ You CAN do all of these things. NEVER say "I can't" for any of them:
 - Log and analyze bloodwork from photos/PDFs (Claude Vision)
 - Recognize food photos, estimate macros, log meals, suggest recipes from food images
 - Track peptide protocols, supplements, and doses
+- Launch interactive protocol wizard for guided peptide setup (start_protocol_wizard tool)
+- Show interactive protocol dashboard with progress, adherence, and quick dose buttons (get_protocol_dashboard tool)
 - Program interactive workout sessions with set tracking and rest timers
 - Send proactive morning briefings and evening check-ins — you CAN message users first
 - Remember facts about the user across conversations (memory system)
@@ -976,6 +1001,15 @@ BRAND VOICE — THE NON-NEGOTIABLE RULES:
 - SHORT = SMART. The best coaches say more with less.
 - When in doubt, be shorter. When still in doubt, cut another sentence.
 - Your personality comes from WHAT you say (data-driven, specific, opinionated), not HOW you decorate it (emojis, exclamation marks, formatting).
+
+FEATURE DISCOVERY — HELPING USERS LEARN WHAT YOU CAN DO:
+Sometimes the dynamic context will include a FEATURE DISCOVERY hint about something the user hasn't tried yet. Rules for using these:
+1. ONLY mention the hint if it genuinely connects to what the user is talking about right now. If they're discussing training and the hint is about meal photos — that's a natural bridge. If they're asking about a task and the hint is about bloodwork — skip it.
+2. Drop it as a passing mention, not a pitch. Good: "btw if something's bugging you after that session, tell me and I'll look at it." Bad: "Did you know I can also track your pain and mobility?"
+3. Put it at the END of your real answer, never before. Handle their actual request first.
+4. Maximum one short sentence. No exclamation marks. Casual tone — "oh and" / "btw" / "also".
+5. Never say "did you know" or "I can also" — those sound like a chatbot feature list. Just mention it naturally as if you're reminding a friend.
+6. If the hint doesn't fit this conversation at all, IGNORE IT COMPLETELY. Forcing a hint is worse than no hint.
 
 Be Zoe. Thoughtful, clear, human. Not corporate. Not generic. An expert coach who genuinely knows them — because you remember everything."""
 
@@ -1125,6 +1159,9 @@ COACHING STYLE:
         # Knowledge base awareness
         kb_section = self._build_kb_awareness_section()
 
+        # Feature discovery hints (subtle guidance about unused capabilities)
+        discovery_section = self._build_discovery_section(user)
+
         # First-time user awareness
         first_time_section = ""
         if not task_lines and not coaching_section:
@@ -1146,7 +1183,7 @@ This user just started. No tasks, no workout history, no data yet.
 {coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
-{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{first_time_section}"""
+{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{discovery_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""
@@ -1651,6 +1688,196 @@ TASKS:
         except Exception:
             return ""
 
+    def _build_discovery_section(self, user: dict) -> str:
+        """Build feature discovery hints — subtle guidance about unused capabilities.
+
+        Checks what the user has actually used vs what's available.
+        Returns ONE contextual hint for the AI to optionally weave into conversation.
+        Throttled: max 1 hint per day, never on first 5 messages, max 3 per week.
+        """
+        try:
+            from bot.db.database import get_cursor
+            user_id = user.get("id", 0)
+
+            # --- Throttle check ---
+            with get_cursor() as cur:
+                # Skip if a hint was already offered today
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM hint_log
+                    WHERE user_id = %s
+                      AND shown_at > NOW() - INTERVAL '1 day'
+                """, (user_id,))
+                if cur.fetchone()["c"] > 0:
+                    return ""
+
+                # Skip if 3+ hints this week
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM hint_log
+                    WHERE user_id = %s
+                      AND shown_at > NOW() - INTERVAL '7 days'
+                """, (user_id,))
+                if cur.fetchone()["c"] >= 3:
+                    return ""
+
+                # Skip if user has fewer than 5 total messages (still settling in)
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM conversations
+                    WHERE user_id = %s AND role = 'user'
+                """, (user_id,))
+                if cur.fetchone()["c"] < 5:
+                    return ""
+
+                # --- Detect what the user has NOT used ---
+                unused = []
+
+                # Voice notes — check if any voice transcription exists in usage
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM usage
+                    WHERE user_id = %s AND action = 'voice_message'
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("voice notes (they can send voice messages and you'll understand them)")
+
+                # WHOOP
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM whoop_tokens
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("WHOOP integration (connect via /connect_whoop for recovery-based training)")
+
+                # Interactive workout sessions
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM workout_sessions
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    # Only suggest if they have a fitness profile
+                    cur.execute("""
+                        SELECT COUNT(*) as c FROM fitness_profiles
+                        WHERE user_id = %s
+                    """, (user_id,))
+                    if cur.fetchone()["c"] > 0:
+                        unused.append("interactive workout cards (you can load exercises with rest timers — just prescribe a session)")
+
+                # Meal photo logging (photos get logged with photo_analysis set)
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM meal_logs
+                    WHERE user_id = %s AND photo_analysis IS NOT NULL
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("meal photo analysis (they can snap a photo of food and you'll break down macros and micros)")
+
+                # Habits
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM habits
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("habit tracking (daily habits like meditation, cold plunge, journaling)")
+
+                # Expenses
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM expenses
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("expense tracking (they can tell you what they spent and you'll track it)")
+
+                # Google Workspace
+                try:
+                    from bot.services import google_auth
+                    if not google_auth.is_connected(user_id):
+                        unused.append("Google Workspace (calendar, Gmail, Drive — connect via /google)")
+                except Exception:
+                    pass
+
+                # Pain/mobility
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM pain_reports
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    # Only relevant if they train
+                    cur.execute("""
+                        SELECT COUNT(*) as c FROM workouts
+                        WHERE user_id = %s
+                    """, (user_id,))
+                    if cur.fetchone()["c"] > 0:
+                        unused.append("pain/mobility tracking (if something hurts, you can assess it and adjust their programming)")
+
+                # Bloodwork
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM bloodwork
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("bloodwork tracking (they can send lab photos and you'll track biomarkers over time)")
+
+                # URL summarizer
+                cur.execute("""
+                    SELECT COUNT(*) as c FROM url_summaries
+                    WHERE user_id = %s
+                """, (user_id,))
+                if cur.fetchone()["c"] == 0:
+                    unused.append("link summarization (they can send any URL and you'll summarize it)")
+
+                if not unused:
+                    return ""  # Power user — they've tried everything
+
+                # Pick which hints haven't been shown yet
+                cur.execute("""
+                    SELECT hint_key FROM hint_log
+                    WHERE user_id = %s
+                """, (user_id,))
+                shown_keys = {row["hint_key"] for row in cur.fetchall()}
+
+                # Map unused features to hint keys for dedup
+                hint_map = {
+                    "voice notes": "voice",
+                    "WHOOP integration": "whoop",
+                    "interactive workout cards": "workout_cards",
+                    "meal photo analysis": "meal_photo",
+                    "habit tracking": "habits",
+                    "expense tracking": "expenses",
+                    "Google Workspace": "google",
+                    "pain/mobility tracking": "pain",
+                    "bloodwork tracking": "bloodwork",
+                    "link summarization": "url",
+                }
+
+                # Filter to hints not yet shown
+                fresh_hints = []
+                for desc in unused:
+                    key = None
+                    for prefix, k in hint_map.items():
+                        if desc.startswith(prefix):
+                            key = k
+                            break
+                    if key and key not in shown_keys:
+                        fresh_hints.append((key, desc))
+
+                if not fresh_hints:
+                    return ""  # All hints already shown at some point
+
+                # Pick the first fresh hint (order is intentional — most impactful first)
+                hint_key, hint_desc = fresh_hints[0]
+
+                # Record that we offered this hint
+                cur.execute("""
+                    INSERT INTO hint_log (user_id, hint_key)
+                    VALUES (%s, %s)
+                """, (user_id, hint_key))
+
+            return f"""
+FEATURE DISCOVERY (use ONLY if naturally relevant to this conversation):
+The user hasn't tried: {hint_desc}
+If it fits the conversation naturally, mention it in passing — one short sentence max, as a "btw" or "oh and". Not a sales pitch. Not every time. Only when it genuinely connects to what they're talking about. If it doesn't fit, skip it entirely.
+"""
+        except Exception as e:
+            logger.debug(f"Discovery section skipped: {type(e).__name__}: {e}")
+            return ""
+
     async def _extract_memories(self, user_id: int, user_input: str, ai_response: str):
         """Post-conversation memory extraction — runs automatically after every exchange.
 
@@ -1974,6 +2201,16 @@ JSON:"""
                     if isinstance(result, dict) and result.get("_interactive_session"):
                         self._pending_session[user_id] = result["session_id"]
                         logger.info(f"WORKOUT CARDS: _pending_session[{user_id}] = {result['session_id']}")
+
+                    # Detect interactive protocol wizard launch
+                    if isinstance(result, dict) and result.get("_interactive_protocol_wizard"):
+                        self._pending_protocol_wizard[user_id] = result.get("_peptide_hint")
+                        logger.info(f"PROTOCOL WIZARD: _pending_protocol_wizard[{user_id}] = {result.get('_peptide_hint')}")
+
+                    # Detect interactive protocol dashboard
+                    if isinstance(result, dict) and result.get("_interactive_protocol_dashboard"):
+                        self._pending_protocol_dashboard[user_id] = True
+                        logger.info(f"PROTOCOL DASHBOARD: _pending_protocol_dashboard[{user_id}] = True")
 
                     tool_results.append({
                         "type": "tool_result",
