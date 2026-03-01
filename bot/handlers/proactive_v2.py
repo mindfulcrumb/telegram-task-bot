@@ -829,6 +829,79 @@ async def gmail_check_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Gmail check failed for user {user.get('id')}: {e}")
 
 
+# --- Pain / Mobility Follow-Up ---
+
+async def pain_followup_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 6 hours. Follows up on active pain reports after 3+ days."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+            # Only check during reasonable hours (9am-9pm)
+            if now_user.hour < 9 or now_user.hour > 21:
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "pain_followup"):
+                continue
+
+            # Check for active pain reports 3+ days old
+            try:
+                from bot.db.database import get_cursor
+                with get_cursor() as cur:
+                    cur.execute(
+                        """SELECT id, location, severity, pain_type,
+                                  upstream_cause, prescription,
+                                  created_at
+                           FROM pain_reports
+                           WHERE user_id = %s AND status = 'active'
+                             AND created_at < NOW() - INTERVAL '3 days'
+                           ORDER BY severity DESC LIMIT 3""",
+                        (user["id"],)
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        continue
+                    cols = [d[0] for d in cur.description]
+                    reports = [dict(zip(cols, r)) for r in rows]
+            except Exception:
+                continue
+
+            name = user.get("first_name", "friend")
+            if len(reports) == 1:
+                r = reports[0]
+                loc = r["location"]
+                days_ago = (datetime.now() - r["created_at"]).days if r.get("created_at") else 3
+                text = (
+                    f"Hey {name}, checking in on that {loc} pain you reported "
+                    f"{days_ago} days ago. How's it feeling?\n\n"
+                )
+                if r.get("prescription"):
+                    text += f"Have you been doing the mobility work? ({r['prescription'][:80]}...)\n\n"
+                text += "If it's better, say 'resolved'. If it's the same or worse, let me know."
+            else:
+                locations = [r["location"] for r in reports]
+                text = (
+                    f"Hey {name}, you've got {len(reports)} active pain reports "
+                    f"({', '.join(locations)}). Quick check-in — how are they feeling?\n\n"
+                    "Tell me what's improved and I'll mark it resolved."
+                )
+
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
+            await context.bot.send_message(
+                chat_id=user["telegram_user_id"],
+                text=text,
+            )
+            coaching_service.record_nudge(user["id"], 0, "pain_followup")
+            logger.info(f"Pain follow-up sent to user {user['id']} ({len(reports)} reports)")
+
+        except Exception as e:
+            logger.error(f"Pain follow-up failed for user {user.get('id')}: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -880,7 +953,10 @@ def setup_proactive_jobs(application):
     # Gmail new email alerts: every 2 minutes
     jq.run_repeating(gmail_check_job, interval=120, first=90, name="gmail_alerts")
 
-    logger.info("Proactive coaching jobs registered (15 jobs)")
+    # Pain/mobility follow-up: every 6 hours
+    jq.run_repeating(pain_followup_job, interval=21600, first=1200, name="pain_followup")
+
+    logger.info("Proactive coaching jobs registered (16 jobs)")
 
 
 # --- Helpers ---

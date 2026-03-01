@@ -821,6 +821,25 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS idx_usage_persistent_lookup
                 ON usage_persistent(telegram_user_id, action, usage_date);
+
+            -- Pain reports — tracks user pain for mobility coaching
+            CREATE TABLE IF NOT EXISTS pain_reports (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                location TEXT NOT NULL,
+                severity INTEGER CHECK (severity BETWEEN 1 AND 10),
+                pain_type TEXT,
+                triggers TEXT,
+                description TEXT,
+                onset TEXT,
+                status TEXT DEFAULT 'active',
+                upstream_cause TEXT,
+                prescription TEXT,
+                resolved_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_pain_reports_user
+                ON pain_reports(user_id, status, created_at);
         """)
     logger.info("PostgreSQL schema initialized")
 

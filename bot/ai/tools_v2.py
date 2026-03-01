@@ -731,6 +731,45 @@ def get_tool_definitions() -> list:
                 "properties": {}
             }
         },
+        # --- Pain / Mobility tools ---
+        {
+            "name": "report_pain",
+            "description": "Log a pain report when user mentions pain, discomfort, tightness, or injury. Returns upstream/downstream analysis and specific mobility prescription. Use when user says 'my knee hurts', 'back is tight', 'shoulder pain', etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Body area: knee, low_back, shoulder, neck, hip, ankle, elbow, wrist, thoracic_spine, foot"},
+                    "severity": {"type": "integer", "description": "Pain severity 1-10 (1=mild discomfort, 10=worst pain)"},
+                    "pain_type": {"type": "string", "enum": ["sharp", "dull", "aching", "burning", "stiffness", "tightness", "shooting", "throbbing"], "description": "Type of pain"},
+                    "triggers": {"type": "string", "description": "What triggers or worsens it (e.g. 'squatting', 'sitting for long time', 'overhead press')"},
+                    "description": {"type": "string", "description": "User's description of the pain"},
+                    "onset": {"type": "string", "enum": ["acute", "gradual", "chronic"], "description": "How it started: acute (sudden), gradual (over days/weeks), chronic (months+)"}
+                },
+                "required": ["location", "severity"]
+            }
+        },
+        {
+            "name": "get_pain_history",
+            "description": "Get user's pain history and active issues. Use when asking about previous injuries, pain patterns, or before programming a workout for someone with known issues.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["active", "resolved", "all"], "description": "Filter by status (default: active)"}
+                }
+            }
+        },
+        {
+            "name": "resolve_pain",
+            "description": "Mark a pain report as resolved. Use when user says pain is gone, feeling better, no more issues.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pain_id": {"type": "integer", "description": "ID of the pain report to resolve"},
+                    "notes": {"type": "string", "description": "Resolution notes (what helped, how long it took)"}
+                },
+                "required": ["pain_id"]
+            }
+        },
     ]
 
 
@@ -1892,6 +1931,112 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             except Exception:
                 pass
             return result
+
+        elif name == "report_pain":
+            from bot.db.database import get_cursor
+            location = args["location"]
+            severity = args["severity"]
+            pain_type = args.get("pain_type")
+            triggers = args.get("triggers")
+            description = args.get("description")
+            onset = args.get("onset")
+
+            # Upstream/downstream analysis based on joint-by-joint approach
+            upstream_map = {
+                "knee": {"upstream": "hip", "downstream": "ankle", "likely_cause": "Hip internal rotation deficit or ankle dorsiflexion restriction. Knee compensates with valgus/rotation it was not designed for."},
+                "low_back": {"upstream": "thoracic_spine", "downstream": "hip", "likely_cause": "Hip flexion/extension/rotation deficit or thoracic spine stiffness. Lumbar spine forced into excessive motion."},
+                "shoulder": {"upstream": "cervical_spine", "downstream": "thoracic_spine", "likely_cause": "Thoracic kyphosis preventing scapular upward rotation, or weak serratus anterior/lower trap causing impingement."},
+                "neck": {"upstream": "head_posture", "downstream": "thoracic_spine", "likely_cause": "Thoracic spine stiffness forcing cervical hyperextension, or anterior chain tightness (pec minor, SCM) pulling head forward."},
+                "hip": {"upstream": "lumbar_spine", "downstream": "knee", "likely_cause": "Core instability shifting load to hip, or foot/ankle dysfunction altering hip mechanics."},
+                "ankle": {"upstream": "knee", "downstream": "foot", "likely_cause": "Calf/soleus tightness or joint capsule restriction limiting dorsiflexion. Check foot arch stability."},
+                "elbow": {"upstream": "shoulder", "downstream": "wrist", "likely_cause": "Shoulder external rotation/rotator cuff weakness forcing forearm muscles to compensate. Address shoulder first."},
+                "wrist": {"upstream": "elbow", "downstream": "hand", "likely_cause": "Shoulder/elbow mobility deficit increasing wrist load. Also check forearm tissue quality."},
+                "thoracic_spine": {"upstream": "cervical_spine", "downstream": "lumbar_spine", "likely_cause": "Prolonged flexion posture (desk work). Adjacent joints compensate — both neck and low back take excessive load."},
+                "foot": {"upstream": "ankle", "downstream": "toes", "likely_cause": "Ankle mobility restriction or deep front line dysfunction. Inner arch collapse often a stability failure, not a flexibility issue."},
+            }
+
+            analysis = upstream_map.get(location, {"upstream": "unknown", "downstream": "unknown", "likely_cause": "Assess joints above and below the pain site."})
+
+            # Mobility prescriptions by location
+            prescriptions = {
+                "knee": "1. Banded ankle distraction 2min/side\n2. Wall ankle mobilization 3x30s/side\n3. 90/90 hip stretch 2min/side\n4. Hip CARs 10/side\n5. Single-leg glute bridge 3x12/side\nDo NOT push through knee pain during squats — reduce depth or switch to box squat.",
+                "low_back": "1. Couch stretch 3min/side (hip flexor release)\n2. T-spine foam roller extension 2min segment by segment\n3. Open book rotations 10/side with 3s hold\n4. Hip 90/90 transitions 10 total\n5. Dead bug 3x8/side (core activation)\n6. DNS 90/90 breathing 5min daily\nAvoid loaded spinal flexion until pain-free.",
+                "shoulder": "1. T-spine foam roller extension 2min\n2. Peanut on T-spine erectors 2min/segment\n3. Doorway pec stretch 30s x 3 positions/side\n4. Serratus wall slides 3x10\n5. Prone Y-T-W raises 3x8 each\n6. Side-lying external rotation 3x12/side\nAvoid overhead pressing until impingement clears.",
+                "neck": "1. T-spine foam roller upper segments 2min\n2. Chin tucks 3x15 with 5s hold\n3. Suboccipital release with tennis ball 2min\n4. Pec minor doorway stretch 2min/side\n5. Deep neck flexor activation 3x10 with 10s hold\n6. Thread the needle 10/side\nReduce screen time, check workstation ergonomics.",
+                "hip": "1. Couch stretch 3min/side\n2. Banded hip distraction lateral 2min/side\n3. 90/90 hip stretch with rotation 2min/side\n4. Pigeon stretch 2min/side\n5. Lacrosse ball on glute/piriformis 2min/side\n6. Glute bridge marching 3x10/side",
+                "ankle": "1. Banded ankle distraction 2min/side\n2. Wall ankle mobilization 2min/side\n3. Lacrosse ball on calf/soleus 2min/side\n4. Lacrosse ball on plantar fascia 2min/side\n5. Calf raises eccentric 3x15 (slow 3s lower)",
+                "elbow": "1. Banded shoulder external rotation 3x15/side\n2. Sleeper stretch 2min/side\n3. Lacrosse ball on infraspinatus 2min/side\n4. Eccentric wrist extensions 3x15 (3-5s lower)\n5. Forearm pronation/supination 3x10\nAddress shoulder mobility FIRST — elbow pain is usually downstream.",
+                "wrist": "1. Wrist flexor stretch 4x30s\n2. Wrist extensor stretch 4x30s\n3. Prayer/reverse prayer stretch 4x15s\n4. Finger extensions with band 3x15\n5. Wrist circles 10 each direction\nCheck shoulder and elbow mobility upstream.",
+                "thoracic_spine": "1. Foam roller T-spine extension 2min segment by segment\n2. Peanut on erectors 2min/segment\n3. Cat-cow isolating thoracic 15 reps\n4. Thread the needle 10/side\n5. Open book rotations 10/side\n6. Quadruped T-spine rotation 10/side\nAddress hourly if desk worker — movement snacks every 45min.",
+                "foot": "1. Lacrosse ball plantar fascia 2min/side\n2. Toe yoga (lift big toe, press others down, then reverse) 3x10\n3. Short foot exercise 3x10 (arch lift without curling toes)\n4. Calf raises 3x15 (barefoot, full ROM)\n5. Banded ankle distraction 2min/side",
+            }
+
+            rx = prescriptions.get(location, "Assess the area. Foam roll 2min, stretch 2min, activate 2x12. If pain persists 2+ weeks, see a physio.")
+
+            with get_cursor() as cur:
+                cur.execute(
+                    """INSERT INTO pain_reports (user_id, location, severity, pain_type, triggers, description, onset, upstream_cause, prescription)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                    (user_id, location, severity, pain_type, triggers, description, onset, analysis["likely_cause"], rx)
+                )
+                pain_id = cur.fetchone()[0]
+
+            return {
+                "pain_id": pain_id,
+                "location": location,
+                "severity": severity,
+                "analysis": {
+                    "likely_upstream_cause": analysis["likely_cause"],
+                    "check_upstream": analysis["upstream"],
+                    "check_downstream": analysis["downstream"],
+                },
+                "mobility_prescription": rx,
+                "training_modification": f"Avoid loading {location} at high intensity until severity drops below 3/10. Modify exercises to pain-free alternatives.",
+                "follow_up": "Reassess in 3-5 days. If no improvement or worsening, recommend seeing a physiotherapist.",
+            }
+
+        elif name == "get_pain_history":
+            from bot.db.database import get_cursor
+            status = args.get("status", "active")
+            with get_cursor() as cur:
+                if status == "all":
+                    cur.execute(
+                        """SELECT id, location, severity, pain_type, triggers, description, onset,
+                                  upstream_cause, prescription, status, created_at, resolved_at
+                           FROM pain_reports WHERE user_id = %s ORDER BY created_at DESC LIMIT 20""",
+                        (user_id,)
+                    )
+                else:
+                    cur.execute(
+                        """SELECT id, location, severity, pain_type, triggers, description, onset,
+                                  upstream_cause, prescription, status, created_at, resolved_at
+                           FROM pain_reports WHERE user_id = %s AND status = %s ORDER BY created_at DESC LIMIT 20""",
+                        (user_id, status)
+                    )
+                rows = cur.fetchall()
+                cols = [d[0] for d in cur.description]
+                reports = [dict(zip(cols, r)) for r in rows]
+                for r in reports:
+                    for k in ("created_at", "resolved_at"):
+                        if r.get(k) and hasattr(r[k], "isoformat"):
+                            r[k] = r[k].isoformat()
+            return {"pain_reports": reports, "count": len(reports)}
+
+        elif name == "resolve_pain":
+            from bot.db.database import get_cursor
+            pain_id = args["pain_id"]
+            notes = args.get("notes", "")
+            with get_cursor() as cur:
+                cur.execute(
+                    """UPDATE pain_reports SET status = 'resolved', resolved_at = NOW(),
+                              description = COALESCE(description, '') || %s
+                       WHERE id = %s AND user_id = %s RETURNING location, severity""",
+                    (f" | Resolution: {notes}" if notes else "", pain_id, user_id)
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {"error": "Pain report not found"}
+            return {"success": True, "pain_id": pain_id, "location": row[0], "resolved": True}
 
         else:
             return {"error": f"Unknown tool: {name}"}
