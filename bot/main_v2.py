@@ -58,6 +58,10 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self._handle_whoop_callback()
         elif self.path == "/whoop/debug":
             self._handle_whoop_debug()
+        elif self.path.startswith("/strava/callback"):
+            self._handle_strava_callback()
+        elif self.path.startswith("/strava/webhook"):
+            self._handle_strava_webhook_verify()
         elif self.path.startswith("/google/callback"):
             self._handle_google_callback()
         elif self.path.startswith("/timer"):
@@ -75,6 +79,8 @@ class _HealthCheck(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/whoop/webhook":
             self._handle_whoop_webhook()
+        elif self.path == "/strava/webhook":
+            self._handle_strava_webhook()
         else:
             self.send_response(404)
             self.end_headers()
@@ -542,6 +548,160 @@ class _HealthCheck(BaseHTTPRequestHandler):
 
         except Exception as e:
             logger.error(f"WHOOP webhook error: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+    def _handle_strava_callback(self):
+        """Handle Strava OAuth callback — exchange code for tokens."""
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            logger.info("Strava callback hit")
+
+            error = params.get("error", [None])[0]
+            if error:
+                logger.error(f"Strava OAuth error: {error}")
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Strava Authorization Failed</h1>"
+                    f"<p>Error: {html_mod.escape(str(error))}</p>"
+                    f"<p>Please try connecting Strava again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
+                return
+
+            code = params.get("code", [None])[0]
+            state = params.get("state", [None])[0]
+
+            if not code or not state:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing code or state parameter.")
+                return
+
+            # Validate CSRF state
+            from bot.services.google_auth import validate_oauth_state
+            user_id = validate_oauth_state(state)
+            if user_id is None:
+                logger.warning("Strava OAuth invalid/expired state")
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Invalid or expired authorization. Please try again in Telegram.")
+                return
+
+            from bot.services import strava_service
+            success, error_msg = strava_service.exchange_code(user_id, code)
+
+            if success:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    b"<h1>Strava Connected!</h1>"
+                    b"<p>You can close this window and go back to Telegram.</p>"
+                    b"<p>Zoe now has access to your running data, PRs, and training history.</p>"
+                    b"</body></html>"
+                )
+                self.wfile.flush()
+
+                # Sync recent activities after response
+                try:
+                    strava_service.sync_recent_activities(user_id, days=30)
+                except Exception:
+                    pass
+
+                # Send onboarding message in Telegram
+                try:
+                    from bot.services import user_service
+                    u = user_service.get_user_by_id(user_id)
+                    chat_id = u.get("telegram_id") if u else None
+                    if chat_id:
+                        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+                        msg = (
+                            "Strava is linked. Here's what I can do with it:\n\n"
+                            "Just ask me things like:\n"
+                            "\u2022 \"how's my running?\"\n"
+                            "\u2022 \"what are my PRs?\"\n"
+                            "\u2022 \"am I overtraining?\"\n"
+                            "\u2022 \"race predictions\"\n"
+                            "\u2022 \"show me my last run splits\"\n\n"
+                            "I'll use your actual Strava data to coach your running."
+                        )
+                        url = f"https://api.telegram.org/bot{token}/sendMessage"
+                        data = json.dumps({"chat_id": int(chat_id), "text": msg}).encode()
+                        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                        urllib.request.urlopen(req, timeout=10)
+                except Exception as e:
+                    logger.warning(f"Failed to send Strava onboarding message: {e}")
+            else:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Failed to connect Strava</h1>"
+                    f"<p>{html_mod.escape(str(error_msg))}</p>"
+                    f"<p>Please try connecting Strava again in Telegram.</p>"
+                    f"</body></html>".encode()
+                )
+
+        except Exception as e:
+            logger.error(f"Strava callback error: {type(e).__name__}")
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"Internal error during Strava connection")
+
+    def _handle_strava_webhook_verify(self):
+        """Handle Strava webhook subscription validation (GET request)."""
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            mode = params.get("hub.mode", [None])[0]
+            challenge = params.get("hub.challenge", [None])[0]
+            verify_token = params.get("hub.verify_token", [None])[0]
+
+            expected_token = os.environ.get("STRAVA_WEBHOOK_VERIFY_TOKEN", "zoe_strava_verify")
+            if mode == "subscribe" and verify_token == expected_token and challenge:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"hub.challenge": challenge}).encode())
+                logger.info("Strava webhook subscription validated")
+            else:
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Verification failed")
+        except Exception as e:
+            logger.error(f"Strava webhook verify error: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+    def _handle_strava_webhook(self):
+        """Handle Strava webhook events (activity create/update/delete, athlete deauth)."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 1_048_576:
+                self.send_response(413)
+                self.end_headers()
+                self.wfile.write(b"Payload too large")
+                return
+            body = self.rfile.read(content_length)
+
+            payload = json.loads(body) if body else {}
+
+            from bot.services import strava_service
+            strava_service.handle_webhook_event(payload)
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        except Exception as e:
+            logger.error(f"Strava webhook error: {e}")
             self.send_response(500)
             self.end_headers()
 

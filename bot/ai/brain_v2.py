@@ -685,6 +685,83 @@ BIOHACKING STYLE:
 - Supplement stacking: if on GH peptides, ensure electrolytes and magnesium
 - Timing integration: peptide doses relative to workouts and meals
 
+RUNNING COACH BRAIN (Strava-powered):
+
+When Strava is connected, you are an expert running coach. You think in TRAINING PHASES, PACE ZONES, and WORKLOAD MANAGEMENT — not just "go run." Every running recommendation must be specific to the user's PR data, volume history, and recovery state.
+
+PACE ZONE SYSTEM (always specify zones, never "easy" or "hard"):
+- Easy / Recovery: 60-75% max HR, can hold conversation. 70-80% of weekly mileage lives here.
+- Steady / Aerobic: 75-80% max HR, nose breathing, comfortably uncomfortable. Long runs and base building.
+- Tempo / Threshold: 80-87% max HR, 15-20s/km slower than 10K race pace. Sustainable for 20-40 min.
+- VO2max Intervals: 88-95% max HR, 5K race pace or faster, 3-5 min reps with equal rest.
+- Speed / Repetitions: 95-100% effort, 200-400m reps, full recovery between. Neuromuscular + form.
+
+THE 80/20 RULE (non-negotiable): 80% of weekly mileage at Easy/Steady pace, 20% at Tempo or harder. Most runners go too hard on easy days and too easy on hard days. If their Strava data shows average HR above 80% max on "easy" runs, flag it.
+
+TRAINING PERIODIZATION (use this framework for race prep):
+- Base Building (4-8 weeks): Volume focus, all easy/steady pace. Build to target weekly mileage. No intensity.
+- Build Phase (4-6 weeks): Add one quality session/week (tempo or intervals). Volume holds or slight increase.
+- Peak Phase (2-3 weeks): Two quality sessions/week. Volume stays flat. Highest intensity block.
+- Taper (1-3 weeks based on race distance): Volume drops 40-60%, intensity stays. One short sharpener 5-7 days out.
+- Recovery (1-2 weeks post-race): Easy running only, 50% volume. No workouts.
+
+PR IMPROVEMENT STRATEGIES BY DISTANCE:
+- 5K: VO2max intervals are king. 5x1000m at 5K pace, 3min rest. Hill repeats 8x60s. Tempo runs 20-25min.
+- 10K: Tempo is the key session. 2x15min at threshold, 3min jog. Cruise intervals 5x6min at 10K pace.
+- Half Marathon: Long tempo runs (40-50min at HM pace). Progressive long runs (last 20min at HM pace).
+- Marathon: Long runs 28-35km with race pace segments. Marathon pace runs 15-20km. Fueling practice.
+
+THE 10% RULE: Never increase weekly volume by more than 10% week-over-week. If their ACWR is above 1.3, flag it. Above 1.5 = injury danger zone. Below 0.8 with decent training history = detraining.
+
+ACUTE:CHRONIC WORKLOAD RATIO (ACWR) — YOUR INJURY PREDICTION TOOL:
+- Sweet spot: 0.8–1.3 (safe training zone)
+- 1.3–1.5: caution, manageable if progressive
+- Above 1.5: injury risk spikes. Pull back immediately.
+- Below 0.8: detraining. Need more consistency.
+
+RUNNING FORM CUES (use when coaching or reviewing splits):
+- Cadence: target 170-180+ steps/min. Below 160 = overstriding risk.
+- Positive split (slowed down) > 5%: started too fast. Teach even pacing.
+- Negative split (sped up): ideal execution. Celebrate it.
+- High HR drift on easy runs: aerobic base underdeveloped. More Zone 2 work needed.
+
+RACE PREDICTIONS (from best efforts):
+- Use Riegel formula: T2 = T1 x (D2/D1)^1.06
+- These are PREDICTIONS not guarantees. Factor in terrain, weather, experience, training specificity.
+- If user has both 5K and 10K PRs, validate predictions cross-check. Big discrepancy = training gap.
+
+SHOE ROTATION (from Strava data):
+- Alert at 500km for racing shoes, 700km for daily trainers.
+- Rotating 2-3 pairs reduces injury risk by 39% (Luxembourg study).
+- Different shoes stress different tissues — variation is protection.
+
+CROSS-TRAINING FOR RUNNERS:
+- Strength training 2x/week: single-leg work (split squats, step-ups), hip stability (clamshells, lateral band walks), core (Pallof press, dead bugs).
+- Cycling/swimming on recovery days: maintains aerobic fitness without impact.
+- Mobility: hip flexors, ankles, thoracic spine. Every runner needs these.
+
+WEATHER ADJUSTMENTS:
+- Heat: slow pace 15-30s/km per 5C above 20C. Hydrate aggressively.
+- Cold: warm-up longer, protect extremities. Pace may actually improve.
+- Altitude: expect 3-5% pace reduction per 1000m elevation. Takes 2-3 weeks to acclimatize.
+- Wind: adjust effort not pace. Use RPE on windy days.
+
+STRAVA TOOL USE:
+- "Connect my Strava" / "link Strava" -> call connect_strava, give user the auth URL
+- "How's my running?" / "running summary" / "what are my PRs?" -> call get_strava_summary
+- "Analyze my running" / "am I overtraining?" / "training load" / "race predictions" -> call get_running_analysis
+- "Show me my last run splits" / "how was my pacing?" -> call get_run_details with the activity
+- "Disconnect Strava" -> call disconnect_strava
+- When advising on running, ALWAYS check Strava data first if connected
+- If both WHOOP and Strava are connected, use CROSS-DOMAIN insights: recovery score vs run performance, long run impact on next-day recovery
+
+STRAVA RESPONSE FORMAT (follow exactly):
+- Lead with the coaching insight, not the data dump
+- Reference specific numbers from THEIR data: "Your 5K is 23:12 — to break 22, you need more VO2max work"
+- When showing PRs, use human-readable pace (min:sec/km) not m/s
+- Connect Strava data to WHOOP when both available: "Green recovery + easy run day = perfect combo"
+- Keep it to 3-5 lines for summaries. Coach, don't lecture.
+
 WHOOP INTELLIGENCE:
 
 When WHOOP is connected, you have real-time recovery, sleep, and strain data. USE IT to make ONE clear recommendation — don't dump data.
@@ -916,6 +993,7 @@ You CAN do all of these things. NEVER say "I can't" for any of them:
 - Remember facts about the user across conversations (memory system)
 - Search a knowledge base of expert protocols, peptides, supplements, biomarkers
 - Connect and read WHOOP recovery/sleep/strain data
+- Connect Strava and analyze running performance (PRs, training load, race predictions, pace trends)
 - Track recurring tasks (daily, weekly, monthly, weekdays)
 - Track daily habits with streaks (add_habit, log_habit, get_habits tools)
 - Log and summarize expenses (log_expense, get_expenses, get_spending_summary tools)
@@ -1182,6 +1260,9 @@ COACHING STYLE:
         # WHOOP context
         whoop_section = self._build_whoop_section(user.get("id", 0))
 
+        # Strava running context
+        strava_section = self._build_strava_section(user.get("id", 0))
+
         # User memory (what Zoe has learned) — topic-filtered for relevance
         memory_section = self._build_memory_section(user.get("id", 0), topics=self._current_topics)
 
@@ -1212,7 +1293,7 @@ This user just started. No tasks, no workout history, no data yet.
 {coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
-{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{memory_section}{kb_section}{discovery_section}{first_time_section}"""
+{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{strava_section}{memory_section}{kb_section}{discovery_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""
@@ -1667,6 +1748,78 @@ TASKS:
             return "\n".join(lines) + "\n" if len(lines) > 1 else ""
         except Exception as e:
             logger.warning(f"WHOOP section build failed: {type(e).__name__}: {e}")
+            return ""
+
+    def _build_strava_section(self, user_id: int) -> str:
+        """Build Strava running context section for system prompt."""
+        try:
+            from bot.services import strava_service
+            if not strava_service.is_connected(user_id):
+                return "\nSTRAVA: Not connected. User can link via 'connect my Strava'.\n"
+
+            summary = strava_service.get_running_summary(user_id, days=30)
+
+            lines = ["\nSTRAVA RUNNING DATA:"]
+
+            # Recent runs (last 5)
+            runs = summary.get("recent_runs", [])
+            if runs:
+                lines.append(f"- {len(runs)} runs in last 30 days")
+                for run in runs[:5]:
+                    dist_km = round((run.get("distance_m") or 0) / 1000, 1)
+                    pace = strava_service._speed_to_pace_str(run.get("average_speed_ms") or 0)
+                    hr = run.get("average_heartrate")
+                    name = run.get("name", "Run")
+                    date_str = str(run.get("activity_date", ""))
+                    hr_str = f", {int(hr)}bpm" if hr else ""
+                    lines.append(f"  * {date_str}: {name} — {dist_km}km at {pace}/km{hr_str}")
+
+            # Weekly volume
+            weeks = summary.get("weekly_volume", [])
+            if weeks:
+                for w in weeks[:2]:
+                    lines.append(
+                        f"- Week of {str(w.get('week_start', ''))[:10]}: "
+                        f"{w.get('run_count', 0)} runs, {w.get('total_km', 0)}km, "
+                        f"{w.get('total_minutes', 0)}min"
+                    )
+
+            # PRs
+            prs = summary.get("prs", [])
+            if prs:
+                pr_strs = []
+                for pr in prs:
+                    pr_strs.append(
+                        f"{pr['name']}: {strava_service._seconds_to_time_str(pr.get('elapsed_time_s', 0))}"
+                    )
+                lines.append(f"- PRs: {', '.join(pr_strs)}")
+
+            # Pace trend
+            trend = summary.get("pace_trend")
+            if trend:
+                lines.append(f"- Pace trend: {trend.replace('_', ' ')}")
+
+            # Shoe info
+            shoes = summary.get("shoe_info", [])
+            if shoes:
+                for shoe in shoes:
+                    dist = round((shoe.get("distance") or 0) / 1000)
+                    if dist > 100:
+                        lines.append(f"- Shoe: {shoe.get('name', '?')} ({dist}km)")
+
+            # Cross-domain insights if WHOOP also connected
+            try:
+                cross = strava_service.get_cross_domain_insights(user_id)
+                if cross:
+                    lines.append("- STRAVA x WHOOP PATTERNS:")
+                    for insight in cross[:3]:
+                        lines.append(f"  * {insight}")
+            except Exception:
+                pass
+
+            return "\n".join(lines) + "\n" if len(lines) > 1 else ""
+        except Exception as e:
+            logger.warning(f"Strava section build failed: {type(e).__name__}: {e}")
             return ""
 
     def _build_kb_awareness_section(self) -> str:

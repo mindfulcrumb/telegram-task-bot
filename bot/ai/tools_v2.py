@@ -6,7 +6,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Undo buffer (in-memory, keyed by user_id)
-_undo_buffer = {}
+_undo_buffer = {}  # {user_id: [undo_entries]} — capped to 50 users max
+_UNDO_MAX_USERS = 50
 
 
 def get_tool_definitions() -> list:
@@ -366,6 +367,50 @@ def get_tool_definitions() -> list:
                     "date": {
                         "type": "string",
                         "description": "Date to analyze in YYYY-MM-DD format. Defaults to today."
+                    }
+                },
+                "required": []
+            }
+        },
+        # --- Strava tools ---
+        {
+            "name": "connect_strava",
+            "description": "Generate Strava OAuth URL for user to link their Strava account. Use when user says 'connect Strava', 'link my Strava', etc.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "disconnect_strava",
+            "description": "Disconnect user's Strava account and delete all synced data. Use when user says 'disconnect Strava', 'unlink Strava'.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "get_strava_summary",
+            "description": "Get running summary: recent runs, weekly volume, PRs, pace trends, shoe mileage. Call when user asks about their running, PRs, mileage, or running stats. Syncs latest data first.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to look back. Defaults to 30."
+                    }
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_running_analysis",
+            "description": "Deep running performance analysis: training load (ACWR injury risk), pace consistency, HR efficiency trends, race predictions from PRs, shoe alerts. Call when user asks 'am I overtraining?', 'race predictions', 'analyze my running', 'training load', or any question about running patterns.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "get_run_details",
+            "description": "Get per-km splits for a specific run. Use when user asks about pacing on a specific run, or 'how was my last run?'. Shows pace, HR, elevation per kilometer.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "activity_id": {
+                        "type": "integer",
+                        "description": "Strava activity ID. If not provided, gets the most recent run."
                     }
                 },
                 "required": []
@@ -863,6 +908,10 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             task_nums = args.get("task_numbers", [])
             completed, not_found = task_service.complete_tasks(user_id, task_nums)
             _undo_buffer[user_id] = [{"action": "done", "task_id": t["id"], "title": t["title"]} for t in completed]
+            # Evict oldest entries if buffer gets too large
+            if len(_undo_buffer) > _UNDO_MAX_USERS:
+                oldest = next(iter(_undo_buffer))
+                _undo_buffer.pop(oldest, None)
             # Update streak + spawn recurring tasks
             recurring_spawned = []
             if completed:
@@ -1502,6 +1551,136 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 ]
 
             return analysis
+
+        # --- Strava tools ---
+        elif name == "connect_strava":
+            from bot.services import strava_service
+            if not strava_service.is_configured():
+                return {"error": "Strava integration is not configured yet. Coming soon!"}
+            if strava_service.is_connected(user_id):
+                return {"already_connected": True, "message": "Strava is already linked. Use get_strava_summary to see your running data."}
+            url = strava_service.get_auth_url(user_id)
+            if url:
+                return {"auth_url": url, "message": "Click the link to connect your Strava account."}
+            return {"error": "Could not generate Strava authorization URL."}
+
+        elif name == "disconnect_strava":
+            from bot.services import strava_service
+            if not strava_service.is_connected(user_id):
+                return {"error": "Strava is not connected."}
+            strava_service.revoke_access(user_id)
+            return {"success": True, "message": "Strava disconnected and all running data deleted."}
+
+        elif name == "get_strava_summary":
+            from bot.services import strava_service
+            if not strava_service.is_connected(user_id):
+                return {"error": "Strava not connected. Use connect_strava to link your account."}
+            # Sync recent data first
+            try:
+                strava_service.sync_recent_activities(user_id, days=7)
+            except Exception:
+                pass
+            days = args.get("days", 30)
+            summary = strava_service.get_running_summary(user_id, days=days)
+            # Format runs for readability
+            formatted_runs = []
+            for run in summary.get("recent_runs", [])[:10]:
+                dist_km = round((run.get("distance_m") or 0) / 1000, 1)
+                pace = strava_service._speed_to_pace_str(run.get("average_speed_ms") or 0)
+                hr = run.get("average_heartrate")
+                formatted_runs.append({
+                    "name": run.get("name", "Run"),
+                    "date": str(run.get("activity_date", "")),
+                    "distance_km": dist_km,
+                    "pace_per_km": pace,
+                    "duration": strava_service._seconds_to_time_str(run.get("moving_time_s") or 0),
+                    "avg_hr": int(hr) if hr else None,
+                    "elevation_m": round(run.get("elevation_gain_m") or 0),
+                    "type": run.get("sport_type", "Run"),
+                })
+            # Format PRs
+            formatted_prs = []
+            for pr in summary.get("prs", []):
+                formatted_prs.append({
+                    "distance": pr["name"],
+                    "time": strava_service._seconds_to_time_str(pr.get("elapsed_time_s") or 0),
+                })
+            result = {
+                "connected": True,
+                "recent_runs": formatted_runs,
+                "weekly_volume": summary.get("weekly_volume", []),
+                "prs": formatted_prs,
+                "pace_trend": summary.get("pace_trend"),
+            }
+            # Add shoe info
+            shoes = summary.get("shoe_info", [])
+            if shoes:
+                result["shoes"] = [
+                    {"name": s.get("name", "?"), "distance_km": round((s.get("distance") or 0) / 1000)}
+                    for s in shoes
+                ]
+            return result
+
+        elif name == "get_running_analysis":
+            from bot.services import strava_service
+            if not strava_service.is_connected(user_id):
+                return {"error": "Strava not connected. Use connect_strava to link your account."}
+            # Sync first
+            try:
+                strava_service.sync_recent_activities(user_id, days=14)
+            except Exception:
+                pass
+            analysis = strava_service.analyze_running_performance(user_id)
+            # Add cross-domain insights if WHOOP connected
+            try:
+                cross = strava_service.get_cross_domain_insights(user_id)
+                if cross:
+                    analysis["cross_domain_insights"] = cross
+            except Exception:
+                pass
+            return analysis
+
+        elif name == "get_run_details":
+            from bot.services import strava_service
+            if not strava_service.is_connected(user_id):
+                return {"error": "Strava not connected. Use connect_strava to link your account."}
+            activity_id = args.get("activity_id")
+            if not activity_id:
+                # Get most recent run
+                from bot.db.database import get_cursor
+                with get_cursor() as cur:
+                    cur.execute(
+                        """SELECT strava_activity_id, name, distance_m, moving_time_s,
+                                  average_speed_ms, average_heartrate, activity_date
+                           FROM strava_activities
+                           WHERE user_id = %s AND sport_type IN ('Run', 'TrailRun', 'VirtualRun')
+                           ORDER BY activity_date DESC LIMIT 1""",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return {"error": "No runs found. Sync your Strava data first."}
+                    activity_id = row["strava_activity_id"]
+                    run_info = {
+                        "name": row["name"],
+                        "distance_km": round((row["distance_m"] or 0) / 1000, 1),
+                        "duration": strava_service._seconds_to_time_str(row["moving_time_s"] or 0),
+                        "pace": strava_service._speed_to_pace_str(row["average_speed_ms"] or 0),
+                        "date": str(row["activity_date"]),
+                    }
+            else:
+                run_info = {"activity_id": activity_id}
+
+            splits = strava_service.get_run_splits(user_id, activity_id)
+            formatted_splits = []
+            for s in splits:
+                formatted_splits.append({
+                    "km": s.get("split_num"),
+                    "pace": strava_service._speed_to_pace_str(s.get("average_speed_ms") or 0),
+                    "hr": int(s["average_heartrate"]) if s.get("average_heartrate") else None,
+                    "elevation_m": round(s.get("elevation_diff_m") or 0),
+                })
+            return {"run": run_info, "splits": formatted_splits, "split_count": len(formatted_splits)}
 
         # --- Memory tools ---
         elif name == "save_user_memory":

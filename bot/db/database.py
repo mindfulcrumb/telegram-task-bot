@@ -890,6 +890,95 @@ def initialize():
 
             -- Dashboard card message tracking
             ALTER TABLE peptide_protocols ADD COLUMN IF NOT EXISTS card_message_id BIGINT;
+
+            -- ═══════════════════════════════════════════════════════════
+            -- STRAVA INTEGRATION
+            -- ═══════════════════════════════════════════════════════════
+
+            -- Strava OAuth tokens + athlete profile
+            CREATE TABLE IF NOT EXISTS strava_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                scopes TEXT,
+                strava_athlete_id BIGINT,
+                athlete_weight_kg REAL,
+                measurement_preference TEXT,
+                athlete_type INT,
+                shoes_json TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Strava activities (all sport types)
+            CREATE TABLE IF NOT EXISTS strava_activities (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                strava_activity_id BIGINT UNIQUE NOT NULL,
+                name TEXT,
+                sport_type TEXT NOT NULL,
+                workout_type INT DEFAULT 0,
+                distance_m REAL,
+                moving_time_s INT,
+                elapsed_time_s INT,
+                elevation_gain_m REAL,
+                average_speed_ms REAL,
+                max_speed_ms REAL,
+                average_heartrate REAL,
+                max_heartrate REAL,
+                average_cadence REAL,
+                suffer_score REAL,
+                calories REAL,
+                gear_id TEXT,
+                has_heartrate BOOLEAN DEFAULT FALSE,
+                activity_date DATE NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Strava best efforts (PR tracking — 400m, 1K, 1 mile, 5K, 10K, half, marathon)
+            CREATE TABLE IF NOT EXISTS strava_best_efforts (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                strava_activity_id BIGINT NOT NULL,
+                name TEXT NOT NULL,
+                distance_m REAL,
+                elapsed_time_s INT,
+                moving_time_s INT,
+                pr_rank INT,
+                start_date TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            -- Strava per-km splits (pacing analysis)
+            CREATE TABLE IF NOT EXISTS strava_splits (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                strava_activity_id BIGINT NOT NULL,
+                split_num INT NOT NULL,
+                distance_m REAL,
+                elapsed_time_s INT,
+                moving_time_s INT,
+                elevation_diff_m REAL,
+                average_speed_ms REAL,
+                average_gap_ms REAL,
+                average_heartrate REAL,
+                pace_zone INT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_strava_activities_user
+                ON strava_activities(user_id, activity_date DESC);
+            CREATE INDEX IF NOT EXISTS idx_strava_activities_sport
+                ON strava_activities(user_id, sport_type, activity_date DESC);
+            CREATE INDEX IF NOT EXISTS idx_strava_best_efforts_user
+                ON strava_best_efforts(user_id, name, elapsed_time_s);
+            CREATE INDEX IF NOT EXISTS idx_strava_best_efforts_activity
+                ON strava_best_efforts(strava_activity_id);
+            CREATE INDEX IF NOT EXISTS idx_strava_splits_activity
+                ON strava_splits(strava_activity_id, split_num);
         """)
     logger.info("PostgreSQL schema initialized")
 

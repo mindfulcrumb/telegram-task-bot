@@ -961,6 +961,28 @@ async def pain_followup_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Pain follow-up failed for user {user.get('id')}: {e}")
 
 
+async def strava_sync_job(context):
+    """Sync Strava activities for all connected users (every 2 hours)."""
+    try:
+        from bot.db.database import get_cursor
+        from bot.services import strava_service
+
+        with get_cursor() as cur:
+            cur.execute("SELECT user_id FROM strava_tokens")
+            rows = cur.fetchall()
+
+        for row in rows:
+            try:
+                strava_service.sync_recent_activities(row["user_id"], days=3)
+            except Exception as e:
+                logger.warning(f"Strava sync failed for user {row['user_id']}: {e}")
+
+        if rows:
+            logger.info(f"Strava sync completed for {len(rows)} users")
+    except Exception as e:
+        logger.error(f"Strava sync job failed: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -1018,7 +1040,10 @@ def setup_proactive_jobs(application):
     # Pain/mobility follow-up: every 6 hours
     jq.run_repeating(pain_followup_job, interval=21600, first=1200, name="pain_followup")
 
-    logger.info("Proactive coaching jobs registered (17 jobs)")
+    # Strava activity sync: every 2 hours
+    jq.run_repeating(strava_sync_job, interval=7200, first=900, name="strava_sync")
+
+    logger.info("Proactive coaching jobs registered (18 jobs)")
 
 
 # --- Helpers ---
