@@ -1286,12 +1286,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.warning(f"WORKOUT CARDS: safety net check failed: {e}")
 
+        # Check for pending OAuth auth URL (send as inline button, not raw URL)
+        pending_auth = ai_brain._pending_auth_url.pop(user["id"], None)
+
         if response:
             # If paywall was hit, attach subscribe button
             if ai_brain._paywall_hit.get(user["id"], False):
                 from bot.handlers.payments import get_subscribe_keyboard
                 keyboard = get_subscribe_keyboard(update.effective_user.id)
                 await update.message.reply_text(_clean_response(response), reply_markup=keyboard)
+            elif pending_auth:
+                # Strip any raw URL from the response text
+                import re
+                clean = re.sub(r'https?://\S+', '', response).strip()
+                clean = clean or "Tap below to connect."
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(pending_auth["label"], url=pending_auth["url"])]
+                ])
+                await update.message.reply_text(clean, reply_markup=keyboard)
             else:
                 # Add feedback buttons on substantive responses (longer than a quick ack)
                 show_feedback = len(response) > 80

@@ -114,6 +114,8 @@ class AIBrain:
         self._static_prompt = None
         # Tracks paywall hits per user_id (avoids race condition on singleton)
         self._paywall_hit = {}
+        # Tracks pending OAuth auth URLs: user_id -> {"url": ..., "label": ...}
+        self._pending_auth_url = {}
         # Detected topics for current request (used for memory filtering)
         self._current_topics = ["general"]
 
@@ -2397,6 +2399,12 @@ JSON:"""
                     if isinstance(result, dict) and result.get("_interactive_protocol_dashboard"):
                         self._pending_protocol_dashboard[user_id] = True
                         logger.info(f"PROTOCOL DASHBOARD: _pending_protocol_dashboard[{user_id}] = True")
+
+                    # Detect OAuth auth URL (Strava, WHOOP, etc.)
+                    if isinstance(result, dict) and result.get("auth_url"):
+                        label = "Connect Strava" if "strava" in call.name else "Connect WHOOP" if "whoop" in call.name else "Connect"
+                        self._pending_auth_url[user_id] = {"url": result["auth_url"], "label": label}
+                        logger.info(f"AUTH URL: _pending_auth_url[{user_id}] = {label}")
 
                     tool_results.append({
                         "type": "tool_result",

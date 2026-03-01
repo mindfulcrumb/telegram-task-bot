@@ -65,7 +65,7 @@ def get_auth_url(user_id: int) -> str | None:
         return None
 
     nonce = secrets.token_urlsafe(16)
-    state = f"strava_{user_id:06d}_{nonce}"
+    state = f"uid_{user_id:06d}_{nonce}"
 
     from bot.services.google_auth import _store_oauth_state
     _store_oauth_state(user_id, nonce)
