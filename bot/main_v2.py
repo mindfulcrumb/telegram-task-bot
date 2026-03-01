@@ -80,8 +80,19 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _handle_whoop_debug(self):
-        """Debug endpoint to verify WHOOP configuration."""
+        """Debug endpoint to verify WHOOP configuration (requires secret token)."""
         try:
+            # Require debug token to prevent config leak
+            debug_token = os.environ.get("DEBUG_TOKEN", "")
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            provided_token = params.get("token", [""])[0]
+            if not debug_token or provided_token != debug_token:
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Forbidden")
+                return
+
             client_id = os.environ.get("WHOOP_CLIENT_ID", "")
             client_secret = os.environ.get("WHOOP_CLIENT_SECRET", "")
             redirect_uri = os.environ.get("WHOOP_REDIRECT_URI", "")
@@ -109,7 +120,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(f"Debug error: {e}".encode())
+            self.wfile.write(f"Debug error: {html.escape(str(e))}".encode())
 
     def _handle_timer(self):
         """Serve the rest timer Mini App HTML page."""
@@ -131,7 +142,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             logger.error(f"Timer page error: {e}")
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(f"Timer error: {e}".encode())
+            self.wfile.write(f"Timer error: {html.escape(str(e))}".encode())
 
     def _handle_status(self):
         """Diagnostic endpoint — shows DB status, env vars (names only), startup info."""
@@ -286,9 +297,9 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 safe_desc = html_mod.escape(error_desc)
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>Google Authorization Failed</h1>"
+                    f"<h1>Calendar Authorization Failed</h1>"
                     f"<p>{safe_desc}</p>"
-                    f"<p>Please try again in Telegram.</p>"
+                    f"<p>Please try /calendar again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
                 return
@@ -299,7 +310,7 @@ class _HealthCheck(BaseHTTPRequestHandler):
             if not code or not state:
                 self.send_response(400)
                 self.end_headers()
-                self.wfile.write(b"Missing code or state. Please try again in Telegram.")
+                self.wfile.write(b"Missing code or state. Please try /calendar again in Telegram.")
                 return
 
             # Validate CSRF state — cryptographic nonce check
@@ -355,9 +366,9 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 safe_err = html_mod.escape(error_msg or "Unknown error")
                 self.wfile.write(
                     f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    f"<h1>Failed to Connect Google</h1>"
+                    f"<h1>Failed to Connect Calendar</h1>"
                     f"<p>{safe_err}</p>"
-                    f"<p>Please try again in Telegram.</p>"
+                    f"<p>Please try /calendar again in Telegram.</p>"
                     f"</body></html>".encode()
                 )
 
@@ -382,10 +393,12 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    b"<h1>WHOOP Authorization Failed</h1>"
-                    b"<p>Please try /connect_whoop again in Telegram.</p>"
-                    b"</body></html>"
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>WHOOP Authorization Failed</h1>"
+                    f"<p>Error: {html_mod.escape(str(error))}</p>"
+                    f"<p>{html_mod.escape(str(error_desc))}</p>"
+                    f"<p>Please try /connect_whoop again in Telegram.</p>"
+                    f"</body></html>".encode()
                 )
                 return
 
@@ -459,10 +472,11 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(
-                    b"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
-                    b"<h1>Failed to connect WHOOP</h1>"
-                    b"<p>Please try /connect_whoop again in Telegram.</p>"
-                    b"</body></html>"
+                    f"<html><body style='font-family:system-ui;text-align:center;padding:60px'>"
+                    f"<h1>Failed to connect WHOOP</h1>"
+                    f"<p>{html_mod.escape(str(error_msg))}</p>"
+                    f"<p>Please try /connect_whoop again in Telegram.</p>"
+                    f"</body></html>".encode()
                 )
 
         except Exception as e:
@@ -475,12 +489,35 @@ class _HealthCheck(BaseHTTPRequestHandler):
         """Handle WHOOP webhook events (v2 with signature verification)."""
         try:
             content_length = int(self.headers.get("Content-Length", 0))
+            # Reject oversized payloads (max 1MB)
+            if content_length > 1_048_576:
+                self.send_response(413)
+                self.end_headers()
+                self.wfile.write(b"Payload too large")
+                return
             body = self.rfile.read(content_length)
 
-            # Verify webhook signature (HMAC-SHA256)
+            # Verify webhook signature (HMAC-SHA256) — REQUIRED when secret is configured
             signature = self.headers.get("X-WHOOP-Signature", "")
             timestamp = self.headers.get("X-WHOOP-Signature-Timestamp", "")
-            if signature and timestamp:
+            webhook_secret = os.environ.get("WHOOP_WEBHOOK_SECRET", "")
+            if webhook_secret:
+                # Secret is configured — signature is mandatory
+                if not signature or not timestamp:
+                    logger.warning("WHOOP webhook missing signature headers — rejecting")
+                    self.send_response(401)
+                    self.end_headers()
+                    self.wfile.write(b"Missing signature")
+                    return
+                from bot.services import whoop_service
+                if not whoop_service.verify_webhook_signature(body, signature, timestamp):
+                    logger.warning("WHOOP webhook signature verification FAILED")
+                    self.send_response(403)
+                    self.end_headers()
+                    self.wfile.write(b"Invalid signature")
+                    return
+            elif signature and timestamp:
+                # No secret configured but headers present — best-effort verify
                 from bot.services import whoop_service
                 if not whoop_service.verify_webhook_signature(body, signature, timestamp):
                     logger.warning("WHOOP webhook signature verification FAILED")

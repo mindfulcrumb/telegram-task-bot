@@ -126,7 +126,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if response:
             # If paywall was hit, attach subscribe button
             reply_markup = None
-            if ai_brain._paywall_hit:
+            if ai_brain._paywall_hit.get(user["id"], False):
                 from bot.handlers.payments import get_subscribe_keyboard
                 reply_markup = get_subscribe_keyboard(update.effective_user.id)
 

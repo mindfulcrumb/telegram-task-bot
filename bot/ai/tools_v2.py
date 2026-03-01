@@ -353,6 +353,24 @@ def get_tool_definitions() -> list:
             "description": "Get cross-domain intelligence: how recovery correlates with training strain, sleep quality, peptide dosing, and rest patterns over 30 days. Call when user asks 'do you see patterns?', 'how are peptides affecting my recovery?', 'am I overtraining?', or any question about long-term trends connecting WHOOP data to their training and protocols.",
             "input_schema": {"type": "object", "properties": {}}
         },
+        {
+            "name": "analyze_workout",
+            "description": "Analyze a workout against WHOOP recovery data. Scores how well the workout intensity matched the user's recovery state, and suggests what could have been done differently. Call this when user asks 'was my workout good?', 'should I have trained differently?', 'analyze my session', 'was that too much?', or after logging a workout when WHOOP is connected. Can analyze today's workout or a past one.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "workout_id": {
+                        "type": "integer",
+                        "description": "Specific workout ID to analyze. If not provided, analyzes the most recent workout."
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Date to analyze in YYYY-MM-DD format. Defaults to today."
+                    }
+                },
+                "required": []
+            }
+        },
         # --- Memory tools ---
         {
             "name": "save_user_memory",
@@ -934,7 +952,9 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 reminder_dt = datetime.fromisoformat(args["reminder_datetime"])
             except (ValueError, TypeError):
                 return {"error": "Invalid datetime format. Use YYYY-MM-DDTHH:MM:SS"}
-            if reminder_dt <= datetime.now():
+            # Compare in matching timezone context (both naive or both aware)
+            now = datetime.now(reminder_dt.tzinfo) if reminder_dt.tzinfo else datetime.now()
+            if reminder_dt <= now:
                 return {"error": "Reminder time must be in the future."}
             ok = task_service.set_reminder(user_id, args["task_number"], reminder_dt)
             if ok:
@@ -1181,6 +1201,9 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 biohacking_service.update_protocol_status(protocol["id"], new_status)
                 return {"success": True, "action": action, "peptide": peptide_name, "new_status": new_status}
 
+            else:
+                return {"error": f"Unknown action '{action}'. Use add, pause, resume, or end."}
+
         elif name == "log_peptide_dose":
             from bot.services import biohacking_service
             peptide_name = args["peptide_name"]
@@ -1400,6 +1423,85 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if insights:
                 return {"insights": insights, "count": len(insights)}
             return {"insights": [], "message": "Not enough data yet — need 7-10+ days of WHOOP + training data to find patterns."}
+
+        elif name == "analyze_workout":
+            from bot.services import whoop_service, fitness_service
+
+            if not whoop_service.is_connected(user_id):
+                return {"error": "WHOOP not connected. Connect WHOOP first to get workout analysis."}
+
+            # Determine which workout to analyze
+            workout = None
+            exercises = []
+            workout_date = None
+
+            if args.get("workout_id"):
+                # Specific workout by ID
+                from bot.db.database import get_cursor
+                with get_cursor() as cur:
+                    cur.execute("SELECT * FROM workouts WHERE id = %s AND user_id = %s",
+                                (args["workout_id"], user_id))
+                    row = cur.fetchone()
+                    if row:
+                        workout = dict(row)
+                        cur.execute("SELECT * FROM workout_exercises WHERE workout_id = %s ORDER BY sort_order",
+                                    (workout["id"],))
+                        exercises = [dict(r) for r in cur.fetchall()]
+                        workout_date = workout["created_at"].date() if workout.get("created_at") else None
+            else:
+                # Most recent workout (optionally filtered by date)
+                if args.get("date"):
+                    try:
+                        from datetime import datetime as dt
+                        workout_date = dt.fromisoformat(args["date"]).date()
+                    except (ValueError, TypeError):
+                        workout_date = None
+
+                recent = fitness_service.get_recent_workouts(user_id, days=14)
+                if recent:
+                    if workout_date:
+                        # Find workout closest to requested date
+                        for w in recent:
+                            if w.get("created_at") and w["created_at"].date() == workout_date:
+                                workout = w
+                                exercises = w.get("exercises", [])
+                                break
+                    if not workout:
+                        workout = recent[0]
+                        exercises = workout.get("exercises", [])
+                        workout_date = workout["created_at"].date() if workout.get("created_at") else None
+
+            if not workout:
+                return {"error": "No workout found to analyze. Log a workout first."}
+
+            # Sync WHOOP data to make sure we have the latest
+            try:
+                whoop_service.sync_all(user_id)
+            except Exception:
+                pass
+
+            # Run the analysis algorithm
+            analysis = whoop_service.analyze_workout_vs_recovery(
+                user_id=user_id,
+                workout=workout,
+                exercises=exercises,
+                workout_date=workout_date,
+            )
+
+            if analysis.get("error"):
+                return analysis
+
+            # Enrich with workout context for the AI
+            analysis["workout_title"] = workout.get("title", "Workout")
+            analysis["workout_duration"] = workout.get("duration_minutes")
+            analysis["exercise_count"] = len(exercises)
+            if exercises:
+                analysis["exercises_performed"] = [
+                    {"name": ex.get("exercise_name", ""), "pattern": ex.get("movement_pattern")}
+                    for ex in exercises[:8]
+                ]
+
+            return analysis
 
         # --- Memory tools ---
         elif name == "save_user_memory":

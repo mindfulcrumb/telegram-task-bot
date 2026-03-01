@@ -642,12 +642,35 @@ def undo_set(exercise_id: int) -> dict:
 
 
 def finish_session(session_id: int) -> dict:
-    """Complete a session and log it as a real workout."""
+    """Complete a session and log it as a real workout.
+
+    Idempotent: if session is already completed, returns the existing workout.
+    """
     from datetime import datetime, timezone
 
     with get_cursor() as cur:
-        cur.execute("SELECT * FROM workout_sessions WHERE id = %s", (session_id,))
-        session = dict(cur.fetchone())
+        # Atomically claim the session — prevents duplicates on double-tap
+        cur.execute(
+            """UPDATE workout_sessions SET status = 'completing'
+               WHERE id = %s AND status = 'active' RETURNING *""",
+            (session_id,)
+        )
+        session = cur.fetchone()
+        if not session:
+            # Already completed or abandoned — return existing data
+            cur.execute("SELECT * FROM workout_sessions WHERE id = %s", (session_id,))
+            session = cur.fetchone()
+            if not session:
+                raise ValueError(f"Session {session_id} not found")
+            session = dict(session)
+            if session.get("workout_id"):
+                # Already has a logged workout — return it
+                workout = {"id": session["workout_id"]}
+                session["workout"] = workout
+                session["duration_minutes"] = 0
+                return session
+            raise ValueError(f"Session {session_id} is {session.get('status')}, cannot finish")
+        session = dict(session)
 
         cur.execute(
             "SELECT * FROM session_exercises WHERE session_id = %s ORDER BY sort_order",
@@ -684,11 +707,11 @@ def finish_session(session_id: int) -> dict:
             exercises=workout_exercises if workout_exercises else None,
         )
 
-        # Mark session complete
+        # Mark session complete (was 'completing' → 'completed')
         cur.execute(
             """UPDATE workout_sessions
                SET status = 'completed', completed_at = NOW(), workout_id = %s
-               WHERE id = %s""",
+               WHERE id = %s AND status = 'completing'""",
             (workout["id"], session_id)
         )
 

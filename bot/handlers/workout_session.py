@@ -23,6 +23,20 @@ _rest_state = {}
 _PARSE_MODE = "HTML"
 
 
+def _escape_md(text: str) -> str:
+    """Escape Markdown v1 special characters in user-generated text.
+
+    Telegram Markdown v1 (parse_mode='Markdown') only treats these as special:
+    _, *, `, [
+    Over-escaping v2 chars (~ > # + - = | { } . !) causes visible backslashes.
+    """
+    if not text:
+        return ""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
                          total_exercises: int, is_resting: bool = False,
                          rest_label: str = "", rest_seconds: int = 0) -> tuple:
@@ -48,10 +62,11 @@ def render_exercise_card(exercise: dict, session_id: int, exercise_index: int,
     text += f"<b>{name}</b>\n"
 
     # Weight/reps line
+    safe_reps = _escape_md(str(reps)) if reps else ""
     if weight:
-        text += f"{sets_target} x {reps} @ {weight}{unit}"
+        text += f"{sets_target} x {safe_reps} @ {weight}{_escape_md(unit)}"
     else:
-        text += f"{sets_target} x {reps}"
+        text += f"{sets_target} x {safe_reps}"
     if rpe:
         text += f" | RPE {rpe}"
     text += "\n"
@@ -209,8 +224,14 @@ async def send_current_exercise(chat, context, session_id: int):
         except Exception:
             pass  # Message too old or deleted — send new one
 
-    # Send new card message
-    msg = await chat.send_message(text, reply_markup=markup, parse_mode=_PARSE_MODE)
+    # Send new card message (with plaintext fallback if HTML parse fails)
+    try:
+        msg = await chat.send_message(text, reply_markup=markup, parse_mode=_PARSE_MODE)
+    except Exception:
+        # HTML parse failed — strip formatting and send as plain text
+        import re as _re
+        plain = _re.sub(r"<[^>]+>", "", text)
+        msg = await chat.send_message(plain, reply_markup=markup)
     fitness_service.set_card_message_id(session_id, msg.message_id)
     logger.info(f"WORKOUT CARDS: card sent, message_id={msg.message_id}")
 
@@ -518,7 +539,13 @@ async def _refresh_card(query, context, session_id: int):
     try:
         await query.edit_message_text(text, reply_markup=markup, parse_mode=_PARSE_MODE)
     except Exception:
-        pass  # Text truly identical or message too old
+        # HTML parse failed or text identical — try plaintext fallback
+        try:
+            import re as _re
+            plain = _re.sub(r"<[^>]+>", "", text)
+            await query.edit_message_text(plain, reply_markup=markup)
+        except Exception:
+            pass  # Text identical or message too old
 
 
 def _cancel_timer(context, user_id: int, session_id: int):
@@ -575,4 +602,11 @@ async def _rest_timer_callback(context: ContextTypes.DEFAULT_TYPE):
             parse_mode=_PARSE_MODE,
         )
     except Exception:
-        pass
+        try:
+            plain = text.replace("*", "").replace("_", "").replace("\\", "")
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=plain, reply_markup=markup,
+            )
+        except Exception:
+            pass

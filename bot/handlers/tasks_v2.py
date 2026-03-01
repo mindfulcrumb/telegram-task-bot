@@ -1288,7 +1288,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if response:
             # If paywall was hit, attach subscribe button
-            if ai_brain._paywall_hit:
+            if ai_brain._paywall_hit.get(user["id"], False):
                 from bot.handlers.payments import get_subscribe_keyboard
                 keyboard = get_subscribe_keyboard(update.effective_user.id)
                 await update.message.reply_text(_clean_response(response), reply_markup=keyboard)

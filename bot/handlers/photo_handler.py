@@ -492,7 +492,7 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
 
     if response:
         reply_markup = None
-        if ai_brain._paywall_hit:
+        if ai_brain._paywall_hit.get(user["id"], False):
             from bot.handlers.payments import get_subscribe_keyboard
             reply_markup = get_subscribe_keyboard(update.effective_user.id)
         await send_chunked(
@@ -525,7 +525,7 @@ async def _handle_general(update, context, user, caption, description, chat_id):
 
     if response:
         reply_markup = None
-        if ai_brain._paywall_hit:
+        if ai_brain._paywall_hit.get(user["id"], False):
             from bot.handlers.payments import get_subscribe_keyboard
             reply_markup = get_subscribe_keyboard(update.effective_user.id)
         await send_chunked(

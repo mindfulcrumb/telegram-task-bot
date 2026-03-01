@@ -479,37 +479,28 @@ _ALLOWED_DAILY_FIELDS = {
 
 
 def _upsert_daily(user_id: int, cycle_date: date, **kwargs):
-    """Upsert whoop_daily row with given fields (whitelist-validated)."""
+    """Upsert whoop_daily row with given fields (whitelist-validated).
+
+    Uses INSERT ... ON CONFLICT to avoid race conditions between
+    concurrent sync calls for the same user+date.
+    """
     # Filter out None values and validate against whitelist
     fields = {k: v for k, v in kwargs.items() if v is not None and k in _ALLOWED_DAILY_FIELDS}
     if not fields:
         return
 
     with get_cursor() as cur:
-        # Check if row exists
+        # Build atomic upsert — safe against concurrent inserts
+        all_fields = {"user_id": user_id, "cycle_date": cycle_date, **fields}
+        cols = ", ".join(all_fields.keys())
+        placeholders = ", ".join(["%s"] * len(all_fields))
+        # On conflict, only update the data fields (not user_id/cycle_date)
+        update_clause = ", ".join(f"{k} = EXCLUDED.{k}" for k in fields)
         cur.execute(
-            "SELECT id FROM whoop_daily WHERE user_id = %s AND cycle_date = %s",
-            (user_id, cycle_date),
+            f"""INSERT INTO whoop_daily ({cols}) VALUES ({placeholders})
+                ON CONFLICT (user_id, cycle_date) DO UPDATE SET {update_clause}""",
+            list(all_fields.values()),
         )
-        existing = cur.fetchone()
-
-        if existing:
-            set_clause = ", ".join(f"{k} = %s" for k in fields)
-            set_clause += ", updated_at = NOW()"
-            values = list(fields.values()) + [user_id, cycle_date]
-            cur.execute(
-                f"UPDATE whoop_daily SET {set_clause} WHERE user_id = %s AND cycle_date = %s",
-                values,
-            )
-        else:
-            fields["user_id"] = user_id
-            fields["cycle_date"] = cycle_date
-            cols = ", ".join(fields.keys())
-            placeholders = ", ".join(["%s"] * len(fields))
-            cur.execute(
-                f"INSERT INTO whoop_daily ({cols}) VALUES ({placeholders})",
-                list(fields.values()),
-            )
 
 
 # --- Data access ---
@@ -854,14 +845,326 @@ def get_whoop_insights(user_id: int) -> list[str]:
     return insights
 
 
+# --- Workout-Recovery Analysis Algorithm ---
+
+def get_whoop_for_date(user_id: int, target_date: date) -> dict | None:
+    """Get WHOOP data for a specific date (or closest prior day)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT * FROM whoop_daily
+               WHERE user_id = %s AND cycle_date BETWEEN %s AND %s
+               ORDER BY cycle_date DESC LIMIT 1""",
+            (user_id, target_date - timedelta(days=1), target_date),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_multi_day_strain(user_id: int, days: int = 3) -> list[float]:
+    """Get daily strain values for the last N days (most recent first)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT daily_strain FROM whoop_daily
+               WHERE user_id = %s AND daily_strain IS NOT NULL
+               AND cycle_date >= %s
+               ORDER BY cycle_date DESC LIMIT %s""",
+            (user_id, date.today() - timedelta(days=days + 1), days),
+        )
+        return [row["daily_strain"] for row in cur.fetchall()]
+
+
+def _classify_workout_intensity(exercises: list, session_rpe: float | None = None) -> dict:
+    """Classify workout intensity from exercise data.
+
+    Returns:
+        dict with keys: level (high/moderate/low), score (0-100),
+        has_heavy_compounds, compound_count, total_sets, reasoning.
+    """
+    if not exercises:
+        return {"level": "low", "score": 20, "has_heavy_compounds": False,
+                "compound_count": 0, "total_sets": 0, "reasoning": "No exercise data"}
+
+    # Heavy compound patterns (CNS-demanding)
+    heavy_patterns = {"squat", "hinge", "horizontal_push", "vertical_push"}
+    # All compound patterns
+    compound_patterns = heavy_patterns | {"horizontal_pull", "vertical_pull"}
+
+    total_sets = 0
+    compound_count = 0
+    heavy_compound_count = 0
+    has_heavy_weight = False
+    max_rpe = session_rpe or 0
+    intensity_signals = []
+
+    for ex in exercises:
+        sets = ex.get("sets") or ex.get("target_sets") or 0
+        total_sets += sets
+        pattern = ex.get("movement_pattern") or ex.get("pattern")
+
+        if pattern in compound_patterns:
+            compound_count += 1
+        if pattern in heavy_patterns:
+            heavy_compound_count += 1
+
+        # Weight analysis — heavy if above typical bodyweight-relative thresholds
+        weight = ex.get("weight") or ex.get("target_weight")
+        if weight and weight > 60:
+            has_heavy_weight = True
+
+        # Rep analysis — low reps + heavy weight = strength (high intensity)
+        reps_str = str(ex.get("reps") or ex.get("target_reps") or "")
+        try:
+            reps = int(reps_str.split("-")[0]) if reps_str else 0
+        except (ValueError, IndexError):
+            reps = 8  # default assumption
+
+        if reps <= 5 and weight and weight > 40:
+            intensity_signals.append("strength")
+        elif 6 <= reps <= 12:
+            intensity_signals.append("hypertrophy")
+        elif reps > 12:
+            intensity_signals.append("endurance")
+
+        ex_rpe = ex.get("rpe") or ex.get("target_rpe")
+        if ex_rpe:
+            try:
+                max_rpe = max(max_rpe, float(ex_rpe))
+            except (ValueError, TypeError):
+                pass
+
+    # Score calculation (0-100)
+    score = 0
+
+    # Compound density (0-35 points)
+    score += min(heavy_compound_count * 12, 35)
+
+    # Volume load (0-25 points)
+    score += min(total_sets * 1.5, 25)
+
+    # Intensity signals (0-20 points)
+    strength_ratio = intensity_signals.count("strength") / max(len(intensity_signals), 1)
+    score += strength_ratio * 20
+
+    # Heavy weight bonus (0-10 points)
+    if has_heavy_weight:
+        score += 10
+
+    # RPE modifier (0-10 points)
+    if max_rpe >= 8:
+        score += 10
+    elif max_rpe >= 6:
+        score += 5
+
+    score = min(100, score)
+
+    # Classify
+    if score >= 65:
+        level = "high"
+    elif score >= 35:
+        level = "moderate"
+    else:
+        level = "low"
+
+    reasoning = []
+    if heavy_compound_count >= 2:
+        reasoning.append(f"{heavy_compound_count} heavy compounds")
+    if has_heavy_weight:
+        reasoning.append("heavy loading")
+    if strength_ratio > 0.5:
+        reasoning.append("strength-rep ranges")
+    if total_sets >= 20:
+        reasoning.append(f"high volume ({total_sets} sets)")
+    if max_rpe >= 8:
+        reasoning.append(f"high RPE ({max_rpe})")
+    if not reasoning:
+        reasoning.append("moderate or light work")
+
+    return {
+        "level": level,
+        "score": round(score),
+        "has_heavy_compounds": heavy_compound_count > 0,
+        "compound_count": compound_count,
+        "total_sets": total_sets,
+        "max_rpe": max_rpe,
+        "reasoning": ", ".join(reasoning),
+    }
+
+
+# Alignment matrix: (recovery_zone, workout_intensity) -> (score, verdict, recommendation)
+_ALIGNMENT_MATRIX = {
+    ("green", "high"):     (95, "dialed_in", "Perfect match — you pushed hard on a green day. This is how you make gains."),
+    ("green", "moderate"): (65, "undertrained", "Recovery was green — you could've gone heavier. Next green day, load up the compounds."),
+    ("green", "low"):      (40, "missed_opportunity", "Green day wasted on light work. Your body was ready for heavy lifting."),
+    ("yellow", "high"):    (35, "overreached", "Yellow recovery but you went heavy. Next time in yellow, drop intensity 10-15% and keep volume."),
+    ("yellow", "moderate"):(90, "dialed_in", "Good read on your body. Moderate effort on a yellow day is textbook."),
+    ("yellow", "low"):     (70, "cautious_ok", "Conservative but fine. You could've done moderate compounds safely."),
+    ("red", "high"):       (15, "reckless", "Red recovery and heavy session — that's how injuries happen. Red days = mobility, Zone 1, or rest."),
+    ("red", "moderate"):   (35, "overreached", "Body was in red but you pushed moderate. Should've been light mobility or rest."),
+    ("red", "low"):        (90, "smart", "Smart call. Low intensity on a red day lets your body actually recover."),
+}
+
+
+def analyze_workout_vs_recovery(user_id: int, workout: dict, exercises: list,
+                                  workout_date: date = None) -> dict:
+    """Core algorithm: analyze a workout against WHOOP recovery data.
+
+    Args:
+        user_id: User ID.
+        workout: Workout dict (from workouts table).
+        exercises: List of exercise dicts.
+        workout_date: Date of workout (defaults to today).
+
+    Returns:
+        dict with alignment_score, verdict, recovery_context, workout_intensity,
+        what_was_good, what_to_change, alternative_session.
+    """
+    workout_date = workout_date or date.today()
+
+    # --- Gather WHOOP data ---
+    whoop_data = get_whoop_for_date(user_id, workout_date)
+    if not whoop_data:
+        return {"error": "No WHOOP data available for this date. Sync your WHOOP first."}
+
+    recovery_score = whoop_data.get("recovery_score")
+    zone = get_recovery_zone(recovery_score)
+    hrv = whoop_data.get("hrv_rmssd")
+    rhr = whoop_data.get("resting_hr")
+    sleep_perf = whoop_data.get("sleep_performance")
+    deep_sleep = whoop_data.get("deep_sleep_minutes")
+    prev_strain = whoop_data.get("daily_strain")
+
+    # Get trends for modifiers
+    trends = get_whoop_trends(user_id, days=7)
+    hrv_avg = trends.get("hrv_avg")
+    hrv_trend = trends.get("hrv_trend")
+    strain_history = get_multi_day_strain(user_id, days=3)
+
+    # --- Classify workout intensity ---
+    intensity = _classify_workout_intensity(exercises, workout.get("rpe"))
+
+    # --- Base alignment from matrix ---
+    key = (zone, intensity["level"])
+    base_score, verdict, base_rec = _ALIGNMENT_MATRIX.get(
+        key, (50, "unknown", "Not enough data to fully assess.")
+    )
+
+    # --- Apply modifiers ---
+    modifiers = []
+    adjusted_score = base_score
+
+    # Modifier 1: HRV trend (down for 3+ days = more caution needed)
+    if hrv_trend == "trending_down":
+        if intensity["level"] in ("high", "moderate"):
+            adjusted_score -= 10
+            modifiers.append("HRV trending down — body accumulating fatigue")
+
+    # Modifier 2: Sleep quality gate
+    if sleep_perf is not None and sleep_perf < 70:
+        if intensity["has_heavy_compounds"]:
+            adjusted_score -= 10
+            modifiers.append(f"Sleep was {sleep_perf}% — heavy compounds risky on poor sleep")
+
+    # Modifier 3: Deep sleep gate (CNS recovery)
+    if deep_sleep is not None and deep_sleep < 45:
+        if intensity["has_heavy_compounds"]:
+            adjusted_score -= 8
+            modifiers.append(f"Only {deep_sleep}min deep sleep — CNS not fully recovered for heavy work")
+
+    # Modifier 4: Cumulative strain (3-day average > 14 = high load)
+    if len(strain_history) >= 2:
+        avg_strain = sum(strain_history) / len(strain_history)
+        if avg_strain > 14 and intensity["level"] == "high":
+            adjusted_score -= 10
+            modifiers.append(f"High cumulative strain (avg {avg_strain:.1f} over {len(strain_history)}d)")
+
+    # Modifier 5: HRV significantly below personal baseline
+    if hrv is not None and hrv_avg is not None and hrv_avg > 0:
+        hrv_deficit_pct = ((hrv_avg - hrv) / hrv_avg) * 100
+        if hrv_deficit_pct > 15 and intensity["level"] != "low":
+            adjusted_score -= 8
+            modifiers.append(f"HRV {hrv_deficit_pct:.0f}% below your 7d average")
+
+    # Positive modifier: nailed it despite modifiers
+    if zone == "green" and intensity["level"] == "high" and not modifiers:
+        adjusted_score = min(adjusted_score + 5, 100)
+
+    adjusted_score = max(0, min(100, adjusted_score))
+
+    # --- Build recommendations ---
+    what_was_good = []
+    what_to_change = []
+    alternative = None
+
+    if verdict == "dialed_in":
+        what_was_good.append("Workout intensity matched your recovery state")
+        if intensity["has_heavy_compounds"]:
+            what_was_good.append("Good compound selection for a strong recovery day")
+        if intensity["total_sets"] >= 15:
+            what_was_good.append("Solid volume — you're accumulating stimulus")
+
+    elif verdict == "undertrained":
+        what_to_change.append("Add 1-2 heavy compound movements on green days")
+        what_to_change.append("Push RPE to 8-9 on top sets when recovery is green")
+        alternative = "heavy compound session (squat or deadlift + secondary compound + accessories)"
+
+    elif verdict == "missed_opportunity":
+        what_to_change.append("Green recovery is your window for heavy lifting — don't waste it on light work")
+        what_to_change.append("If you needed a break mentally, that's valid — but physically you were ready")
+        alternative = "full strength session with ascending loads on primary compound"
+
+    elif verdict == "overreached":
+        what_to_change.append("Scale back to RPE 6-7 when in yellow/red zone")
+        if intensity["has_heavy_compounds"]:
+            what_to_change.append("Swap heavy compounds for moderate-weight, higher-rep work")
+        alternative = "moderate hypertrophy session — same movements, lighter weight, higher reps"
+
+    elif verdict == "reckless":
+        what_to_change.append("Red days = mobility, Zone 1 cardio, or full rest. Non-negotiable.")
+        what_to_change.append("Heavy training on red recovery increases injury risk and delays recovery")
+        alternative = "20min Zone 1 cardio + mobility circuit + rotational work"
+
+    elif verdict == "smart":
+        what_was_good.append("You respected your recovery state")
+        what_was_good.append("Light work on red days accelerates recovery without adding stress")
+
+    elif verdict == "cautious_ok":
+        what_was_good.append("Playing it safe is fine, but you had room for moderate work")
+        what_to_change.append("Yellow doesn't mean stop — moderate compounds at RPE 6-7 are safe")
+
+    # Add modifier-based recommendations
+    for mod in modifiers:
+        what_to_change.append(mod)
+
+    return {
+        "alignment_score": adjusted_score,
+        "verdict": verdict,
+        "recovery_context": {
+            "recovery_score": recovery_score,
+            "zone": zone,
+            "hrv": hrv,
+            "hrv_avg_7d": hrv_avg,
+            "hrv_trend": hrv_trend,
+            "sleep_performance": sleep_perf,
+            "deep_sleep_min": deep_sleep,
+            "previous_day_strain": prev_strain,
+        },
+        "workout_intensity": intensity,
+        "what_was_good": what_was_good,
+        "what_to_change": what_to_change,
+        "alternative_session": alternative,
+        "modifiers_applied": modifiers,
+        "date": workout_date.isoformat(),
+    }
+
+
 # --- Webhook handling ---
 
 def verify_webhook_signature(body: bytes, signature: str, timestamp: str) -> bool:
     """Verify WHOOP webhook HMAC-SHA256 signature."""
     secret = _get_client_secret()
     if not secret:
-        logger.error("WHOOP webhook rejected: no client secret configured")
-        return False  # Fail closed — reject if secret not configured
+        logger.error("WHOOP webhook rejected: no client secret configured (fail-closed)")
+        return False  # Fail closed — reject webhooks when we can't verify them
 
     expected = hmac.new(
         secret.encode(),

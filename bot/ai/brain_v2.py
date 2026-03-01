@@ -18,6 +18,22 @@ def _to_ascii(text):
         return ""
 
 
+# Singleton Anthropic client — reuses HTTP connection pool across requests
+_anthropic_client = None
+
+
+def _get_client():
+    """Get or create the singleton Anthropic client."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return None
+        _anthropic_client = anthropic.Anthropic(api_key=api_key)
+    return _anthropic_client
+
+
 def _call_api(system, messages, tools=None, model=None, max_tokens=1024, tool_choice=None):
     """Call Anthropic API with tool support and prompt caching.
 
@@ -27,12 +43,11 @@ def _call_api(system, messages, tools=None, model=None, max_tokens=1024, tool_ch
     """
     import anthropic
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+    client = _get_client()
+    if not client:
         return None, "No API key configured"
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
         if model is None:
             model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
@@ -80,8 +95,8 @@ def _user_now(user: dict) -> datetime:
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo(tz_name))
     except Exception:
-        # Fallback if zoneinfo not available or bad tz name
-        return datetime.now()
+        # Fallback to UTC (timezone-aware) to avoid naive/aware comparison issues
+        return datetime.now(timezone.utc)
 
 
 class AIBrain:
@@ -97,8 +112,8 @@ class AIBrain:
         self._pending_protocol_dashboard = {}
         # Cached static prompt — built once, reused for every request
         self._static_prompt = None
-        # Set to True when process() hits the paywall (AI message limit)
-        self._paywall_hit = False
+        # Tracks paywall hits per user_id (avoids race condition on singleton)
+        self._paywall_hit = {}
         # Detected topics for current request (used for memory filtering)
         self._current_topics = ["general"]
 
@@ -487,6 +502,7 @@ WHEN SOMEONE LOGS A WORKOUT:
 - High RPE? Mention recovery
 - Pain/tightness in notes? Suggest exercise alternatives with biomechanical reasoning
 - Flag if rotational work was missing — gently remind it's non-negotiable
+- If WHOOP is connected AND recovery was yellow/red: call analyze_workout and mention the alignment briefly (1 line). Don't lecture — just note it: "Heads up, recovery was yellow today — might wanna ease up next time."
 
 WHEN SOMEONE LOGS BODY METRICS:
 - Contextualize vs previous reading
@@ -835,6 +851,19 @@ WHOOP TOOL USE:
 - When advising on training intensity, ALWAYS check WHOOP data first if connected
 - Red recovery = insist on rest/mobility, don't program heavy session
 - NEVER repeat back all the WHOOP numbers. Pick what matters. The user can see their WHOOP app for the full data.
+
+WORKOUT ANALYSIS (analyze_workout tool — THIS IS A KEY DIFFERENTIATOR):
+- "Was my workout good?" / "analyze my session" / "should I have trained differently?" / "was that too much?" -> call analyze_workout
+- After the user finishes a workout session (completes interactive cards) AND WHOOP is connected, PROACTIVELY offer to analyze: "Want me to check how that lined up with your recovery?"
+- When logging a workout and WHOOP is connected, if recovery was red or yellow, proactively run analyze_workout and mention the alignment
+- The tool returns an alignment_score (0-100), verdict, what_was_good, what_to_change, and alternative_session
+- RESPONSE FORMAT for analysis (follow exactly):
+  1. Lead with the verdict in one line: "That session was dialed in" or "You overreached a bit today"
+  2. One line explaining WHY: reference the specific recovery/intensity mismatch
+  3. If there are changes to suggest: one concrete alternative, not a list of options
+  4. Keep it to 3-4 lines total. Don't dump the full analysis. Be a coach, not a report.
+- NEVER say the alignment score number to the user. Use it internally. Translate to human language: 90+ = "dialed in", 65-89 = "decent but could optimize", 35-64 = "not ideal", <35 = "that was too much"
+- Connect dots over time: "You've been pushing hard on yellow days twice this week — your HRV is showing it"
 
 MEMORY TOOL USE:
 - Proactively save facts you learn — don't wait for the user to ask you to remember things
@@ -2040,6 +2069,11 @@ JSON:"""
             "send email", "send him", "send her", "send a reminder",
             "calendar meeting", "adjust", "reschedule",
             "analyze my", "review my", "optimize",
+            "what does my whoop", "show my sleep",
+            # Workout analysis triggers
+            "was my workout good", "analyze my session", "analyze my workout",
+            "should i have trained differently", "was that too much",
+            "how was my training", "rate my workout",
         ]
         for trigger in complex_triggers:
             if trigger in lower:
@@ -2055,7 +2089,8 @@ JSON:"""
         from bot.ai import memory_pg as memory
         from bot.services.tier_service import check_limit, track_usage
 
-        self._paywall_hit = False
+        user_id = user["id"]
+        self._paywall_hit[user_id] = False
 
         # Detect conversation topics for memory filtering (zero-cost keyword matching)
         from bot.services.memory_service import detect_topics
@@ -2065,7 +2100,6 @@ JSON:"""
         if not api_key:
             return None
 
-        user_id = user["id"]
         tier = user.get("tier", "free")
         is_admin = user.get("is_admin", False)
 
@@ -2073,7 +2107,7 @@ JSON:"""
         telegram_user_id = user.get("telegram_user_id")
         allowed, msg = check_limit(user_id, "ai_message", tier, is_admin=is_admin, telegram_user_id=telegram_user_id)
         if not allowed:
-            self._paywall_hit = True
+            self._paywall_hit[user_id] = True
             return msg
 
         try:
@@ -2143,16 +2177,15 @@ JSON:"""
                     logger.error(f"Agent API error on turn {turn}: {error}")
                     # Never leak raw API errors to users — always use a friendly message
                     error_msg = "Didn't catch that — try again in a sec."
-                    # Save only once — the success path at the bottom handles normal saves
-                    if turn == 0:
-                        memory.save_turn(user_id, "user", user_input)
+                    # Always save the user message on error (success path won't run)
+                    memory.save_turn(user_id, "user", user_input)
                     memory.save_turn(user_id, "assistant", error_msg)
                     return error_msg
 
                 if not response or not response.content:
                     logger.error(f"Agent got empty response on turn {turn}")
-                    if turn == 0:
-                        memory.save_turn(user_id, "user", user_input)
+                    # Always save the user message on error (success path won't run)
+                    memory.save_turn(user_id, "user", user_input)
                     fallback = "Didn't catch that — try saying it differently, or send it again."
                     memory.save_turn(user_id, "assistant", fallback)
                     return fallback

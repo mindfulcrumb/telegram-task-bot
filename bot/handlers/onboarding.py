@@ -1029,22 +1029,41 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    # Handle text-based setting changes first
+    # Handle setting changes first (so we show updated values)
     args = context.args
+    changed = False
     if args and len(args) >= 2:
         if args[0] == "timezone":
-            user_service.update_settings(user["id"], timezone=args[1])
-            await update.message.reply_text(f"Timezone updated to {args[1]}")
-            return
+            tz_str = args[1]
+            # Validate timezone string
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(tz_str)  # Raises if invalid
+            except (KeyError, Exception):
+                await update.message.reply_text(
+                    f"'{tz_str}' doesn't look like a valid timezone.\n\n"
+                    "Use format like: Europe/Lisbon, America/New_York, Asia/Tokyo\n"
+                    "Or share your location and I'll figure it out."
+                )
+                return
+            user_service.update_settings(user["id"], timezone=tz_str)
+            user["timezone"] = tz_str
+            context.user_data["db_user"] = user
+            changed = True
         elif args[0] == "briefing":
             try:
                 hour = int(args[1])
                 if 0 <= hour <= 23:
                     user_service.update_settings(user["id"], briefing_hour=hour)
-                    await update.message.reply_text(f"Morning briefing set to {_format_hour(hour)}")
+                    user["briefing_hour"] = hour
+                    context.user_data["db_user"] = user
+                    changed = True
+                else:
+                    await update.message.reply_text("Briefing hour must be between 0 and 23.")
                     return
             except ValueError:
-                pass
+                await update.message.reply_text("That's not a valid hour. Use a number 0-23.")
+                return
 
     tz = user.get("timezone", "UTC")
     tz_short = tz.split("/")[-1].replace("_", " ")
@@ -1057,9 +1076,10 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"Timezone: {tz_short}", callback_data="settings:timezone")],
     ])
 
+    status = "Updated" if changed else "Your"
     await _typing_pause(update.message.chat, 0.6)
     await update.message.reply_text(
-        "Your settings — tap to change:",
+        f"{status} settings — tap to change:",
         reply_markup=keyboard,
     )
 

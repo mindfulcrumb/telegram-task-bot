@@ -6,11 +6,13 @@ Multi-user SaaS Telegram bot. AI-powered task management, fitness coaching, bioh
 
 - Python 3.11, python-telegram-bot v21 (async)
 - Claude API (anthropic SDK) with native tool_use for agent loop
+- Claude Vision (Haiku) for blood test photo extraction
 - Prompt caching: static prompt cached (90% cost reduction), dynamic context per-request
 - Model routing: Haiku default ($1/$5/M), Sonnet for complex requests ($3/$15/M)
-- PostgreSQL on Railway (psycopg2-binary) — 23 tables
+- PostgreSQL on Railway (psycopg2-binary) — 24 tables
 - WHOOP API v2 (OAuth2, webhooks, recovery/sleep/strain sync)
 - Groq Whisper for voice transcription
+- YouTube Transcript API for podcast content extraction
 - iCal parsing for Google Calendar (icalendar library)
 - Deployed on Railway (auto-deploys from GitHub mindfulcrumb/telegram-task-bot)
 
@@ -21,23 +23,24 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
                                                        ↓
                                             Claude API (tool_use, prompt caching)
                                                        ↓
-                                               bot/ai/tools_v2.py (24 tools)
+                                               bot/ai/tools_v2.py (27 tools)
                                                        ↓
-                                        PostgreSQL (23 tables — tasks, fitness, biohacking, WHOOP, etc.)
+                                        PostgreSQL (24 tables — tasks, fitness, biohacking, WHOOP, etc.)
 ```
 
 ### Key Files
 
 - `bot/main_v2.py` — Entry point, handler registration, WHOOP OAuth callback + webhook, health check
 - `bot/ai/brain_v2.py` — Zoe AI brain: static prompt (cached), dynamic context, agent loop, model routing
-- `bot/ai/tools_v2.py` — 24 tools: tasks (8), fitness (6), biohacking (6), WHOOP (2), memory (2)
+- `bot/ai/tools_v2.py` — 27 tools: tasks (8), fitness (6), biohacking (6), WHOOP (2), memory (2), knowledge (3)
 - `bot/ai/memory_pg.py` — PostgreSQL conversation history (10 turn limit, daily pruning)
 - `bot/handlers/onboarding.py` — /start, /help, /settings, /account, /calendar, /deleteaccount
 - `bot/handlers/tasks_v2.py` — 23 commands: task management, fitness, biohacking, WHOOP
 - `bot/handlers/workout_session.py` — Interactive exercise cards, set tracking, rest timers
 - `bot/handlers/payments.py` — Telegram Payments + Stripe (/upgrade, /terms, /support)
-- `bot/handlers/proactive_v2.py` — 8 jobs: briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders
-- `bot/handlers/voice_v2.py` — Voice messages via Groq Whisper → AI brain
+- `bot/handlers/proactive_v2.py` — 13 jobs: briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders, research updates, content extraction, health check, Sunday review, progress report
+- `bot/handlers/voice_v2.py` — Voice messages via Groq Whisper → AI brain (async, with timeout + markdown stripping)
+- `bot/handlers/photo_handler.py` — Blood test photo upload → Claude Vision extraction → biomarker logging
 - `bot/services/fitness_service.py` — Workout CRUD, pattern balance, PR detection, interactive sessions
 - `bot/services/biohacking_service.py` — Peptide protocols, supplements, bloodwork, biomarker tracking
 - `bot/services/whoop_service.py` — WHOOP OAuth2, data sync (v2 API), webhook handling with HMAC verification
@@ -47,7 +50,11 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - `bot/services/user_service.py` — User management
 - `bot/services/tier_service.py` — Free/Pro tier limits and usage tracking
 - `bot/services/calendar_service.py` — Google Calendar via iCal URL
-- `bot/db/database.py` — PostgreSQL schema (23 tables), connection pool, indexes
+- `bot/services/content_extractor.py` — Deep content extraction: YouTube transcripts, PubMed abstracts, RSS articles → Haiku protocol extraction → KB
+- `bot/services/knowledge_service.py` — Knowledge base CRUD, search, RSS auto-updates
+- `bot/data/seed_knowledge_v3.py` — 15 deep expert protocol entries (Koniver, Jay Campbell, Epitalon, etc.)
+- `bot/db/database.py` — PostgreSQL schema (24 tables), connection pool, indexes
+- `scripts/populate_kb.py` — CLI batch KB loader (manual use; primary path is cloud startup job)
 
 ## Current Features
 
@@ -104,7 +111,7 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - Zoe AI personality with coaching context (streaks, patterns)
 - Prompt caching (static prompt cached, 90% cost reduction)
 - Model routing (Haiku default, Sonnet for complex requests)
-- 24 AI tools (tasks, fitness, biohacking, WHOOP, memory)
+- 27 AI tools (tasks, fitness, biohacking, WHOOP, memory, knowledge)
 - Interactive workout sessions (exercise cards, set tracking, rest timers)
 - Fitness tracking (workouts, exercises, pattern balance, PR detection)
 - Biohacking tracking (peptide protocols, supplements, bloodwork)
@@ -114,11 +121,15 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - Google Calendar read (iCal URL)
 - User memory system (Zoe learns facts about users)
 - Response feedback (thumbs up/down)
-- 8 proactive jobs (briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders)
+- 13 proactive jobs (briefing, check-in, nudges, insights, reminders, pruning, session cleanup, dose reminders, research updates, content extraction, health check, Sunday review, progress report)
+- Blood test photo upload — Claude Vision extracts biomarkers, logs to DB, flags out-of-range
+- Deep content extraction pipeline — YouTube transcripts, PubMed, RSS → Haiku summarization → KB entries
+- Knowledge base: 261 v2 entries + 15 v3 expert protocols + auto-extracted content (1,500-3,000 chars each)
 - Webhook HMAC signature verification for WHOOP
 - Conversation pruning (daily, 7-day retention)
 - Stale workout session cleanup (3-hour timeout)
 - Health check server for Railway
+- All sync work (content extraction, research) runs in asyncio.to_thread() to never block event loop
 
 ## What's NOT Working / TODO
 
@@ -126,6 +137,187 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - **Google Calendar OAuth** — code deployed, env vars set (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`). User needs to test `/calendar` flow. Redirect URI: `https://telegram-task-bot-production-6784.up.railway.app/google/callback`. Google Cloud project is in Testing mode — user's email added as test user.
 - No test suite
 - No referral system yet
+- **OAuth state is predictable** — uses `uid_{user_id}` not cryptographic nonce. Lower priority but noted.
+- **Tokens stored as plaintext in DB** — would need `cryptography`/Fernet encryption
+
+## Session Log — Mar 1, 2026 (Session 9: Senior-Level Code Audit + Fixes)
+
+### What was done:
+Full codebase audit across all 14+ core files, then implemented fixes for 15 bugs across 9 files.
+
+### Bugs fixed (by severity):
+
+**CRITICAL:**
+1. **`set_reminder` naive vs aware datetime** (tools_v2.py:589) — `datetime.fromisoformat()` can return aware datetime, `datetime.now()` is always naive. Comparing them crashes with TypeError. Fix: match timezone context dynamically.
+2. **`set_reminder` unbound `u` variable** (tools_v2.py:581) — If `user_service.get_user_by_id()` fails, `u` was referenced outside the try/except → `NameError` crash. Fix: Initialize `u = None` before try block.
+3. **`finish_session` duplicate workouts** (fitness_service.py:644) — Double-tap "Finish Workout" could create 2 workout records. Fix: Atomic `UPDATE ... WHERE status = 'active' RETURNING *` claims the session, preventing duplicates.
+
+**HIGH:**
+4. **WHOOP webhook auth bypass** (main_v2.py:280) — Missing signature headers allowed unsigned requests through. Fix: When `WHOOP_WEBHOOK_SECRET` is configured, signature headers are REQUIRED (401 if missing).
+5. **Webhook payload size limit** (main_v2.py:274) — No body size limit → DoS risk. Fix: Reject payloads > 1MB.
+6. **`/whoop/debug` config leak** (main_v2.py:76) — Exposed WHOOP client config without auth. Fix: Requires `DEBUG_TOKEN` query param.
+7. **`_paywall_hit` race condition** (brain_v2.py:109) — Singleton `AIBrain` stored paywall flag as flat bool — concurrent users overwrite each other. Fix: Changed to dict keyed by `user_id`. Updated 3 callers (tasks_v2.py, voice_v2.py, photo_handler.py).
+8. **`_call_api` blocking event loop** (brain_v2.py:1253) — Sync Anthropic API call (up to 60s) blocked the entire event loop for all users. Fix: Wrapped both `_call_api` invocations in `asyncio.to_thread()`.
+9. **User message lost on turn > 0 errors** (brain_v2.py:1259) — If API error occurred after turn 0, user's message was never saved to conversation history. Fix: Always save user message on error regardless of turn.
+10. **`_select_model` missing workout triggers** (brain_v2.py:1178) — "was my workout good", "analyze my session", etc. were routed to Haiku instead of Sonnet. Fix: Added 7 workout analysis trigger phrases.
+
+**MEDIUM:**
+11. **`manage_peptide_protocol` missing return** (tools_v2.py:812) — Invalid action (not add/pause/resume/end) fell through returning `None`. Fix: Added explicit error return for unknown actions.
+12. **Settings shows stale values** (onboarding.py:844) — `/settings timezone X` showed OLD timezone first, then applied change. Fix: Process args before displaying settings.
+13. **No timezone validation** (onboarding.py:863) — Any string accepted as timezone. Fix: Validate with `zoneinfo.ZoneInfo()`, return helpful error if invalid.
+14. **`_escape_md` over-escaping** (workout_session.py:22) — Escaped 20 Markdown v2 chars but used `parse_mode='Markdown'` (v1). Caused visible backslashes in exercise cards. Fix: Only escape v1 chars (`_`, `*`, `` ` ``, `[`).
+
+### Files modified (9 files):
+- `bot/ai/tools_v2.py` — 3 fixes (unbound `u`, datetime comparison, peptide protocol return)
+- `bot/ai/brain_v2.py` — 4 fixes (paywall race condition, async _call_api, message loss, model triggers)
+- `bot/services/fitness_service.py` — 1 fix (finish_session idempotency)
+- `bot/main_v2.py` — 3 fixes (webhook auth, payload limit, debug auth)
+- `bot/handlers/onboarding.py` — 2 fixes (timezone validation, settings order)
+- `bot/handlers/workout_session.py` — 1 fix (_escape_md over-escaping)
+- `bot/handlers/tasks_v2.py` — 1 fix (paywall_hit dict access)
+- `bot/handlers/voice_v2.py` — 1 fix (paywall_hit dict access)
+- `bot/handlers/photo_handler.py` — 1 fix (paywall_hit dict access)
+
+### Verification:
+- All 9 modified files compile clean (py_compile)
+
+### Remaining lower-priority items (not fixed — larger refactors):
+- **Sync psycopg2 blocking event loop** — All DB calls are sync. Would need `asyncpg` or `to_thread()` wrappers on every DB function. Significant refactor.
+- **Sync httpx in whoop_service.py** — Uses sync `httpx.Client`. Would need async client or `to_thread()` wrappers.
+- **`date.today()` timezone mismatch** — Used in streaks, `has_workout_today`, proactive checks. Uses server UTC not user timezone. Needs user timezone lookup helper.
+- **OAuth state predictable** — Uses `uid_{user_id}`. Needs cryptographic nonce + DB state table.
+- **`_undo_buffer` unbounded growth** — In-memory dict, no cleanup. Low risk in practice.
+- **`_rest_state` lost on restart** — In-memory dict for rest timers. Would need DB-backed state.
+- **`db_user` cache staleness** — Tier can change mid-session but cached user dict isn't refreshed.
+
+---
+
+## Session Log — Mar 1, 2026 (Session 8: WHOOP Workout Analysis Algorithm)
+
+### What was done:
+1. **Workout-Recovery Analysis Algorithm** — Built `analyze_workout_vs_recovery()` in `whoop_service.py`. Cross-references workout intensity against WHOOP recovery data to score alignment (0-100) and provide specific feedback.
+2. **Workout Intensity Classifier** — `_classify_workout_intensity()` scores exercise data (compound density, volume, rep ranges, weight, RPE) into high/moderate/low with reasoning.
+3. **9-cell Alignment Matrix** — Maps (recovery_zone x intensity_level) to verdicts: dialed_in, undertrained, missed_opportunity, overreached, reckless, smart, cautious_ok.
+4. **5 Modifier Layers** — HRV trend (fatigue accumulation), sleep quality gate, deep sleep CNS gate, cumulative strain (3-day), HRV deficit vs personal baseline.
+5. **New AI Tool** — `analyze_workout` tool definition + executor in tools_v2.py. Handles workout_id or date-based lookup, falls back to most recent workout.
+6. **System Prompt Updates** — Added WORKOUT ANALYSIS section to brain_v2.py with response format guidelines, proactive trigger rules, and connection to existing workout logging flow.
+7. **Helper Functions** — `get_whoop_for_date()` (date-specific WHOOP lookup), `get_multi_day_strain()` (cumulative strain history).
+
+### How the algorithm works:
+- Classifies workout intensity from exercise data (compounds, weight, reps, RPE, volume)
+- Cross-references against recovery zone (green/yellow/red) via alignment matrix
+- Applies 5 modifiers: HRV trend, sleep %, deep sleep, cumulative strain, HRV vs baseline
+- Returns alignment_score, verdict, what_was_good, what_to_change, alternative_session
+- AI is instructed to lead with verdict, never show raw score, keep to 3-4 lines
+
+### Files modified:
+- `bot/services/whoop_service.py` — Added ~200 lines: analysis algorithm, intensity classifier, alignment matrix, helper functions
+- `bot/ai/tools_v2.py` — Added tool definition + ~50-line executor with workout lookup logic
+- `bot/ai/brain_v2.py` — Added WORKOUT ANALYSIS section to system prompt, updated WHEN SOMEONE LOGS A WORKOUT
+
+### Verification:
+- All 3 modified files compile clean (py_compile)
+
+### What still needs doing:
+- Deploy to Railway (push to main) to go live
+- Test with real WHOOP data and workout history
+- Consider adding proactive post-workout analysis in proactive_v2.py evening check-in
+
+---
+
+## Session Log — Mar 1, 2026 (Session 7)
+
+### What was done:
+1. **Full codebase audit** — Read and audited all 18 core Python files (main_v2.py, brain_v2.py, tools_v2.py, memory_pg.py, tasks_v2.py, proactive_v2.py, workout_session.py, whoop_service.py, fitness_service.py, database.py, onboarding.py, message_utils.py, etc.)
+2. **XSS fix (CRITICAL)** — Added `html.escape()` to all 6 dynamic HTML injection points in OAuth callbacks (Google Calendar + WHOOP) in main_v2.py. Previous security audit claimed this was done but it wasn't in the code.
+3. **Workout card Markdown escape (CRITICAL)** — Added `_escape_md()` function to workout_session.py. Exercise names/notes with `_`, `*`, `[`, `` ` `` now properly escaped. Added plaintext fallbacks on all 4 Markdown send paths (send, edit/refresh, timer callback). Previous security audit said this was done but the function didn't exist.
+4. **WHOOP webhook fail-closed (SECURITY)** — Changed `verify_webhook_signature()` to return `False` when client secret is missing (was returning `True`, allowing unauthenticated webhooks). Security audit said "fail closed" but code said otherwise.
+5. **CONVERSATION_HISTORY_LIMIT default fixed** — Changed from 20 to 10 in memory_pg.py. Was sending 2x the tokens per request vs documented default.
+6. **Anthropic client singleton** — Replaced per-request `anthropic.Anthropic()` instantiation with `_get_client()` singleton in brain_v2.py. Reuses HTTP connection pool, reduces connection churn.
+7. **_upsert_daily race condition fixed** — Replaced check-then-insert pattern with atomic `INSERT ... ON CONFLICT DO UPDATE` in whoop_service.py. Prevents unique constraint violations from concurrent WHOOP sync calls.
+8. **_user_now() timezone fix** — Changed fallback from naive `datetime.now()` to timezone-aware `datetime.now(timezone.utc)`. Prevents comparison errors with tz-aware datetimes elsewhere.
+
+### Known remaining items (lower priority):
+- OAuth state parameter uses predictable `uid_{user_id}` — should be cryptographic nonce with DB-backed validation
+- No `oauth_states` table exists despite previous security audit claiming it was added
+- `_undo_buffer` dict grows without bounds (in-memory, per-user, only cleared on /undo)
+- `_rest_state` dict is in-memory, lost on Railway restart
+- `db_user` cached in `context.user_data` — stale if tier changes mid-session
+- SQL INTERVAL with string formatting (`'%s days'`) is safe but fragile
+
+### Files modified:
+- `bot/main_v2.py` — 7 edits (html import, 6 XSS fixes in OAuth + error pages)
+- `bot/handlers/workout_session.py` — 5 edits (_escape_md function, name/notes escaping, 3 plaintext fallbacks)
+- `bot/ai/brain_v2.py` — 2 edits (Anthropic client singleton, _user_now UTC fallback)
+- `bot/ai/memory_pg.py` — 1 edit (history limit 20→10)
+- `bot/services/whoop_service.py` — 2 edits (_upsert_daily ON CONFLICT, webhook fail-closed)
+
+### Verification:
+- All 18 core Python files compile clean (py_compile)
+
+## Session Log — Feb 26, 2026 (Session 6)
+
+### What was done:
+1. **Brand voice audit** — Full audit of every user-facing string across all active handler files against Zoe's brand voice rules (brain_v2.py lines 108-145). Found and fixed violations in 5 files.
+2. **Stripped parse_mode="Markdown"** from 15+ conversational messages across all handlers. Kept it ONLY on workout exercise cards (structured UI, not conversation).
+3. **Killed corporate language** — Removed: "Stay tuned!", "Enjoy unlimited everything", "You're all set!", "Unlock recovery-based training", "Thanks for trusting me", "Good morning, {name}!"
+4. **Fixed formatting violations** — Converted hyphen-as-bullets to flowing text or indented items, removed bold markdown headers (`*Tasks*`, `**Active Protocols**`), removed emoji-as-bullet-points in nudges.
+5. **Rewrote copy to match voice** — Payments, /help, /support, /terms, proactive nudges, morning briefings, evening check-ins, weekly recaps all rewritten in Zoe's casual, short, opinionated voice.
+
+### Key decision:
+- **Exercise cards keep parse_mode="Markdown"** — These are structured interactive UI (set progress checkboxes, timer buttons), not conversational Zoe text. All other messages are plain text only.
+
+### Files modified:
+- `bot/handlers/onboarding.py` — 9 edits (referral, /memory, /help, capabilities, timezone, delete account, location)
+- `bot/handlers/tasks_v2.py` — 10 edits (/streak, /metrics, /gains, /protocols, /supplements, /bloodwork, WHOOP commands)
+- `bot/handlers/proactive_v2.py` — 7 edits (evening check-in, nudges, dose reminders, briefing, assessment, weekly templates)
+- `bot/handlers/payments.py` — 5 edits (/upgrade, successful payment, /terms, /support)
+- `bot/handlers/workout_session.py` — 3 edits (completion text, timer notification)
+
+### Verification:
+- All 12 critical Python files compile clean (py_compile)
+- Zero `parse_mode="Markdown"` in conversational handlers (only in workout_session exercise cards)
+- Zero corporate language patterns remaining
+- Zero markdown formatting characters in user-facing strings
+- Bot confirmed live on Railway (Telegram API getMe = OK)
+- Legacy files (voice.py, tasks.py, proactive.py, reminders.py) confirmed NOT imported in main_v2.py — dead code, untouched
+
+### Commits:
+- `516dcc7` — Brand voice audit — strip markdown, kill corporate language across all handlers
+
+## Session Log — Feb 25-26, 2026 (Session 5)
+
+### What was done:
+1. **Elite workout programming brain** — Full exercise library, movement pattern balance, progressive overload, deload weeks, RPE-based auto-regulation
+2. **Owner program seed** — Seeded the user's actual training program into the bot
+3. **Onboarding upgrade** — Equipment selection, training style, injury history, biohacking preferences + memory seeding from onboarding answers
+4. **/memory command** — Users can see what Zoe remembers about them
+5. **Typing delays + voice rewrite** — Added realistic typing delays to onboarding, rewrote all onboarding copy in Zoe's voice
+
+### Commits:
+- `0d9341f` — Elite workout programming brain + owner program seed
+- `ef9bb3d` — Onboarding upgrade: equipment, style, injuries, biohacking + memory seeding
+- `85f2b12` — /memory command
+- `67a750b` — Human feel: typing delays + Zoe's voice in onboarding
+
+## Session Log — Feb 25, 2026 (Session 4)
+
+### What was done:
+1. **Deep content extraction pipeline** — `content_extractor.py` extracts protocols from YouTube transcripts (Huberman, Attia, DOAC), PubMed full abstracts, Jay Campbell RSS articles. Chunks transcripts by 12-min segments, uses Haiku to extract actionable protocols as 200-400 word KB entries.
+2. **Expert protocol seeds (v3)** — 15 deep entries covering Koniver NAD IV, Jay Campbell GLOW/KLOW/TOT, Epitalon+Thymalin, Hexarelin, BPC-157+TB-500, Ipamorelin/CJC-1295, GLP-1 comparison, nootropic peptides, expert consensus map.
+3. **Cloud-first extraction** — `initial_content_extraction_job` runs 5 min after Railway deploy (not locally). Monday research job also runs new crawlers.
+4. **Critical fix: event loop blocking** — Content extraction was running sync HTTP/API calls on the async event loop, freezing the entire bot for 10+ minutes. All sync work now wrapped in `asyncio.to_thread()`.
+5. **Critical fix: voice/text silent failures** — (a) `_transcribe()` changed from blocking `httpx.post()` to async `httpx.AsyncClient`, (b) `brain_v2.process()` forces final text reply when all turns are tool_use, (c) 120s `asyncio.wait_for()` timeout on both handlers.
+6. **Markdown stripping in voice handler** — Added `_clean_response()` to voice handler (text handler already had it).
+7. **Blood test photo upload** — `photo_handler.py` uses Claude Vision (Haiku) to detect blood tests, extract all biomarkers (name, value, unit, reference ranges), log to DB via `biohacking_service.log_bloodwork()`, flag out-of-range markers.
+8. **Database** — Added `content_processing_log` table (24th table) for extraction tracking/dedup/resumability.
+
+### Commits:
+- `2bac141` — Deep content extraction pipeline + v2/v3 knowledge
+- `66a2933` — Auto-extraction on Railway deploy
+- `664a857` — Voice/text silent failure fixes (3 critical issues)
+- `bb17bb9` — Event loop blocking fix + voice markdown stripping
+- `51c8fd0` — Blood test photo upload via Claude Vision
 
 ## Session Log — Mar 1, 2026 (Session 10)
 
