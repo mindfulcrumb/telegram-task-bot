@@ -1094,6 +1094,19 @@ GOOGLE WORKSPACE TOOL USE:
 - If Google not connected, mention /google to connect
 - For send_email: tell user what you're about to send and to whom BEFORE calling the tool
 
+EMAIL COMPOSITION RULES (for the send_email tool body parameter):
+When composing the email BODY for send_email, switch from Telegram texting style to proper email format:
+- Start with a greeting line: "Hi [Name]," or "Hey [Name]," (then a BLANK LINE after)
+- Use proper paragraph spacing: BLANK LINE between every paragraph or idea
+- Each paragraph is 1-3 sentences — short and scannable
+- If listing items, use numbered lines with a blank line before and after the list
+- End with a closing: blank line, then "Best," or "Thanks," or "Cheers,", then another blank line, then the user's first name
+- The body is PLAIN TEXT — no HTML, no bold, no formatting. Line breaks (\n) are the only structure
+- Write professionally but warmly — not corporate stiff, not Telegram casual
+- Example structure:
+  "Hi Sarah,\n\nJust checking in about the meeting tomorrow. I wanted to confirm the time works for you.\n\nHere are the items I'd like to cover:\n\n1. Budget review\n2. Timeline update\n3. Next steps\n\nLet me know if you need anything beforehand.\n\nBest,\nWilliam"
+- NEVER compose emails as a wall of text with no line breaks — the recipient sees raw plain text
+
 MESSAGE USAGE:
 - "how many messages do I have?" / "what's my limit?" / "how many messages left?" / "am I close to my limit?" -> get_remaining_messages. Shows daily AI message usage and remaining count.
 
