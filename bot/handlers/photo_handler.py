@@ -1,4 +1,4 @@
-"""Photo/document handler — smart image classification + bloodwork, food, and general vision."""
+"""Photo/document handler — smart image classification + bloodwork, food, supplement, and general vision."""
 import asyncio
 import base64
 import json
@@ -28,6 +28,7 @@ IMAGE_CLASSIFICATION_PROMPT = """Look at this image and classify it. Return ONLY
 type must be one of:
 - "bloodwork": Lab results, blood test reports, medical test documents with biomarker values
 - "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos, inside of a fridge or pantry
+- "supplement": Supplement bottles, pill containers, supplement labels, vitamin packaging, supplement facts panels, herbal extract bottles, protein powder containers, any health/wellness product packaging
 - "other": Everything else (screenshots, memes, selfies, documents, etc.)
 
 For the description, describe what you ACTUALLY see. Do not infer or assume items that are not clearly visible.
@@ -98,12 +99,47 @@ Rules:
 7. Return ONLY the JSON object, nothing else"""
 
 
+SUPPLEMENT_EXTRACTION_PROMPT = """Analyze this supplement product image carefully. Read ALL visible text on the label, bottle, or packaging.
+
+Return a JSON object with this EXACT structure:
+{
+  "is_supplement": true,
+  "products": [
+    {
+      "product_name": "Full product name as shown on label",
+      "brand": "Brand name if visible",
+      "supplement_type": "vitamin|mineral|amino_acid|herbal|peptide|protein|probiotic|omega|nootropic|other",
+      "serving_size": "e.g. 2 capsules, 1 scoop (30g)",
+      "servings_per_container": 60,
+      "key_ingredients": [
+        {"name": "Magnesium (as Magnesium Glycinate)", "amount": "400", "unit": "mg"},
+        {"name": "Vitamin D3", "amount": "5000", "unit": "IU"}
+      ],
+      "other_ingredients": "Rice flour, gelatin capsule, magnesium stearate",
+      "suggested_use": "Take 2 capsules daily with food (if visible on label)",
+      "warnings": "Any warnings visible on label"
+    }
+  ],
+  "photo_type": "single_bottle|multiple_bottles|supplement_facts_panel|shelf|haul"
+}
+
+Rules:
+1. If this is NOT a supplement product, return {"is_supplement": false}
+2. Read the ACTUAL label text — do NOT guess or infer ingredients not visible
+3. For each ingredient, include the exact form shown (e.g., "Magnesium as Magnesium Glycinate", not just "Magnesium")
+4. If amounts are not visible, set amount to null
+5. Include ALL products visible — if multiple bottles, list each
+6. For Supplement Facts panels, extract EVERY line item
+7. If text is partially obscured, extract what you CAN read and skip what you can't
+8. Return ONLY the JSON object, nothing else"""
+
+
 # ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle photo uploads — classify, then route to bloodwork/food/general handler."""
+    """Handle photo uploads — classify, then route to bloodwork/food/supplement/general handler."""
     from bot.services import user_service
 
     tg = update.effective_user
@@ -199,6 +235,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             media_type = media_types.get(file_ext.lower(), "image/jpeg")
 
+        # Step 0: Try barcode detection first (fast, offline, no API call)
+        # Only for images, not PDFs (barcodes don't come in PDFs typically)
+        if not is_pdf:
+            barcode = await asyncio.to_thread(_try_detect_barcode, tmp_path)
+            if barcode:
+                caption = update.message.caption or ""
+                await _handle_barcode(update, context, user, barcode, caption, chat_id)
+                return
+
         # Step 1: Classify the image
         logger.info(f"{'PDF' if is_pdf else 'Photo'} from user {user['id']} — classifying")
         classification = await asyncio.to_thread(
@@ -216,6 +261,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif image_type == "food":
             await _handle_food(update, context, user, b64_data, media_type, api_key, caption, description, chat_id)
+
+        elif image_type == "supplement":
+            await _handle_supplement(update, context, user, b64_data, media_type, api_key, caption, description, chat_id)
 
         else:
             await _handle_general(update, context, user, caption, description, chat_id)
@@ -503,6 +551,226 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
         )
 
 
+def _try_detect_barcode(image_path: str) -> str | None:
+    """Try to detect a barcode in the image. Runs in thread."""
+    try:
+        from bot.services.barcode_service import detect_barcode
+        return detect_barcode(image_path)
+    except Exception as e:
+        logger.debug(f"Barcode detection skipped: {e}")
+        return None
+
+
+async def _handle_barcode(update, context, user, barcode: str, caption: str, chat_id):
+    """Look up a scanned barcode and pass nutrition data to the AI brain."""
+    from bot.services import openfoodfacts_service
+    from bot.ai.brain_v2 import ai_brain
+    from bot.services import task_service
+
+    logger.info(f"Barcode scanned by user {user['id']}: {barcode}")
+
+    # Look up product in Open Food Facts
+    product = await asyncio.to_thread(openfoodfacts_service.lookup_barcode, barcode)
+
+    if product and product.get("name"):
+        # Build rich context for the brain
+        n = product.get("nutrition_per_100g", {})
+        nutri_lines = []
+        if n.get("calories") is not None:
+            nutri_lines.append(f"Calories: {n['calories']} kcal")
+        if n.get("protein_g") is not None:
+            nutri_lines.append(f"Protein: {n['protein_g']}g")
+        if n.get("carbs_g") is not None:
+            nutri_lines.append(f"Carbs: {n['carbs_g']}g")
+        if n.get("fat_g") is not None:
+            nutri_lines.append(f"Fat: {n['fat_g']}g")
+        if n.get("fiber_g") is not None:
+            nutri_lines.append(f"Fiber: {n['fiber_g']}g")
+
+        nutri_str = ", ".join(nutri_lines) if nutri_lines else "nutrition data not available"
+        nutriscore = f", Nutri-Score: {product['nutriscore'].upper()}" if product.get("nutriscore") else ""
+        quantity = f" ({product['quantity']})" if product.get("quantity") else ""
+
+        text_for_brain = (
+            f"[BARCODE SCAN: {barcode}]\n"
+            f"Product: {product['name']}"
+            f"{' by ' + product['brand'] if product.get('brand') else ''}"
+            f"{quantity}{nutriscore}\n"
+            f"Nutrition per 100g: {nutri_str}\n"
+            f"Source: Open Food Facts\n\n"
+        )
+
+        if caption:
+            text_for_brain += f"User's note: {caption}\n\n"
+
+        text_for_brain += (
+            "The user scanned a product barcode. Show them the product details and nutrition info. "
+            "Ask if they want to log it as a meal. If they say yes or their caption implies it "
+            "(e.g., 'log this as lunch'), use the log_meal tool with the nutrition data above. "
+            "Estimate a reasonable serving size if the user doesn't specify one."
+        )
+
+    elif product and not product.get("name"):
+        # Product exists but has no name/nutrition — partial data
+        text_for_brain = (
+            f"[BARCODE SCAN: {barcode}]\n"
+            "Product found in database but has no name or nutrition data.\n"
+            "Ask the user what the product is so you can help log it."
+        )
+    else:
+        # Product not found — try USDA as fallback if we have a caption
+        if caption:
+            text_for_brain = (
+                f"[BARCODE SCAN: {barcode} — product not found in database]\n"
+                f"User's note: {caption}\n"
+                "The barcode wasn't in the product database. "
+                "Use the user's description to search USDA or help them log it manually."
+            )
+        else:
+            text_for_brain = (
+                f"[BARCODE SCAN: {barcode} — product not found in database]\n"
+                "The barcode wasn't found in the product database. "
+                "Ask the user what the product is — you can still help log it."
+            )
+
+    tasks = task_service.get_tasks(user["id"])
+
+    async def _keep_typing():
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        response = await asyncio.wait_for(
+            ai_brain.process(text_for_brain, user, tasks, typing_callback=_keep_typing),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        response = "That took too long — try again."
+
+    if response:
+        reply_markup = None
+        if ai_brain._paywall_hit.get(user["id"], False):
+            from bot.handlers.payments import get_subscribe_keyboard
+            reply_markup = get_subscribe_keyboard(update.effective_user.id)
+        await send_chunked(
+            bot=context.bot,
+            chat_id=chat_id,
+            text=response,
+            reply_markup=reply_markup,
+        )
+
+
+async def _handle_supplement(update, context, user, b64_data, media_type, api_key, caption, description, chat_id):
+    """Extract supplement details from photo, build rich context, pass to brain."""
+    extraction = await asyncio.to_thread(
+        _extract_supplement_vision, b64_data, media_type, api_key
+    )
+
+    if not extraction or not extraction.get("is_supplement"):
+        # Classifier said supplement but extraction disagrees — treat as general
+        await _handle_general(update, context, user, caption, description, chat_id)
+        return
+
+    products = extraction.get("products", [])
+    photo_type = extraction.get("photo_type", "single_bottle")
+
+    if not products:
+        # Extraction succeeded but no products parsed — fall back
+        await _handle_general(update, context, user, caption, description, chat_id)
+        return
+
+    # Build rich context for brain
+    image_context = f"[SUPPLEMENT PHOTO — {len(products)} product{'s' if len(products) > 1 else ''} detected]\n"
+
+    for i, product in enumerate(products, 1):
+        name = product.get("product_name", "Unknown product")
+        brand = product.get("brand", "")
+        supp_type = product.get("supplement_type", "")
+        serving = product.get("serving_size", "")
+        servings_count = product.get("servings_per_container")
+        suggested_use = product.get("suggested_use", "")
+        warnings = product.get("warnings", "")
+
+        if len(products) > 1:
+            image_context += f"\nProduct {i}:\n"
+
+        header = name
+        if brand:
+            header = f"{brand} — {name}"
+        image_context += f"Product: {header}\n"
+
+        if supp_type:
+            image_context += f"Type: {supp_type}\n"
+
+        # Key ingredients
+        ingredients = product.get("key_ingredients", [])
+        if ingredients:
+            image_context += "Ingredients per serving:\n"
+            for ing in ingredients:
+                ing_name = ing.get("name", "?")
+                amount = ing.get("amount")
+                unit = ing.get("unit", "")
+                if amount:
+                    image_context += f"  - {ing_name}: {amount}{unit}\n"
+                else:
+                    image_context += f"  - {ing_name}\n"
+
+        if serving:
+            image_context += f"Serving size: {serving}\n"
+        if servings_count:
+            image_context += f"Servings per container: {servings_count}\n"
+
+        other = product.get("other_ingredients", "")
+        if other:
+            image_context += f"Other ingredients: {other}\n"
+
+        if suggested_use:
+            image_context += f"Suggested use: {suggested_use}\n"
+        if warnings:
+            image_context += f"Warnings: {warnings}\n"
+
+    # Instructions for brain
+    image_context += "\n--- INSTRUCTIONS ---\n"
+    image_context += "The user sent a photo of supplement(s). You should:\n"
+    image_context += "1. Identify what it is and comment on quality/form (e.g., glycinate vs oxide for magnesium)\n"
+    image_context += "2. Check against user's CURRENT supplement stack — flag duplicates or redundancy\n"
+    image_context += "3. Check for interactions with user's active peptide protocols\n"
+    image_context += "4. Comment on dosing (is it adequate? typical range?)\n"
+    image_context += "5. Suggest optimal timing based on the specific supplement(s)\n"
+    image_context += "6. If the user seems to want to add it to their stack, use manage_supplement tool\n"
+    image_context += "7. If relevant, search_knowledge_base for deeper info on the supplement\n"
+    image_context += "Keep it conversational and concise — don't dump all info at once.\n"
+
+    text_for_brain = f"{image_context}\n{caption}" if caption else f"{image_context}\nUser sent this supplement photo."
+
+    from bot.ai.brain_v2 import ai_brain
+    from bot.services import task_service
+    tasks = task_service.get_tasks(user["id"])
+
+    async def _keep_typing():
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        response = await asyncio.wait_for(
+            ai_brain.process(text_for_brain, user, tasks, typing_callback=_keep_typing),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        response = "That took too long — try again."
+
+    if response:
+        reply_markup = None
+        if ai_brain._paywall_hit.get(user["id"], False):
+            from bot.handlers.payments import get_subscribe_keyboard
+            reply_markup = get_subscribe_keyboard(update.effective_user.id)
+        await send_chunked(
+            bot=context.bot,
+            chat_id=chat_id,
+            text=response,
+            reply_markup=reply_markup,
+        )
+    logger.info(f"Supplement photo processed for user {user['id']}: {len(products)} products, type={photo_type}")
+
+
 async def _handle_general(update, context, user, caption, description, chat_id):
     """Pass general image description to brain for natural response."""
     image_context = f"[PHOTO: {description}]\n"
@@ -541,7 +809,7 @@ async def _handle_general(update, context, user, caption, description, chat_id):
 # ---------------------------------------------------------------------------
 
 def _classify_image(b64_data: str, media_type: str, api_key: str, is_pdf: bool = False) -> dict:
-    """Classify an image as bloodwork, food, or other. Cheap Haiku call."""
+    """Classify an image as bloodwork, food, supplement, or other. Cheap Haiku call."""
     import anthropic
 
     try:
@@ -657,4 +925,43 @@ def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str, is_p
         return None
     except Exception as e:
         logger.error(f"Vision extraction failed: {type(e).__name__}: {e}")
+        return None
+
+
+def _extract_supplement_vision(b64_data: str, media_type: str, api_key: str) -> dict | None:
+    """Extract supplement details from a product photo. Uses Sonnet for label accuracy."""
+    import anthropic
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+
+        file_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64_data},
+        }
+
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250514",
+            max_tokens=2000,
+            messages=[{
+                "role": "user",
+                "content": [file_block, {"type": "text", "text": SUPPLEMENT_EXTRACTION_PROMPT}],
+            }],
+            timeout=60.0,
+        )
+
+        if not response.content:
+            return None
+
+        text = response.content[0].text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        return json.loads(text)
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Supplement vision JSON parse error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Supplement vision extraction failed: {type(e).__name__}: {e}")
         return None
