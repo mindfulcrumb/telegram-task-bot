@@ -1,10 +1,27 @@
 """Nutrition service — meal logging, calorie/macro tracking, nutrition profiles."""
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
+
+
+def _user_today(user_id: int = None) -> date:
+    """Get today's date in the user's timezone (not server UTC).
+
+    Falls back to UTC if user timezone is unknown.
+    """
+    try:
+        if user_id:
+            from bot.services.user_service import get_user_by_id
+            user = get_user_by_id(user_id)
+            if user and user.get("timezone"):
+                from zoneinfo import ZoneInfo
+                return datetime.now(ZoneInfo(user["timezone"])).date()
+    except Exception:
+        pass
+    return date.today()
 
 
 # --- Nutrition profile ---
@@ -89,21 +106,74 @@ def log_meal(user_id: int, meal_type: str = None, description: str = "",
 
 
 def get_meals_today(user_id: int) -> list:
-    """Get all meals logged today."""
+    """Get all meals logged today (user's timezone)."""
+    today = _user_today(user_id)
     with get_cursor() as cur:
         cur.execute(
             """SELECT * FROM meal_logs
-               WHERE user_id = %s AND logged_at::date = CURRENT_DATE
+               WHERE user_id = %s AND logged_at::date = %s
                ORDER BY logged_at ASC""",
-            (user_id,)
+            (user_id, today)
         )
         return [dict(row) for row in cur.fetchall()]
+
+
+def delete_meal(user_id: int, meal_id: int) -> bool:
+    """Delete a specific meal log entry by ID (user-scoped for safety)."""
+    with get_cursor() as cur:
+        cur.execute(
+            "DELETE FROM meal_logs WHERE id = %s AND user_id = %s RETURNING id",
+            (meal_id, user_id)
+        )
+        row = cur.fetchone()
+        if row:
+            logger.info(f"Deleted meal {meal_id} for user {user_id}")
+            return True
+        return False
+
+
+def delete_last_meal(user_id: int) -> dict | None:
+    """Delete the most recently logged meal for the user today. Returns the deleted meal."""
+    today = _user_today(user_id)
+    with get_cursor() as cur:
+        cur.execute(
+            """DELETE FROM meal_logs
+               WHERE id = (
+                   SELECT id FROM meal_logs
+                   WHERE user_id = %s AND logged_at::date = %s
+                   ORDER BY logged_at DESC LIMIT 1
+               ) RETURNING *""",
+            (user_id, today)
+        )
+        row = cur.fetchone()
+        if row:
+            result = dict(row)
+            logger.info(f"Deleted last meal '{result.get('description')}' for user {user_id}")
+            return result
+        return None
+
+
+def clear_today_meals(user_id: int) -> int:
+    """Delete ALL meal logs for today. Returns number of meals deleted."""
+    today = _user_today(user_id)
+    with get_cursor() as cur:
+        cur.execute(
+            """DELETE FROM meal_logs
+               WHERE user_id = %s AND logged_at::date = %s
+               RETURNING id""",
+            (user_id, today)
+        )
+        deleted = cur.fetchall()
+        count = len(deleted)
+        if count:
+            logger.info(f"Cleared {count} meals for user {user_id} today")
+        return count
 
 
 def get_daily_intake(user_id: int, target_date: date = None) -> dict:
     """Get total calorie/macro intake for a day + remaining vs target."""
     if target_date is None:
-        target_date = date.today()
+        target_date = _user_today(user_id)
 
     with get_cursor() as cur:
         cur.execute(

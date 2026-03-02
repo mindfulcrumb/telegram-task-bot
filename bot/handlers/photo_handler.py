@@ -464,7 +464,7 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
         if micro_parts:
             image_context += f"Micros: {', '.join(micro_parts)}\n"
         image_context += "Source: USDA FoodData Central (lab-verified)\n"
-        image_context += "Call log_meal with this data (source='usda'). Confirm items and ask if portions look right.\n"
+        image_context += "Show the user what you see and the estimated nutrition. Ask 'want me to log it?' BEFORE calling log_meal. Do NOT auto-log unless the user's caption explicitly says 'log this' or 'add to my calories'.\n"
 
         if usda_failures:
             image_context += f"Could not find USDA data for: {', '.join(usda_failures)} — estimate these from your knowledge.\n"

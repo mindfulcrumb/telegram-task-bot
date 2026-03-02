@@ -816,6 +816,24 @@ def get_tool_definitions() -> list:
                 "properties": {}
             }
         },
+        {
+            "name": "delete_meal",
+            "description": "Delete a specific meal log entry by its ID, or delete the last meal logged today. Use when user says 'delete that meal', 'remove the last thing I logged', 'undo that food entry', 'that was a duplicate', 'wrong calories'. Call get_daily_nutrition first to find meal IDs if needed.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "meal_id": {"type": "integer", "description": "The specific meal ID to delete. If not provided, deletes the most recent meal logged today."}
+                }
+            }
+        },
+        {
+            "name": "clear_today_meals",
+            "description": "Delete ALL meal logs for today and start fresh. Use when user says 'clear all my meals', 'reset today's food', 'the calories are all wrong start over', 'delete everything I logged today'. ALWAYS confirm with the user before calling this.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
         # --- Pain / Mobility tools ---
         {
             "name": "report_pain",
@@ -2220,7 +2238,8 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             result = {
                 "date": daily["date"],
                 "meal_count": daily["meal_count"],
-                "meals": [{"type": m.get("meal_type"), "description": m.get("description"),
+                "meals": [{"id": m.get("id"), "type": m.get("meal_type"),
+                           "description": m.get("description"),
                            "calories": m.get("calories"), "protein_g": m.get("protein_g"),
                            "source": m.get("source")}
                           for m in meals],
@@ -2256,6 +2275,43 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             except Exception:
                 pass
             return result
+
+        elif name == "delete_meal":
+            from bot.services import nutrition_service
+            meal_id = args.get("meal_id")
+            if meal_id:
+                success = nutrition_service.delete_meal(user_id, meal_id)
+                if success:
+                    daily = nutrition_service.get_daily_intake(user_id)
+                    return {"deleted": True, "meal_id": meal_id, "updated_daily_total": {
+                        "calories": daily["total_calories"],
+                        "protein": daily["total_protein"],
+                        "carbs": daily["total_carbs"],
+                        "fat": daily["total_fat"],
+                        "meal_count": daily["meal_count"],
+                    }}
+                return {"deleted": False, "error": "Meal not found or doesn't belong to you"}
+            else:
+                deleted = nutrition_service.delete_last_meal(user_id)
+                if deleted:
+                    daily = nutrition_service.get_daily_intake(user_id)
+                    return {"deleted": True, "removed_meal": deleted.get("description"),
+                            "removed_calories": deleted.get("calories"),
+                            "updated_daily_total": {
+                                "calories": daily["total_calories"],
+                                "protein": daily["total_protein"],
+                                "carbs": daily["total_carbs"],
+                                "fat": daily["total_fat"],
+                                "meal_count": daily["meal_count"],
+                            }}
+                return {"deleted": False, "error": "No meals logged today to delete"}
+
+        elif name == "clear_today_meals":
+            from bot.services import nutrition_service
+            count = nutrition_service.clear_today_meals(user_id)
+            return {"cleared": True, "meals_deleted": count, "daily_total": {
+                "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "meal_count": 0
+            }}
 
         elif name == "report_pain":
             from bot.db.database import get_cursor
