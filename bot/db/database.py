@@ -1002,6 +1002,36 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS idx_pending_milestones_unsent
                 ON pending_milestones(sent, created_at) WHERE sent = FALSE;
+
+            -- ═══════════════════════════════════════════════════════
+            -- CUSTOM PRODUCTS (user-contributed barcode → nutrition)
+            -- ═══════════════════════════════════════════════════════
+            CREATE TABLE IF NOT EXISTS custom_products (
+                id SERIAL PRIMARY KEY,
+                barcode VARCHAR(50) NOT NULL UNIQUE,
+                product_name VARCHAR(255) NOT NULL,
+                brand VARCHAR(255),
+                serving_size_g REAL,
+                calories_per_100g REAL,
+                protein_per_100g REAL,
+                carbs_per_100g REAL,
+                fat_per_100g REAL,
+                fiber_per_100g REAL,
+                sodium_per_100g REAL,
+                calcium_per_100g REAL,
+                iron_per_100g REAL,
+                potassium_per_100g REAL,
+                vitamin_c_per_100g REAL,
+                vitamin_d_per_100g REAL,
+                b12_per_100g REAL,
+                magnesium_per_100g REAL,
+                zinc_per_100g REAL,
+                created_by INT REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_custom_products_barcode
+                ON custom_products(barcode);
         """)
     logger.info("PostgreSQL schema initialized")
 

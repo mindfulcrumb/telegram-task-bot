@@ -260,6 +260,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_bloodwork(update, context, user, b64_data, media_type, api_key, is_pdf)
 
         elif image_type == "food":
+            # If there's a pending barcode from a previous scan, this might be the nutrition label
+            pending_barcode = context.user_data.get("pending_barcode")
+            if pending_barcode and description and "label" in description.lower():
+                # Pass pending barcode to food handler so it can save the product
+                caption = f"[PENDING_BARCODE:{pending_barcode}] {caption}"
+                context.user_data.pop("pending_barcode", None)
             await _handle_food(update, context, user, b64_data, media_type, api_key, caption, description, chat_id)
 
         elif image_type == "supplement":
@@ -512,6 +518,25 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
         except Exception:
             pass
 
+    # Check for pending barcode in caption (from label photo after failed scan)
+    pending_barcode = None
+    if caption and caption.startswith("[PENDING_BARCODE:"):
+        import re as _re
+        bc_match = _re.match(r"\[PENDING_BARCODE:(\d+)\]\s*(.*)", caption)
+        if bc_match:
+            pending_barcode = bc_match.group(1)
+            caption = bc_match.group(2)
+
+    if pending_barcode and scene == "label":
+        # This is a nutrition label photo for a previously scanned barcode
+        image_context += (
+            f"\n[PENDING BARCODE: {pending_barcode}]\n"
+            "The user previously scanned this barcode but it wasn't in any database. "
+            "Now they're sending the nutrition label. Extract the nutrition data from the label "
+            "and call save_custom_product with the barcode and nutrition info (per 100g). "
+            "After saving, ask if they want to log it as a meal.\n"
+        )
+
     # Default message based on scene
     if scene == "fridge":
         default_msg = "User sent a photo of their fridge. Suggest recipes with ONLY the visible ingredients."
@@ -562,15 +587,32 @@ def _try_detect_barcode(image_path: str) -> str | None:
 
 
 async def _handle_barcode(update, context, user, barcode: str, caption: str, chat_id):
-    """Look up a scanned barcode and pass nutrition data to the AI brain."""
-    from bot.services import openfoodfacts_service
+    """Look up a scanned barcode and pass nutrition data to the AI brain.
+
+    Lookup order: custom_products DB → Open Food Facts → ask user for label photo.
+    """
+    from bot.services import openfoodfacts_service, product_service
     from bot.ai.brain_v2 import ai_brain
     from bot.services import task_service
 
     logger.info(f"Barcode scanned by user {user['id']}: {barcode}")
 
-    # Look up product in Open Food Facts
-    product = await asyncio.to_thread(openfoodfacts_service.lookup_barcode, barcode)
+    product = None
+    source = None
+
+    # 1. Check custom product DB first (instant, local)
+    custom = product_service.get_product_by_barcode(barcode)
+    if custom:
+        product = product_service.to_nutrition_dict(custom)
+        source = "custom_product_db"
+        logger.info(f"Custom product found for barcode {barcode}: {product.get('name')}")
+
+    # 2. Check Open Food Facts
+    if not product:
+        off_result = await asyncio.to_thread(openfoodfacts_service.lookup_barcode, barcode)
+        if off_result and off_result.get("name"):
+            product = off_result
+            source = "openfoodfacts"
 
     if product and product.get("name"):
         # Build rich context for the brain
@@ -597,7 +639,7 @@ async def _handle_barcode(update, context, user, barcode: str, caption: str, cha
             f"{' by ' + product['brand'] if product.get('brand') else ''}"
             f"{quantity}{nutriscore}\n"
             f"Nutrition per 100g: {nutri_str}\n"
-            f"Source: Open Food Facts\n\n"
+            f"Source: {source}\n\n"
         )
 
         if caption:
@@ -610,27 +652,26 @@ async def _handle_barcode(update, context, user, barcode: str, caption: str, cha
             "Estimate a reasonable serving size if the user doesn't specify one."
         )
 
-    elif product and not product.get("name"):
-        # Product exists but has no name/nutrition — partial data
-        text_for_brain = (
-            f"[BARCODE SCAN: {barcode}]\n"
-            "Product found in database but has no name or nutrition data.\n"
-            "Ask the user what the product is so you can help log it."
-        )
     else:
-        # Product not found — try USDA as fallback if we have a caption
+        # Product not found anywhere — store pending barcode and ask for label photo
+        context.user_data["pending_barcode"] = barcode
+        logger.info(f"Barcode {barcode} not found — stored as pending, asking for label photo")
+
         if caption:
             text_for_brain = (
-                f"[BARCODE SCAN: {barcode} — product not found in database]\n"
+                f"[BARCODE SCAN: {barcode} — product NOT in any database]\n"
                 f"User's note: {caption}\n"
-                "The barcode wasn't in the product database. "
-                "Use the user's description to search USDA or help them log it manually."
+                "The barcode wasn't found in any product database. "
+                "Tell the user: 'I don't have this product yet. Take a photo of the nutrition label "
+                "and I'll save it — next time you scan it, I'll recognize it instantly.' "
+                "If the caption contains the product name, use save_custom_product to save it."
             )
         else:
             text_for_brain = (
-                f"[BARCODE SCAN: {barcode} — product not found in database]\n"
-                "The barcode wasn't found in the product database. "
-                "Ask the user what the product is — you can still help log it."
+                f"[BARCODE SCAN: {barcode} — product NOT in any database]\n"
+                "The barcode wasn't found in any product database. "
+                "Tell the user: 'I don't have this product yet. Take a photo of the nutrition label "
+                "and I'll save it — next time you scan it, I'll recognize it instantly.'"
             )
 
     tasks = task_service.get_tasks(user["id"])

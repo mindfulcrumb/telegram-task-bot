@@ -834,6 +834,27 @@ def get_tool_definitions() -> list:
                 "properties": {}
             }
         },
+        # --- Custom product database ---
+        {
+            "name": "save_custom_product",
+            "description": "Save a product to the custom database when a barcode scan didn't find it. Use after the user sends a nutrition label photo for an unknown barcode. Also use when user manually tells you the nutrition info for a product. Saves nutrition per 100g so future barcode scans will find it instantly.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "barcode": {"type": "string", "description": "The barcode string (EAN-13, UPC-A, etc.)"},
+                    "product_name": {"type": "string", "description": "Product name"},
+                    "brand": {"type": "string", "description": "Brand name if known"},
+                    "serving_size_g": {"type": "number", "description": "Standard serving size in grams"},
+                    "calories_per_100g": {"type": "number", "description": "Calories per 100g"},
+                    "protein_per_100g": {"type": "number", "description": "Protein in grams per 100g"},
+                    "carbs_per_100g": {"type": "number", "description": "Carbs in grams per 100g"},
+                    "fat_per_100g": {"type": "number", "description": "Fat in grams per 100g"},
+                    "fiber_per_100g": {"type": "number", "description": "Fiber in grams per 100g"},
+                    "sodium_per_100g": {"type": "number", "description": "Sodium in mg per 100g"},
+                },
+                "required": ["barcode", "product_name"]
+            }
+        },
         # --- Pain / Mobility tools ---
         {
             "name": "report_pain",
@@ -2312,6 +2333,37 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             return {"cleared": True, "meals_deleted": count, "daily_total": {
                 "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "meal_count": 0
             }}
+
+        elif name == "save_custom_product":
+            from bot.services import product_service
+            product = product_service.save_product(
+                barcode=args["barcode"],
+                product_name=args["product_name"],
+                brand=args.get("brand"),
+                serving_size_g=args.get("serving_size_g"),
+                calories_per_100g=args.get("calories_per_100g"),
+                protein_per_100g=args.get("protein_per_100g"),
+                carbs_per_100g=args.get("carbs_per_100g"),
+                fat_per_100g=args.get("fat_per_100g"),
+                fiber_per_100g=args.get("fiber_per_100g"),
+                sodium_per_100g=args.get("sodium_per_100g"),
+                calcium_per_100g=args.get("calcium_per_100g"),
+                iron_per_100g=args.get("iron_per_100g"),
+                potassium_per_100g=args.get("potassium_per_100g"),
+                vitamin_c_per_100g=args.get("vitamin_c_per_100g"),
+                vitamin_d_per_100g=args.get("vitamin_d_per_100g"),
+                b12_per_100g=args.get("b12_per_100g"),
+                magnesium_per_100g=args.get("magnesium_per_100g"),
+                zinc_per_100g=args.get("zinc_per_100g"),
+                created_by=user_id,
+            )
+            return {
+                "saved": True,
+                "barcode": product["barcode"],
+                "product_name": product["product_name"],
+                "calories_per_100g": product.get("calories_per_100g"),
+                "message": "Product saved. Next time this barcode is scanned, nutrition data will load instantly."
+            }
 
         elif name == "report_pain":
             from bot.db.database import get_cursor
