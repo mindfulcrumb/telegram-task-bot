@@ -12,26 +12,37 @@ from bot.db.database import get_cursor
 logger = logging.getLogger(__name__)
 
 # Owner's Telegram user ID (from ADMIN_USER_IDS)
-OWNER_USER_ID = int(os.environ.get("ADMIN_USER_IDS", "1631254047").split(",")[0])
+OWNER_TELEGRAM_ID = int(os.environ.get("ADMIN_USER_IDS", "1631254047").split(",")[0])
 
 _SEED_SOURCE = "program_seed"
 
 
-def _already_seeded() -> bool:
+def _get_owner_db_id() -> int | None:
+    """Look up the owner's database ID from their Telegram user ID."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT id FROM users WHERE telegram_user_id = %s LIMIT 1",
+            (OWNER_TELEGRAM_ID,),
+        )
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+
+def _already_seeded(owner_db_id: int) -> bool:
     """Check if program data has already been loaded for the owner."""
     with get_cursor() as cur:
         cur.execute(
             "SELECT 1 FROM user_memory WHERE user_id = %s AND source = %s LIMIT 1",
-            (OWNER_USER_ID, _SEED_SOURCE),
+            (owner_db_id, _SEED_SOURCE),
         )
         return cur.fetchone() is not None
 
 
-def _save(content: str, category: str):
+def _save(owner_db_id: int, content: str, category: str):
     """Insert a memory for the owner if it doesn't already exist."""
     from bot.services.memory_service import save_memory
     save_memory(
-        user_id=OWNER_USER_ID,
+        user_id=owner_db_id,
         content=content,
         category=category,
         source=_SEED_SOURCE,
@@ -144,19 +155,24 @@ PROGRAM_MEMORIES = [
 
 def seed_owner_program():
     """Load the owner's training program into user memories."""
-    if _already_seeded():
+    owner_db_id = _get_owner_db_id()
+    if not owner_db_id:
+        logger.info(f"Owner (telegram_id={OWNER_TELEGRAM_ID}) not in users table yet — skipping seed")
+        return
+
+    if _already_seeded(owner_db_id):
         logger.info("Owner program already seeded — skipping")
         return
 
     count = 0
     for content, category in PROGRAM_MEMORIES:
         try:
-            _save(content, category)
+            _save(owner_db_id, content, category)
             count += 1
         except Exception as e:
             logger.warning(f"Failed to seed program memory: {e}")
 
-    logger.info(f"Seeded {count} program memories for owner (user_id={OWNER_USER_ID})")
+    logger.info(f"Seeded {count} program memories for owner (db_id={owner_db_id}, telegram_id={OWNER_TELEGRAM_ID})")
 
 
 def seed_all_owner():

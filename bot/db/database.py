@@ -498,6 +498,9 @@ def initialize():
             -- Add importance column to user_memory for tiered loading
             ALTER TABLE user_memory ADD COLUMN IF NOT EXISTS importance SMALLINT DEFAULT 5;
 
+            -- Ensure logged_at column exists (may be missing if table was created before it was added)
+            ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS logged_at TIMESTAMPTZ DEFAULT NOW();
+
             -- Micronutrient columns for meal_logs
             ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS vitamin_d_mcg REAL;
             ALTER TABLE meal_logs ADD COLUMN IF NOT EXISTS magnesium_mg REAL;
