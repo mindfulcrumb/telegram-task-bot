@@ -6,8 +6,7 @@ Phase 2: Adaptive refinement from real weight + calorie data (weekly).
 Zoe's unique advantage: WHOOP strain + Strava calories feed the adaptive model.
 """
 import logging
-import math
-from datetime import date, timedelta
+from datetime import date
 
 from bot.db.database import get_cursor
 
@@ -192,6 +191,13 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
             )
 
         result = dict(cur.fetchone())
+
+    # Also log weight to daily_weight_logs for adaptive TDEE tracking
+    if weight_kg:
+        try:
+            log_weight(user_id, weight_kg, source="biometrics")
+        except Exception as e:
+            logger.warning(f"Weight log from biometrics failed: {e}")
 
     logger.info(f"Biometrics saved for user {user_id}: {sex}, {age}y, {height_cm}cm, {weight_kg}kg")
     return result
