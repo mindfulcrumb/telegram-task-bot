@@ -13,6 +13,19 @@ from bot.handlers.message_utils import send_chunked
 logger = logging.getLogger(__name__)
 
 
+def _get_language_directive(user: dict) -> str:
+    """Return a language directive string for AI system prompts.
+
+    Reads preferred_language from user dict. Returns empty string for English
+    (default), or an explicit directive for other languages.
+    """
+    lang_code = user.get("preferred_language") or "en"
+    if lang_code == "en":
+        return ""
+    from bot.services.language_service import get_language_name
+    return f" Respond ENTIRELY in {get_language_name(lang_code)}."
+
+
 # --- Morning Briefing ---
 
 async def morning_briefing_job(context: ContextTypes.DEFAULT_TYPE):
@@ -172,12 +185,14 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
                 elif ntype == "no_due_date":
                     task_bullets.append(f"- \"{t['title']}\" (high priority, no due date)")
 
+            lang_dir = _get_language_directive(user)
             nudge_prompt = (
                 "You're a personal assistant nudging the user about overdue tasks. "
                 "Rephrase these task titles in a short, casual, human way (2-4 sentences max). "
                 "If a title looks technical (env vars, API keys, config), describe it simply — "
                 "e.g. 'that Railway config setup' instead of raw variable names. "
-                "End with an offer to help. No markdown, no bullet points.\n\n"
+                "End with an offer to help. No markdown, no bullet points."
+                + lang_dir + "\n\n"
                 + "\n".join(task_bullets)
             )
 
@@ -192,9 +207,11 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
                 nudge_text = "\n".join(lines)
 
             await typing_pause_bot(context.bot, user["telegram_user_id"], 0.7)
-            await context.bot.send_message(
+            await send_chunked(
+                bot=context.bot,
                 chat_id=user["telegram_user_id"],
                 text=nudge_text,
+                proactive=True,
             )
 
             for t, ntype in nudges:
@@ -983,6 +1000,28 @@ async def strava_sync_job(context):
         logger.error(f"Strava sync job failed: {e}")
 
 
+# --- Referral milestone notifications ---
+
+async def referral_milestone_job(context):
+    """Send pending referral milestone notifications (runs every hour)."""
+    try:
+        from bot.services import referral_service
+        milestones = referral_service.get_pending_milestones()
+        for m in milestones:
+            try:
+                await context.bot.send_message(
+                    chat_id=m["referrer_telegram_id"],
+                    text=f"{m['milestone_type']} of Pro — earned from your referrals. "
+                         "Check /referral for your stats.",
+                )
+                referral_service.mark_milestone_sent(m["id"])
+                logger.info(f"Milestone notification sent to {m['referrer_telegram_id']}: {m['milestone_type']}")
+            except Exception as e:
+                logger.warning(f"Failed to send milestone to {m['referrer_telegram_id']}: {e}")
+    except Exception as e:
+        logger.error(f"Referral milestone job failed: {e}")
+
+
 # --- Job Registration ---
 
 def setup_proactive_jobs(application):
@@ -1043,7 +1082,10 @@ def setup_proactive_jobs(application):
     # Strava activity sync: every 2 hours
     jq.run_repeating(strava_sync_job, interval=7200, first=900, name="strava_sync")
 
-    logger.info("Proactive coaching jobs registered (18 jobs)")
+    # Referral milestone notifications: every hour
+    jq.run_repeating(referral_milestone_job, interval=3600, first=600, name="referral_milestones")
+
+    logger.info("Proactive coaching jobs registered (19 jobs)")
 
 
 # --- Helpers ---
@@ -1312,11 +1354,12 @@ def _generate_briefing(user, tasks, streak, patterns):
             + discovery_hint
         )
 
+        lang_dir = _get_language_directive(user)
         response, error = _call_api(
             "You are Zoe, a personal performance coach. You create structured daily plans "
             "that are specific, actionable, and time-blocked. You know the user's supplements, "
             "workouts, tasks, and recovery data. Write like a real coach texting their client — "
-            "warm but direct. Never say 'I'm an AI'. No markdown formatting.",
+            "warm but direct. Never say 'I'm an AI'. No markdown formatting." + lang_dir,
             [{"role": "user", "content": prompt}],
             max_tokens=350,
         )
@@ -1469,11 +1512,12 @@ def _generate_daily_assessment(user):
             "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
+        lang_dir = _get_language_directive(user)
         response, error = _call_api(
             "You are Zoe, a thoughtful coach. End-of-day reviews: honest, warm, brief. "
             "Structure responses as short paragraphs separated by blank lines. "
             "Each paragraph is 1-2 sentences. Never write one continuous block. "
-            "Never say 'I'm an AI'. No markdown formatting.",
+            "Never say 'I'm an AI'. No markdown formatting." + lang_dir,
             [{"role": "user", "content": prompt}],
             max_tokens=250,
         )
@@ -1539,11 +1583,12 @@ def _generate_weekly_insight(user, stats):
             "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
+        lang_dir = _get_language_directive(user)
         response, error = _call_api(
             "You are Zoe, a warm productivity companion. Brief, specific, calm. "
             "Structure responses as short paragraphs separated by blank lines. "
             "Each paragraph is 1-2 sentences. Never write one continuous block. "
-            "Never say 'I'm an AI'. No markdown formatting.",
+            "Never say 'I'm an AI'. No markdown formatting." + lang_dir,
             [{"role": "user", "content": prompt}],
             max_tokens=200,
         )
@@ -1627,11 +1672,12 @@ def _generate_weekly_fitness_report(user, summary, workouts_this_week):
             "No markdown formatting. No asterisks, no hyphens as bullets."
         )
 
+        lang_dir = _get_language_directive(user)
         response, error = _call_api(
             "You are Zoe, a warm fitness coach. Brief, specific, calm. "
             "Structure responses as short paragraphs separated by blank lines. "
             "Each paragraph is 1-2 sentences. Never write one continuous block. "
-            "Never say 'I'm an AI'. No markdown formatting.",
+            "Never say 'I'm an AI'. No markdown formatting." + lang_dir,
             [{"role": "user", "content": prompt}],
             max_tokens=250,
         )

@@ -1,5 +1,7 @@
 """Free/Pro tier limits and usage tracking."""
 import logging
+from datetime import datetime, timezone
+
 from bot.db.database import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -84,8 +86,38 @@ def get_persistent_usage_today(telegram_user_id: int, action: str) -> int:
         return 0
 
 
+def _check_pro_expiry(user_id: int) -> bool:
+    """Check if user has active time-limited Pro access (from referral rewards).
+
+    Returns True if pro_expires_at is set and in the future.
+    Clears expired pro_expires_at as a side effect.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT pro_expires_at FROM users WHERE id = %s",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        if not row or not row["pro_expires_at"]:
+            return False
+
+        if row["pro_expires_at"] > datetime.now(timezone.utc):
+            return True
+
+        # Expired — clear it
+        cur.execute(
+            "UPDATE users SET pro_expires_at = NULL WHERE id = %s",
+            (user_id,)
+        )
+        logger.info(f"Pro reward expired for user {user_id}")
+        return False
+
+
 def _check_supabase_upgrade(user_id: int, telegram_user_id: int | None) -> bool:
-    """Check Supabase for an active subscription and upgrade locally if found."""
+    """Check Supabase for an active subscription and upgrade locally if found.
+
+    Also triggers referral conversion tracking when a referred user subscribes.
+    """
     if not telegram_user_id:
         return False
     try:
@@ -94,6 +126,16 @@ def _check_supabase_upgrade(user_id: int, telegram_user_id: int | None) -> bool:
             from bot.services import user_service
             user_service.update_tier(user_id, "pro")
             logger.info(f"User {user_id} upgraded to pro via Supabase subscription")
+
+            # Track referral conversion
+            try:
+                from bot.services import referral_service
+                milestone = referral_service.convert_referral(telegram_user_id)
+                if milestone:
+                    logger.info(f"Referral milestone triggered: {milestone}")
+            except Exception as e:
+                logger.debug(f"Referral conversion tracking failed: {e}")
+
             return True
     except Exception as e:
         logger.debug(f"Supabase subscription check skipped: {e}")
@@ -111,6 +153,11 @@ def check_limit(
     # Admin users bypass all limits
     if is_admin or tier == "pro":
         return True, None
+
+    # Check time-limited Pro from referral rewards
+    if _check_pro_expiry(user_id):
+        return True, None
+
     limits = LIMITS.get(tier, LIMITS["free"])
 
     if action == "add_task":
@@ -133,9 +180,20 @@ def check_limit(
                 persistent_used = get_persistent_usage_today(telegram_user_id, "ai_message")
                 used = max(used, persistent_used)
             if used >= max_msgs:
+                # Check Supabase subscription first
                 if _check_supabase_upgrade(user_id, telegram_user_id):
                     return True, None
-                return False, f"That's a wrap for today — {max_msgs} messages used. Go unlimited with /upgrade, or they reset at midnight."
+                # Try bonus messages before blocking
+                from bot.services import user_service
+                if user_service.deduct_bonus_message(user_id):
+                    remaining = user_service.get_bonus_messages(user_id)
+                    logger.info(f"User {user_id} used bonus message ({remaining} left)")
+                    return True, None
+                return False, (
+                    f"That's a wrap for today — {max_msgs} messages used. "
+                    "Go unlimited with /upgrade, or they reset at midnight.\n\n"
+                    "Earn bonus messages by referring friends: /referral"
+                )
         return True, None
 
     elif action == "set_reminder":
@@ -154,6 +212,8 @@ def check_limit(
 
     elif action == "pro_feature":
         if _check_supabase_upgrade(user_id, telegram_user_id):
+            return True, None
+        if _check_pro_expiry(user_id):
             return True, None
         return False, "That's a Pro feature — unlock it with /upgrade."
 

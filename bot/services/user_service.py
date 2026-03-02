@@ -168,6 +168,38 @@ def mark_onboarding_complete(user_id: int):
         )
 
 
+def deduct_bonus_message(user_id: int) -> bool:
+    """Deduct 1 bonus message. Returns True if deducted, False if none left."""
+    with get_cursor() as cur:
+        cur.execute(
+            """UPDATE users SET bonus_messages = bonus_messages - 1
+               WHERE id = %s AND COALESCE(bonus_messages, 0) > 0
+               RETURNING bonus_messages""",
+            (user_id,)
+        )
+        return cur.fetchone() is not None
+
+
+def get_bonus_messages(user_id: int) -> int:
+    """Get remaining bonus messages for a user."""
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(bonus_messages, 0) as bonus FROM users WHERE id = %s",
+            (user_id,)
+        )
+        row = cur.fetchone()
+        return row["bonus"] if row else 0
+
+
+def update_language(user_id: int, language: str):
+    """Update user's preferred language (ISO 639-1 code)."""
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE users SET preferred_language = %s WHERE id = %s",
+            (language, user_id),
+        )
+
+
 def delete_user(user_id: int):
     """Delete a user and all their data (GDPR compliance)."""
     with get_cursor() as cur:

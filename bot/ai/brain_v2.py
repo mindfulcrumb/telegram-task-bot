@@ -176,7 +176,7 @@ HOW TO SOUND HUMAN (THIS IS CRITICAL):
 You are texting a friend who happens to be an expert coach. Every response must feel like it came from a real person typing on their phone — not a chatbot generating output.
 
 MANDATORY RULES:
-0. LANGUAGE MATCHING. ALWAYS respond in the SAME language the user writes in. If they write in English, respond in English. If they write in Spanish, respond in Spanish. Never switch languages on your own — match theirs exactly.
+0. LANGUAGE MATCHING. The dynamic context below includes a "RESPOND IN: [Language]" directive. ALWAYS respond in that language — it was detected from the user's message and their established home language. This directive overrides ANY other language clues from memories, conversation history, or user location. If the directive says English, respond in English even if the user's profile says they live in Mexico. If it says Spanish, respond in Spanish even if prior turns were in English. The directive is ALWAYS correct — follow it without exception. If the user explicitly asks you to switch language ("English please", "en español", "parle en français"), acknowledge and switch.
 1. SHORT BY DEFAULT. Most replies should be 1-3 sentences. Only go longer when the user asks a complex question or you're programming a workout.
 2. NO WALLS OF TEXT. Never dump 10+ lines at once. If you need to share a lot, break it into clear sections with line breaks. Think "messages" not "essays."
 2b. STRUCTURE WITH BLANK LINES. When your response is more than 2 sentences, use blank lines between ideas. Each paragraph is 1-2 sentences max. Think "text messages" not "email paragraphs." Your messages get split into separate bubbles on blank lines — use this to your advantage.
@@ -200,6 +200,12 @@ MANDATORY RULES:
    - GOOD: "Logged. Bench is up 2.5kg from last week, and your pull volume is looking solid."
    - BAD: "**Logged!** Here's what I noticed:\\n- Bench is up *2.5kg* from last week\\n- Pull volume looking _solid_"
    - The BAD example shows literal asterisks and hyphens on screen. It looks robotic and ugly. Don't do it.
+
+14. VOICE TRANSCRIPTION AWARENESS. Messages often come from voice transcription (Whisper) which can garble words. If a word doesn't make sense in context, interpret it as the closest matching concept. Common examples: "PPC" or "VPC" = BPC-157, "Reta" or "Retaturide" = Retatrutide, "Amtrak" in dosing context = "already", "Pep Pais" = "peptides", "prtorcol" = "protocol". Use the user's known protocols, supplements, and context to resolve ambiguous transcriptions.
+15. ABBREVIATION RESOLUTION. Users use short names for their protocols. Always resolve: "Reta" = Retatrutide, "BPC" = BPC-157, "TB" = TB-500, "HGH" = Somatropin/Growth Hormone, "NAD" = NAD+. Never say "I don't know what Reta is" or "that's not in my knowledge base" when the user has an active protocol with that name.
+16. CORRECTION DETECTION. When a user says "I'm NOT taking X" or "I told you it's Y not X" or "delete that, I said [correction]" — this is a CORRECTION, not new information. You must update your understanding immediately. Never repeat the wrong information in the same conversation after being corrected. If you make a mistake, own it briefly and move on — don't over-apologize.
+17. NEVER HALLUCINATE USER FACTS. Only reference injuries, conditions, medications, or personal details you can SEE in the user memory section below. If something feels uncertain or vague, ASK instead of assuming. "How's your knee?" is WRONG if you don't have a knee injury in memory. "How's recovery going?" is SAFE because it's general.
+18. CAPABILITY AWARENESS. You HAVE these features — never deny them: proactive morning briefings, smart nudges, Google Calendar (add/delete/view events), Gmail (read), Google Drive, Google Tasks, Strava integration, WHOOP integration, email sending, voice message transcription, blood test photo analysis, peptide protocol tracking, nutrition logging, knowledge base search. If a user asks "can you do X?" and it's in this list, say YES.
 
 PERSONALITY:
 - Warm but not bubbly. Thoughtful, not robotic. Chill, not corporate.
@@ -1288,11 +1294,16 @@ This user just started. No tasks, no workout history, no data yet.
 - Don't explain what you can do — just respond to what they say
 """
 
+        # Language directive (resolved in process() before this method is called)
+        lang_name = getattr(self, '_current_language_name', 'English')
+        lang_code = getattr(self, '_current_language', 'en')
+
         return f"""RIGHT NOW:
 - It's {time_of_day} on {now.strftime('%A, %B %d')}
 - Today's date: {now.strftime('%Y-%m-%d')}
 - User: {name}
 - Status: {situation_str}
+- RESPOND IN: {lang_name} (code: {lang_code})
 {coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
@@ -2236,10 +2247,12 @@ JSON:"""
                 return sonnet, 2048
         return None, 1024
 
-    async def process(self, user_input: str, user: dict, tasks: list = None, typing_callback=None) -> str | None:
+    async def process(self, user_input: str, user: dict, tasks: list = None,
+                      typing_callback=None, language_hint: str = None) -> str | None:
         """Agent loop: call Claude with tools, execute tools, repeat until text response.
 
         typing_callback: optional async callable to refresh typing indicator between turns.
+        language_hint: optional Whisper-detected language name (e.g., "english") from voice messages.
         """
         from bot.ai.tools_v2 import get_tool_definitions, execute_tool
         from bot.ai import memory_pg as memory
@@ -2251,6 +2264,22 @@ JSON:"""
         # Detect conversation topics for memory filtering (zero-cost keyword matching)
         from bot.services.memory_service import detect_topics
         self._current_topics = detect_topics(user_input)
+
+        # Detect language and resolve home language preference
+        from bot.services.language_service import resolve_language, get_language_name
+        stored_lang = user.get("preferred_language")
+        effective_lang, should_update = resolve_language(
+            user_input, stored_lang, language_hint, user_id=user_id
+        )
+        self._current_language = effective_lang
+        self._current_language_name = get_language_name(effective_lang)
+
+        if should_update and effective_lang != stored_lang:
+            try:
+                from bot.services import user_service
+                user_service.update_language(user_id, effective_lang)
+            except Exception as e:
+                logger.warning(f"Failed to update language for user {user_id}: {e}")
 
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:

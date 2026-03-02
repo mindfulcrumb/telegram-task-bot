@@ -115,12 +115,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer_id = int(payload.replace("ref_", ""))
             result = referral_service.track_referral(referrer_id, tg_user.id)
             if result:
+                # Credit bonus messages to the referred user (the friend)
+                referral_service.credit_referred_user(tg_user.id)
                 # Notify referrer
                 try:
                     await context.bot.send_message(
                         chat_id=referrer_id,
-                        text=f"{tg_user.first_name} just joined through your referral link. "
-                             f"You earned {referral_service.BONUS_MESSAGES_PER_REFERRAL} bonus messages.",
+                        text=f"{tg_user.first_name} just joined through your link — "
+                             f"you earned {referral_service.BONUS_MESSAGES_PER_REFERRAL} bonus messages.",
                     )
                 except Exception:
                     pass  # Referrer may have blocked the bot
@@ -208,19 +210,25 @@ async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tier_text = ""
     if stats["next_tier"]:
-        tier_text = f"{stats['referrals_to_next']} more to earn {stats['next_tier']['reward']}"
+        to_go = stats["referrals_to_next"]
+        reward = stats["next_tier"]["reward"]
+        tier_text = f"{to_go} more subscribed referral{'s' if to_go != 1 else ''} to earn {reward}"
     elif stats["current_tier"]:
         tier_text = f"You've earned {stats['current_tier']['reward']}!"
 
+    lines = [
+        f"Friends referred: {stats['total_referrals']}",
+    ]
+    if stats["converted_referrals"]:
+        lines.append(f"Subscribed: {stats['converted_referrals']}")
+    lines.append(f"Bonus messages: {stats['bonus_messages']}")
+    if tier_text:
+        lines.append(f"\n{tier_text}")
+    lines.append(f"\nYour link:\n{stats['referral_link']}")
+    lines.append("\nYou get 10 bonus messages per referral. They get 5.")
+
     await _typing_pause(update.message.chat, 0.6)
-    await update.message.reply_text(
-        f"Friends referred: {stats['total_referrals']}\n"
-        f"Bonus messages earned: {stats['bonus_messages']}\n\n"
-        f"{tier_text}\n\n"
-        f"Your link:\n"
-        f"{stats['referral_link']}\n\n"
-        "Share it around — you both get something out of it.",
-    )
+    await update.message.reply_text("\n".join(lines))
 
 
 # ── /memory ──────────────────────────────────────────────────────────

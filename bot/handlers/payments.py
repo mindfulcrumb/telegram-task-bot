@@ -141,14 +141,30 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
             f"provider_charge={payment.provider_payment_charge_id}"
         )
 
-        # Refresh cached user
+        # Track referral conversion (if this user was referred)
         user = user_service.get_user_by_id(user_id)
         if user:
             context.user_data["db_user"] = user
+            try:
+                from bot.services import referral_service
+                milestone = referral_service.convert_referral(user["telegram_user_id"])
+                if milestone:
+                    # Notify referrer immediately (we have bot context)
+                    try:
+                        m = milestone["milestone"]
+                        await context.bot.send_message(
+                            chat_id=milestone["referrer_telegram_id"],
+                            text=f"{m['referrals']} of your referrals subscribed — "
+                                 f"you've earned {m['reward']} of Pro!",
+                        )
+                    except Exception:
+                        pass  # Referrer may have blocked the bot
+            except Exception as e:
+                logger.debug(f"Referral conversion tracking failed: {e}")
 
         await typing_pause(update.message.chat, 1.0)
         await update.message.reply_text(
-            "Welcome to Pro ✨\n\n"
+            "Welcome to Pro\n\n"
             "Everything's unlocked — unlimited conversations, fitness coaching, "
             "morning briefings, all of it.\n\n"
             "Send me anything to get started."

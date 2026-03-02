@@ -80,7 +80,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         logger.info(f"Voice message from user {user['id']} ({voice.duration}s)")
 
-        text = await _transcribe(tmp_path, groq_key)
+        text, whisper_language = await _transcribe(tmp_path, groq_key)
 
         if not text or not text.strip():
             logger.warning(
@@ -112,7 +112,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Timeout safety: if brain takes >120s, return a fallback instead of hanging
         try:
             response = await asyncio.wait_for(
-                ai_brain.process(text, user, tasks, typing_callback=_keep_typing),
+                ai_brain.process(text, user, tasks, typing_callback=_keep_typing,
+                                 language_hint=whisper_language),
                 timeout=120.0,
             )
         except asyncio.TimeoutError:
@@ -158,8 +159,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 
-async def _transcribe(file_path: str, api_key: str) -> str:
-    """Transcribe audio via Groq Whisper API (async to avoid blocking event loop)."""
+async def _transcribe(file_path: str, api_key: str) -> tuple[str, str | None]:
+    """Transcribe audio via Groq Whisper API (async to avoid blocking event loop).
+
+    Returns: (transcribed_text, detected_language_name_or_None)
+    """
     import httpx
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -168,11 +172,16 @@ async def _transcribe(file_path: str, api_key: str) -> str:
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 files={"file": ("voice.ogg", audio_file, "audio/ogg")},
-                data={"model": "whisper-large-v3"},
+                data={"model": "whisper-large-v3", "response_format": "verbose_json"},
             )
 
     if response.status_code != 200:
         logger.error(f"Groq Whisper error {response.status_code}: {response.text[:200]}")
         raise Exception(f"Transcription failed: {response.status_code}")
 
-    return response.json().get("text", "")
+    data = response.json()
+    text = data.get("text", "")
+    language = data.get("language")  # e.g. "english", "spanish", "portuguese"
+    if language:
+        logger.info(f"Whisper detected language: {language}")
+    return text, language

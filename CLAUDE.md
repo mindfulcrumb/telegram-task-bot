@@ -9,8 +9,9 @@ Multi-user SaaS Telegram bot. AI-powered task management, fitness coaching, bioh
 - Claude Vision (Haiku) for blood test photo extraction
 - Prompt caching: static prompt cached (90% cost reduction), dynamic context per-request
 - Model routing: Haiku default ($1/$5/M), Sonnet for complex requests ($3/$15/M)
-- PostgreSQL on Railway (psycopg2-binary) — 24 tables
+- PostgreSQL on Railway (psycopg2-binary) — 28 tables
 - WHOOP API v2 (OAuth2, webhooks, recovery/sleep/strain sync)
+- Strava API v3 (OAuth2, webhooks, activity sync, running analytics)
 - Groq Whisper for voice transcription
 - YouTube Transcript API for podcast content extraction
 - iCal parsing for Google Calendar (icalendar library)
@@ -23,9 +24,9 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
                                                        ↓
                                             Claude API (tool_use, prompt caching)
                                                        ↓
-                                               bot/ai/tools_v2.py (27 tools)
+                                               bot/ai/tools_v2.py (32 tools)
                                                        ↓
-                                        PostgreSQL (24 tables — tasks, fitness, biohacking, WHOOP, etc.)
+                                        PostgreSQL (28 tables — tasks, fitness, biohacking, WHOOP, Strava, etc.)
 ```
 
 ### Key Files
@@ -131,14 +132,22 @@ User (Telegram) → bot/main_v2.py → handlers/ → bot/ai/brain_v2.py (agent l
 - Health check server for Railway
 - All sync work (content extraction, research) runs in asyncio.to_thread() to never block event loop
 
-## What's NOT Working / TODO
+## What's Working (confirmed by user Mar 1, 2026)
 
-- **Payments provider pending approval** — applied via BotFather (Smart Glocal or Unlimint), waiting for approval. Once approved, set `STRIPE_PROVIDER_TOKEN` env var on Railway. Code is ready, no changes needed.
-- **Google Calendar OAuth** — code deployed, env vars set (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`). User needs to test `/calendar` flow. Redirect URI: `https://telegram-task-bot-production-6784.up.railway.app/google/callback`. Google Cloud project is in Testing mode — user's email added as test user.
+- **Payments** — Stripe web flow, fully working
+- **Strava** — OAuth + webhooks, fully working
+- **Google Calendar** — OAuth, fully working
+- **WHOOP** — OAuth + webhooks, fully working
+
+## Remaining TODO
+
 - No test suite
 - No referral system yet
 - **OAuth state is predictable** — uses `uid_{user_id}` not cryptographic nonce. Lower priority but noted.
 - **Tokens stored as plaintext in DB** — would need `cryptography`/Fernet encryption
+- **Sync psycopg2** — all DB calls are sync, blocks event loop under load. Needs asyncpg or to_thread() wrappers.
+- **`date.today()` timezone mismatch** — streaks/proactive use server UTC, not user timezone
+- **NexoParts memory purge** — run `railway run python scripts/purge_nexoparts.py`
 
 ## Session Log — Mar 1, 2026 (Session 9: Senior-Level Code Audit + Fixes)
 
@@ -318,6 +327,44 @@ Full codebase audit across all 14+ core files, then implemented fixes for 15 bug
 - `664a857` — Voice/text silent failure fixes (3 critical issues)
 - `bb17bb9` — Event loop blocking fix + voice markdown stripping
 - `51c8fd0` — Blood test photo upload via Claude Vision
+
+## Session Log — Mar 1, 2026 (Session 11)
+
+### What was done:
+1. **Committed Session 10** (protocol system + feature discovery) — commit `57492bb`
+2. **Applied Session 8+9 stash** — resolved 8 merge conflicts (brain_v2, tools_v2, onboarding, photo_handler, tasks_v2, workout_session, main_v2, whoop_service) — commit `b56ac88`
+3. **Bug fix**: `_undo_buffer` unbounded growth — capped to 50 users with FIFO eviction
+4. **Full Strava Integration** (commit `7c71929`, 1544 lines across 6 files):
+   - `bot/services/strava_service.py` (NEW, ~936 lines): Complete Strava service
+     - OAuth2: auth URL, code exchange, token refresh (6h expiry), revoke
+     - API helpers with rate limit handling
+     - Activity sync: recent activities, detailed data (splits + best efforts)
+     - Running analytics: ACWR training load, pace consistency (split evenness), race predictions (Riegel formula), HR efficiency trends, shoe mileage alerts
+     - Cross-domain: Strava x WHOOP correlations (recovery vs run performance, long run impact on next-day recovery)
+     - Webhook handling (activity CRUD + athlete deauth)
+   - `bot/db/database.py`: 4 new tables (strava_tokens, strava_activities, strava_best_efforts, strava_splits) with performance indexes
+   - `bot/ai/brain_v2.py`: Running coach knowledge engine (pace zones, 80/20 rule, periodization, PR strategies by distance, ACWR coaching, form cues, weather adjustments, shoe rotation, cross-training) + `_build_strava_section()` dynamic context
+   - `bot/ai/tools_v2.py`: 5 new tools (connect_strava, disconnect_strava, get_strava_summary, get_running_analysis, get_run_details)
+   - `bot/main_v2.py`: Strava OAuth callback, webhook endpoint + subscription verification (GET), onboarding message
+   - `bot/handlers/proactive_v2.py`: Strava sync job (every 2h for all connected users)
+
+### Status:
+- All files compile clean
+- Committed and pushed to main → Railway auto-deploys
+- 3 commits pushed: Session 10, stash merge, Session 11
+
+### Environment variables needed (Railway):
+- `STRAVA_CLIENT_ID` — from Strava API application
+- `STRAVA_CLIENT_SECRET` — from Strava API application
+- `STRAVA_REDIRECT_URI` — (optional, auto-derives from RAILWAY_PUBLIC_DOMAIN)
+- `STRAVA_WEBHOOK_VERIFY_TOKEN` — defaults to "zoe_strava_verify"
+
+### What's next:
+- Set up Strava API application at https://www.strava.com/settings/api
+- Add env vars to Railway
+- Register Strava webhook subscription
+- Test OAuth flow end-to-end
+- Consider adding Oura Ring integration (next in market study roadmap)
 
 ## Session Log — Mar 1, 2026 (Session 10)
 

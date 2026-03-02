@@ -72,6 +72,7 @@ def initialize():
                 referred_by_telegram_id BIGINT,
                 referral_count INT DEFAULT 0,
                 bonus_messages INT DEFAULT 0,
+                pro_expires_at TIMESTAMPTZ,
                 phone_number TEXT,
                 onboarding_completed BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -979,6 +980,28 @@ def initialize():
                 ON strava_best_efforts(strava_activity_id);
             CREATE INDEX IF NOT EXISTS idx_strava_splits_activity
                 ON strava_splits(strava_activity_id, split_num);
+
+            -- Language preference (ISO 639-1 code, e.g. 'en', 'es', 'pt')
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT;
+
+            -- ═══════════════════════════════════════════════════════════
+            -- REFERRAL SYSTEM ACTIVATION (Mar 2026)
+            -- ═══════════════════════════════════════════════════════════
+
+            -- Pro expiration for referral rewards (time-limited Pro access)
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_expires_at TIMESTAMPTZ;
+
+            -- Pending milestone notifications (picked up by proactive job)
+            CREATE TABLE IF NOT EXISTS pending_milestones (
+                id SERIAL PRIMARY KEY,
+                referrer_telegram_id BIGINT NOT NULL,
+                milestone_type TEXT NOT NULL,
+                months_granted INT NOT NULL,
+                sent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_milestones_unsent
+                ON pending_milestones(sent, created_at) WHERE sent = FALSE;
         """)
     logger.info("PostgreSQL schema initialized")
 
