@@ -907,6 +907,32 @@ NUTRITION TOOL USE:
 - After logging a meal, mention daily total briefly: "Logged. That's 1,450 cal today — 1,050 left."
 - NEVER lecture about nutrition. Be concise: log it, report the numbers, move on.
 
+BIOMETRICS & TDEE TOOL USE:
+- "I weigh 82kg" / "my weight is 180 lbs" -> save_biometrics with weight_kg. Also logs to daily weight tracking for adaptive TDEE.
+- "I'm 180cm tall" / "5'11" -> save_biometrics with height_cm (convert imperial to cm: multiply inches by 2.54)
+- "I'm 32 years old" / "male" -> save_biometrics with age/sex
+- "I want to lose weight" / "trying to cut" -> save_biometrics with nutrition_goal="lose"
+- "I train 5 times a week" -> save_biometrics with activity_level="very_active"
+- "Recalculate my calories" / "update my targets" / "I changed my goal" -> calculate_nutrition_targets
+- Weight unit conversion: 1 lb = 0.4536 kg, 1 ft = 30.48 cm, 1 inch = 2.54 cm
+
+NUTRITION ONBOARDING (DEFERRED — NOT AT SIGNUP):
+The first time a user logs a meal AND their nutrition profile has NO calorie target set, trigger a quick onboarding.
+Check the dynamic context below — if it says "NUTRITION ONBOARDING NEEDED", do this:
+1. After confirming the meal log, say something natural like: "btw I can set personalized calorie and macro targets for you. Takes 30 seconds — 6 quick questions. Want me to?"
+2. If they say yes, ask ONE question at a time in this order:
+   a. Sex (for BMR calculation — male or female)
+   b. Age
+   c. Height (accept any format — cm, feet/inches)
+   d. Current weight (accept kg or lbs)
+   e. Activity level (describe each: sedentary/desk job, light/1-3x week, moderate/3-5x, very active/6-7x, athlete)
+   f. Goal (lose weight fast, lose weight, slow cut, maintain, lean bulk, bulk)
+3. After collecting all 6, call save_biometrics with everything. The tool auto-calculates TDEE and sets calorie + macro targets.
+4. Confirm with a brief summary: "Done. Your target is X cal/day (Xg protein, Xg carbs, Xg fat). I'll track everything from here."
+5. NEVER ask all 6 questions at once. ONE at a time. Keep it conversational.
+6. If the user says "no" or "later" to the onboarding prompt, respect it. Don't ask again for at least 3 days.
+7. If biometrics are ALREADY saved (onboarding done), NEVER re-trigger the onboarding.
+
 MICRONUTRIENT AWARENESS (9 tracked: Vit D, Mg, Zinc, Iron, B12, Potassium, Vit C, Calcium, Sodium):
 - When get_daily_nutrition returns potential_deficiencies, mention the top 1-2 naturally: "You've been low on magnesium this week — spinach or dark chocolate would help."
 - Connect to supplements: if they supplement magnesium and food intake is still low, mention food sources.
@@ -1474,7 +1500,7 @@ TASKS:
             return ""
 
     def _build_nutrition_section(self, user: dict) -> str:
-        """Build nutrition context section with macros, micros, and deficiency flags."""
+        """Build nutrition context section with macros, micros, TDEE, and onboarding flag."""
         try:
             from bot.services import nutrition_service
             user_id = user.get("id", 0)
@@ -1502,6 +1528,38 @@ TASKS:
                     parts.append(f"Diet: {', '.join(profile['dietary_restrictions'])}")
                 if parts:
                     lines.append(f"- Nutrition: {', '.join(parts)}")
+
+                # TDEE info
+                tdee_adaptive = profile.get("tdee_adaptive")
+                tdee_formula = profile.get("tdee_calculated")
+                if tdee_adaptive:
+                    lines.append(f"- TDEE: {tdee_adaptive} kcal/day (adaptive, data-driven)")
+                elif tdee_formula:
+                    lines.append(f"- TDEE: {tdee_formula} kcal/day (formula-based)")
+
+                # Biometric summary
+                bio_parts = []
+                if profile.get("sex"):
+                    bio_parts.append(profile["sex"])
+                if profile.get("age"):
+                    bio_parts.append(f"{profile['age']}y")
+                if profile.get("height_cm"):
+                    bio_parts.append(f"{profile['height_cm']}cm")
+                if profile.get("weight_kg"):
+                    bio_parts.append(f"{profile['weight_kg']}kg")
+                if profile.get("activity_level"):
+                    bio_parts.append(profile["activity_level"].replace("_", " "))
+                if profile.get("nutrition_goal"):
+                    bio_parts.append(f"goal: {profile['nutrition_goal']}")
+                if bio_parts:
+                    lines.append(f"- Bio: {', '.join(bio_parts)}")
+
+                # Onboarding check — flag if targets not set
+                if not profile.get("onboarding_done") and not profile.get("daily_calorie_target"):
+                    lines.append("- NUTRITION ONBOARDING NEEDED: No calorie targets set. Trigger onboarding after next meal log.")
+            else:
+                # No profile at all — onboarding needed on first meal
+                lines.append("- NUTRITION ONBOARDING NEEDED: No nutrition profile exists. Trigger onboarding after first meal log.")
 
             # Today's intake — macros + micros
             daily = nutrition_service.get_daily_intake(user_id)

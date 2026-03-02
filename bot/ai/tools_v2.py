@@ -834,6 +834,34 @@ def get_tool_definitions() -> list:
                 "properties": {}
             }
         },
+        # --- Biometrics / TDEE ---
+        {
+            "name": "save_biometrics",
+            "description": "Save user's body measurements and calculate personalized calorie/macro targets. Use during nutrition onboarding or when user shares their stats (weight, height, age, sex, activity level, goal). Auto-calculates TDEE and sets daily calorie + macro targets.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "sex": {"type": "string", "enum": ["male", "female"], "description": "Biological sex for BMR calculation"},
+                    "age": {"type": "integer", "description": "Age in years"},
+                    "height_cm": {"type": "number", "description": "Height in centimeters (e.g. 180)"},
+                    "weight_kg": {"type": "number", "description": "Weight in kilograms (e.g. 82)"},
+                    "activity_level": {"type": "string", "enum": ["sedentary", "lightly_active", "moderately_active", "very_active", "extremely_active"], "description": "sedentary=desk job, lightly_active=1-3x/wk, moderately_active=3-5x/wk, very_active=6-7x/wk, extremely_active=athlete"},
+                    "nutrition_goal": {"type": "string", "enum": ["lose_fast", "lose", "lose_slow", "maintain", "gain_slow", "gain"], "description": "lose_fast=-750cal, lose=-500, lose_slow=-250, maintain=0, gain_slow=+250, gain=+500"},
+                    "body_fat_pct": {"type": "number", "description": "Body fat percentage if known (enables more accurate Katch-McArdle formula)"}
+                }
+            }
+        },
+        {
+            "name": "calculate_nutrition_targets",
+            "description": "Recalculate calorie and macro targets using the user's saved biometrics. Use when user changes their goal, activity level, or weight. Also triggers adaptive TDEE recalculation if enough weight data exists (14+ days).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "nutrition_goal": {"type": "string", "enum": ["lose_fast", "lose", "lose_slow", "maintain", "gain_slow", "gain"], "description": "Override goal for this calculation"},
+                    "activity_level": {"type": "string", "enum": ["sedentary", "lightly_active", "moderately_active", "very_active", "extremely_active"], "description": "Override activity level"}
+                }
+            }
+        },
         # --- Custom product database ---
         {
             "name": "save_custom_product",
@@ -1165,6 +1193,17 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if metric.get("previous_value") is not None:
                 result["previous_value"] = metric["previous_value"]
                 result["change"] = metric["change"]
+            # Also log weight to daily_weight_logs for adaptive TDEE
+            if args["metric_type"] == "weight":
+                try:
+                    from bot.services import tdee_service
+                    weight_kg = args["value"]
+                    if args.get("unit") in ("lbs", "lb"):
+                        weight_kg = round(args["value"] * 0.4536, 1)
+                    tdee_service.log_weight(user_id, weight_kg, source="body_metric")
+                    tdee_service.save_biometrics(user_id, weight_kg=weight_kg)
+                except Exception as e:
+                    logger.warning(f"Weight log for TDEE failed: {e}")
             return result
 
         elif name == "update_fitness_profile":
@@ -2333,6 +2372,84 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             return {"cleared": True, "meals_deleted": count, "daily_total": {
                 "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "meal_count": 0
             }}
+
+        elif name == "save_biometrics":
+            from bot.services import tdee_service
+            profile = tdee_service.save_biometrics(
+                user_id,
+                sex=args.get("sex"),
+                age=args.get("age"),
+                height_cm=args.get("height_cm"),
+                weight_kg=args.get("weight_kg"),
+                activity_level=args.get("activity_level"),
+                nutrition_goal=args.get("nutrition_goal"),
+                body_fat_pct=args.get("body_fat_pct"),
+            )
+            result = {
+                "saved": True,
+                "tdee": profile.get("tdee_calculated"),
+                "daily_calorie_target": profile.get("daily_calorie_target"),
+                "protein_target_g": profile.get("protein_target_g"),
+                "carbs_target_g": profile.get("carbs_target_g"),
+                "fat_target_g": profile.get("fat_target_g"),
+                "activity_level": profile.get("activity_level"),
+                "nutrition_goal": profile.get("nutrition_goal"),
+            }
+            if profile.get("sex") and profile.get("age") and profile.get("height_cm") and profile.get("weight_kg"):
+                result["onboarding_complete"] = True
+                # Mark onboarding done
+                from bot.db.database import get_cursor
+                with get_cursor() as cur:
+                    cur.execute(
+                        "UPDATE nutrition_profiles SET onboarding_done = TRUE WHERE user_id = %s",
+                        (user_id,)
+                    )
+            return result
+
+        elif name == "calculate_nutrition_targets":
+            from bot.services import tdee_service
+            from bot.services import nutrition_service
+            profile = nutrition_service.get_nutrition_profile(user_id)
+            if not profile or not profile.get("sex") or not profile.get("weight_kg"):
+                return {"error": "No biometrics saved yet. Ask the user for their stats first (sex, age, height, weight, activity level, goal)."}
+
+            # Apply overrides
+            goal = args.get("nutrition_goal") or profile.get("nutrition_goal", "maintain")
+            activity = args.get("activity_level") or profile.get("activity_level", "moderately_active")
+
+            # Try adaptive TDEE first (Phase 2)
+            adaptive = tdee_service.calculate_adaptive_tdee(user_id)
+
+            # Recalculate formula-based targets
+            targets = tdee_service.calculate_targets(
+                sex=profile["sex"], age=profile["age"],
+                height_cm=profile["height_cm"], weight_kg=profile["weight_kg"],
+                activity_level=activity, goal=goal,
+                body_fat_pct=profile.get("body_fat_pct"),
+            )
+
+            # Save updated targets
+            tdee_service.save_biometrics(
+                user_id,
+                activity_level=activity,
+                nutrition_goal=goal,
+            )
+
+            result = {
+                "formula_tdee": targets["tdee_calculated"],
+                "daily_calorie_target": targets["daily_calorie_target"],
+                "protein_target_g": targets["protein_target_g"],
+                "carbs_target_g": targets["carbs_target_g"],
+                "fat_target_g": targets["fat_target_g"],
+                "goal": goal,
+                "activity_level": activity,
+            }
+            if adaptive:
+                result["adaptive_tdee"] = adaptive["adaptive_tdee"]
+                result["adaptive_confidence"] = adaptive["confidence"]
+                result["note"] = f"Adaptive TDEE ({adaptive['adaptive_tdee']} kcal) based on {adaptive['data_points']} days of weight data. Formula says {targets['tdee_calculated']}."
+
+            return result
 
         elif name == "save_custom_product":
             from bot.services import product_service

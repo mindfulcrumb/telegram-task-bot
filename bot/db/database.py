@@ -1032,6 +1032,37 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS idx_custom_products_barcode
                 ON custom_products(barcode);
+
+            -- ═══════════════════════════════════════════════════════
+            -- TDEE / BIOMETRIC SYSTEM (adaptive calorie targets)
+            -- ═══════════════════════════════════════════════════════
+
+            -- Biometric columns on nutrition_profiles
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS sex TEXT;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS age INT;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS height_cm REAL;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS weight_kg REAL;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS activity_level TEXT DEFAULT 'moderately_active';
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS nutrition_goal TEXT DEFAULT 'maintain';
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS body_fat_pct REAL;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS tdee_calculated INT;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS tdee_adaptive INT;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS tdee_last_updated TIMESTAMPTZ;
+            ALTER TABLE nutrition_profiles ADD COLUMN IF NOT EXISTS onboarding_done BOOLEAN DEFAULT FALSE;
+
+            -- Daily weight logs (for adaptive TDEE — one entry per day)
+            CREATE TABLE IF NOT EXISTS daily_weight_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                log_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                weight_kg REAL NOT NULL,
+                source TEXT DEFAULT 'manual',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(user_id, log_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_daily_weight_user
+                ON daily_weight_logs(user_id, log_date DESC);
         """)
     logger.info("PostgreSQL schema initialized")
 
