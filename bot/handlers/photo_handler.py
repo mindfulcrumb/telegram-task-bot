@@ -851,10 +851,10 @@ async def _handle_general(update, context, user, caption, description, chat_id):
 
 def _classify_image(b64_data: str, media_type: str, api_key: str, is_pdf: bool = False) -> dict:
     """Classify an image as bloodwork, food, supplement, or other. Cheap Haiku call."""
-    import anthropic
+    from bot.ai.brain_v2 import _get_client  # Reuse singleton client instead of creating new one
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = _get_client()
 
         if is_pdf:
             file_block = {
@@ -890,10 +890,10 @@ def _classify_image(b64_data: str, media_type: str, api_key: str, is_pdf: bool =
 
 def _extract_food_vision(b64_data: str, media_type: str, api_key: str) -> dict:
     """Extract food items with USDA-friendly names and portion estimates. Uses Sonnet for accuracy."""
-    import anthropic
+    from bot.ai.brain_v2 import _get_client  # Reuse singleton client
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = _get_client()
 
         file_block = {
             "type": "image",
@@ -923,10 +923,10 @@ def _extract_food_vision(b64_data: str, media_type: str, api_key: str) -> dict:
 
 def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str, is_pdf: bool = False) -> dict | None:
     """Call Claude to extract bloodwork markers from an image or PDF. Runs in thread."""
-    import anthropic
+    from bot.ai.brain_v2 import _get_client  # Reuse singleton client
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = _get_client()
 
         if is_pdf:
             file_block = {
@@ -971,10 +971,10 @@ def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str, is_p
 
 def _extract_supplement_vision(b64_data: str, media_type: str, api_key: str) -> dict | None:
     """Extract supplement details from a product photo. Uses Sonnet for label accuracy."""
-    import anthropic
+    from bot.ai.brain_v2 import _get_client  # Reuse singleton client
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = _get_client()
 
         file_block = {
             "type": "image",
