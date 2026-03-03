@@ -2322,6 +2322,11 @@ JSON:"""
             "was my workout good", "analyze my session", "analyze my workout",
             "should i have trained differently", "was that too much",
             "how was my training", "rate my workout",
+            # Nutrition/food triggers (need Sonnet for reasoning)
+            "log my meal", "log a meal", "log my food", "log my breakfast", "log my lunch", "log my dinner", "log my snack",
+            "what should i eat", "what can i eat", "recipe", "meal plan", "food suggestion",
+            "calories", "macros", "protein", "carbs", "fat", "nutrition",
+            "i had", "i ate", "just ate", "just had", "for lunch", "for dinner", "for breakfast",
         ]
         for trigger in complex_triggers:
             if trigger in lower:
