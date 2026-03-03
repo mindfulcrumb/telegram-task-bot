@@ -432,3 +432,54 @@ Full codebase audit across all 14+ core files, then implemented fixes for 15 bug
 ### Commits this session:
 - `7b9113a` — Comprehensive audit fixes (WHOOP v2, brain optimizations, proactive improvements)
 - Previous: `1ae9e7f` (WHOOP fix), `f107bd5` (cost optimization)
+
+---
+
+## Session Log — Mar 3, 2026 (Session 12 — Stability & Error Visibility)
+
+### What was done:
+1. **Diagnosed 93MB error log crash loop**: Found local launchd agent `com.whiz.taskbot` continuously restarting the bot with broken venv, causing 700K+ crash cycles. Unloaded the agent permanently.
+2. **Fixed local environment**: Killed auto-restart process, created fresh venv with Python 3.14 (matching Railway Python 3+), cleared bot.error.log
+3. **Added smoke test script** — `scripts/smoke_test.py`: Pre-deploy verification that checks:
+   - All critical env vars present (TELEGRAM_BOT_TOKEN, DATABASE_URL, ANTHROPIC_API_KEY)
+   - All imports load without error (brain, tools, services, DB)
+   - Anthropic API is callable
+   - Database connection works
+   - Runs in 3 seconds, exit code 0 = safe to deploy, 1 = blocked
+4. **Added pre-push checklist** — `CHECKLIST.md`: Enforces discipline before every deploy:
+   - Run smoke_test.py (non-negotiable)
+   - Update CLAUDE.md with session summary
+   - Verify Railway health is green
+   - Check for untracked files
+5. **Added error visibility**:
+   - Enhanced exception handler in `brain_v2.py` (line ~2565) to log full context: user_id, model, turn number, full traceback
+   - Added Sentry SDK initialization to `main_v2.py` (if SENTRY_DSN env var set) for production error tracking
+   - Fallback: if Sentry unavailable, structured logging still goes to Railway logs
+6. **Identified remaining blockers** (from CLAUDE.md audit):
+   - `STRIPE_PROVIDER_TOKEN` not set in Railway → payments broken
+   - Strava env vars (CLIENT_ID, CLIENT_SECRET, WEBHOOK_VERIFY_TOKEN) likely not confirmed → OAuth broken
+   - Sync psycopg2 blocks event loop under concurrent users (architectural issue, lower priority)
+   - NexoParts memory purge still pending (`railway run python scripts/purge_nexoparts.py`)
+
+### Status:
+- ✓ Local environment fixed (no more crash loop)
+- ✓ Error visibility infrastructure in place
+- ✓ Pre-deploy smoke test automated
+- ✓ Session discipline checklist created
+- ⚠ STRIPE_PROVIDER_TOKEN and Strava env vars NOT YET SET IN RAILWAY
+- ⚠ NexoParts purge NOT YET RUN
+
+### What's next:
+1. Set STRIPE_PROVIDER_TOKEN in Railway (get from Smart Glocal or Unlimint)
+2. Confirm Strava env vars in Railway (or set them if missing)
+3. Run `railway run python scripts/purge_nexoparts.py` to clear NexoParts from conversation memory
+4. Test full deploy flow: local smoke_test.py → git push → Railway auto-deploy → health check green
+5. (Nice-to-have) Add Sentry account + configure SENTRY_DSN if error tracking is desired
+
+### Key insight:
+The bot wasn't "broken" — it was a missing deployment infrastructure. Three systemic gaps were causing errors to keep appearing:
+1. No automated verification (just "compiles clean" ≠ working)
+2. No error visibility (found out about crashes via 93MB log file)
+3. No session discipline (every session left code in uncertain state)
+
+With these three gaps closed, bugs will announce themselves before reaching users.

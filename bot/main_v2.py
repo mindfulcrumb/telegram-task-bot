@@ -17,6 +17,19 @@ from telegram.ext import (
     PreCheckoutQueryHandler, ContextTypes, filters,
 )
 
+# Initialize Sentry for error tracking (optional — only if SENTRY_DSN is set)
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            traces_sample_rate=0.1,
+            environment=os.environ.get("RAILWAY_ENVIRONMENT_NAME", "unknown"),
+        )
+    except ImportError:
+        pass  # sentry-sdk not installed; error tracking disabled
+
 logger = logging.getLogger(__name__)
 
 

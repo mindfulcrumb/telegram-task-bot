@@ -2564,7 +2564,19 @@ JSON:"""
 
         except Exception as e:
             import traceback
-            logger.error(f"Agent loop failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            # Log with full context for debugging
+            tb = traceback.format_exc()
+            logger.error(
+                f"AGENT LOOP CRASHED — user_id={user_id} model={model} turn={turn}\n"
+                f"  Error: {type(e).__name__}: {e}\n"
+                f"  Stack: {tb}"
+            )
+            # Try to report to error tracking (if Sentry is configured)
+            try:
+                import sentry_sdk
+                sentry_sdk.capture_exception(e)
+            except Exception:
+                pass
             return "Didn't catch that — try saying it differently, or send it again."
 
 
