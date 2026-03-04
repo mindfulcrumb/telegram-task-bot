@@ -144,7 +144,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     except Exception as e:
-        logger.error(f"Voice handling failed: {type(e).__name__}: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)[:300]
+        logger.error(
+            f"Voice handling failed for user {user.get('id', 'unknown')}\n"
+            f"  Error type: {error_type}\n"
+            f"  Message: {error_msg}\n"
+            f"  Input: {text[:100] if text else 'no transcription'}"
+        )
+        # Log to Sentry if configured
+        try:
+            if os.environ.get("SENTRY_DSN"):
+                import sentry_sdk
+                sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
         await update.message.reply_text(
             "Had trouble with that one — send it again?",
             reply_to_message_id=update.message.message_id,

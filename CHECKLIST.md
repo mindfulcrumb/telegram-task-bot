@@ -60,6 +60,15 @@
 - [ ] Test bot with `/start` command — responds
 - [ ] No error messages in Railway logs (check `railway logs`)
 
+### Voice Handler Smoke Test (required if any voice_v2.py changes)
+
+- [ ] Send a voice note to @Zoe
+- [ ] Check Railway logs for "Whisper detected language" (confirms Groq transcription worked)
+- [ ] Verify Zoe responds (not "Didn't catch that")
+- [ ] Check for "messages.*: Input should be a valid" errors in logs (API format error)
+- [ ] Send 2-3 more voice notes in quick succession (test no race conditions)
+- [ ] Check response time is <10s (target from PERF fixes)
+
 ---
 
 ## Emergency Rollback
@@ -88,3 +97,4 @@ railway logs
 - ❌ `bot.error.log` > 1MB (indicates crash loop)
 - ❌ Any `import psycopg2` inside async functions (blocks event loop)
 - ❌ Any sync httpx calls in handlers (should use `asyncio.to_thread()`)
+- ❌ `asyncio.to_thread()` wrapping data fetches passed to Claude API — can break message serialization
