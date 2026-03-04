@@ -1,6 +1,6 @@
 """Nutrition service — meal logging, calorie/macro tracking, nutrition profiles."""
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from bot.db.database import get_cursor
 
@@ -90,13 +90,18 @@ def log_meal(user_id: int, meal_type: str = None, description: str = "",
     """Log a meal. If identical meal was already logged today, update it instead (dedup)."""
     with get_cursor() as cur:
         # Dedup check: same description + same meal_type + today = update, not duplicate
+        # Use user's timezone, not server UTC
+        today = _user_today(user_id)
+        day_start = datetime.combine(today, time.min)
+        day_end = datetime.combine(today + timedelta(days=1), time.min)
+
         cur.execute(
             """SELECT id FROM meal_logs
                WHERE user_id = %s
                  AND LOWER(description) = LOWER(%s)
                  AND meal_type = %s
-                 AND logged_at::date = CURRENT_DATE""",
-            (user_id, description, meal_type)
+                 AND logged_at >= %s AND logged_at < %s""",
+            (user_id, description, meal_type, day_start, day_end)
         )
         existing = cur.fetchone()
 
