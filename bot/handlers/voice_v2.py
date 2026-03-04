@@ -107,7 +107,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async def _keep_typing():
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-        tasks = await asyncio.to_thread(task_service.get_tasks, user["id"])
+        tasks = task_service.get_tasks(user["id"])
 
         # Timeout safety: if brain takes >120s, return a fallback instead of hanging
         try:
