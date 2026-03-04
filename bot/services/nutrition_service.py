@@ -24,6 +24,37 @@ def _user_today(user_id: int = None) -> date:
     return date.today()
 
 
+def _get_day_range_utc(user_id: int, day: date = None) -> tuple[datetime, datetime]:
+    """Get UTC start/end timestamps for a day in user's timezone.
+
+    Needed because logged_at::date comparisons use server UTC, not user timezone.
+    Returns (utc_day_start, utc_day_end) suitable for SQL comparisons.
+    """
+    if day is None:
+        day = _user_today(user_id)
+
+    try:
+        from bot.services.user_service import get_user_by_id
+        from zoneinfo import ZoneInfo
+
+        user = get_user_by_id(user_id)
+        tz_name = user.get("timezone", "UTC") if user else "UTC"
+        tz = ZoneInfo(tz_name)
+
+        # Create local day boundaries in user's timezone
+        local_day_start = datetime.combine(day, time.min).replace(tzinfo=tz)
+        local_day_end = datetime.combine(day + timedelta(days=1), time.min).replace(tzinfo=tz)
+
+        # Convert to UTC for database comparison
+        utc_day_start = local_day_start.astimezone(timezone.utc).replace(tzinfo=None)
+        utc_day_end = local_day_end.astimezone(timezone.utc).replace(tzinfo=None)
+
+        return utc_day_start, utc_day_end
+    except Exception:
+        # Fallback: assume UTC
+        return datetime.combine(day, time.min), datetime.combine(day + timedelta(days=1), time.min)
+
+
 # --- Nutrition profile ---
 
 def get_nutrition_profile(user_id: int) -> dict | None:
@@ -139,13 +170,13 @@ def log_meal(user_id: int, meal_type: str = None, description: str = "",
 
 def get_meals_today(user_id: int) -> list:
     """Get all meals logged today (user's timezone)."""
-    today = _user_today(user_id)
+    day_start, day_end = _get_day_range_utc(user_id)
     with get_cursor() as cur:
         cur.execute(
             """SELECT * FROM meal_logs
-               WHERE user_id = %s AND logged_at::date = %s
+               WHERE user_id = %s AND logged_at >= %s AND logged_at < %s
                ORDER BY logged_at ASC""",
-            (user_id, today)
+            (user_id, day_start, day_end)
         )
         return [dict(row) for row in cur.fetchall()]
 
@@ -166,16 +197,16 @@ def delete_meal(user_id: int, meal_id: int) -> bool:
 
 def delete_last_meal(user_id: int) -> dict | None:
     """Delete the most recently logged meal for the user today. Returns the deleted meal."""
-    today = _user_today(user_id)
+    day_start, day_end = _get_day_range_utc(user_id)
     with get_cursor() as cur:
         cur.execute(
             """DELETE FROM meal_logs
                WHERE id = (
                    SELECT id FROM meal_logs
-                   WHERE user_id = %s AND logged_at::date = %s
+                   WHERE user_id = %s AND logged_at >= %s AND logged_at < %s
                    ORDER BY logged_at DESC LIMIT 1
                ) RETURNING *""",
-            (user_id, today)
+            (user_id, day_start, day_end)
         )
         row = cur.fetchone()
         if row:
@@ -187,13 +218,13 @@ def delete_last_meal(user_id: int) -> dict | None:
 
 def clear_today_meals(user_id: int) -> int:
     """Delete ALL meal logs for today. Returns number of meals deleted."""
-    today = _user_today(user_id)
+    day_start, day_end = _get_day_range_utc(user_id)
     with get_cursor() as cur:
         cur.execute(
             """DELETE FROM meal_logs
-               WHERE user_id = %s AND logged_at::date = %s
+               WHERE user_id = %s AND logged_at >= %s AND logged_at < %s
                RETURNING id""",
-            (user_id, today)
+            (user_id, day_start, day_end)
         )
         deleted = cur.fetchall()
         count = len(deleted)
@@ -206,6 +237,8 @@ def get_daily_intake(user_id: int, target_date: date = None) -> dict:
     """Get total calorie/macro intake for a day + remaining vs target."""
     if target_date is None:
         target_date = _user_today(user_id)
+
+    day_start, day_end = _get_day_range_utc(user_id, target_date)
 
     with get_cursor() as cur:
         cur.execute(
@@ -226,8 +259,8 @@ def get_daily_intake(user_id: int, target_date: date = None) -> dict:
                  COALESCE(SUM(calcium_mg), 0) as total_calcium,
                  COALESCE(SUM(sodium_mg), 0) as total_sodium
                FROM meal_logs
-               WHERE user_id = %s AND logged_at::date = %s""",
-            (user_id, target_date)
+               WHERE user_id = %s AND logged_at >= %s AND logged_at < %s""",
+            (user_id, day_start, day_end)
         )
         row = dict(cur.fetchone())
 
