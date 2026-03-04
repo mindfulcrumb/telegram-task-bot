@@ -851,7 +851,7 @@ def get_tool_definitions() -> list:
         # --- Biometrics / TDEE ---
         {
             "name": "save_biometrics",
-            "description": "Save user's body measurements and calculate personalized calorie/macro targets. Use during nutrition onboarding or when user shares their stats (weight, height, age, sex, activity level, goal). Auto-calculates TDEE and sets daily calorie + macro targets.",
+            "description": "Save user's body measurements and calculate personalized calorie/macro targets. Use during nutrition onboarding or when user shares their stats. When called with height_cm: if user said a bare number ≥ 100, that is centimeters (e.g. '175' → height_cm=175). If user said a number < 10, that is feet (e.g. '5' → height_cm=152). Never ask for clarification on unit — make the assumption and convert. Auto-calculates TDEE and sets daily calorie + macro targets.",
             "input_schema": {
                 "type": "object",
                 "properties": {
