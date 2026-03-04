@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, date, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -2403,7 +2404,18 @@ JSON:"""
             # Build system prompt as cached blocks (static = cached, dynamic = fresh)
             static_text = self._get_static_prompt()
             try:
-                dynamic_text = self._build_dynamic_context(user, tasks or [])
+                # Run context build in thread pool (15s timeout) to prevent event loop blocking
+                start = time.perf_counter()
+                dynamic_text = await asyncio.wait_for(
+                    asyncio.to_thread(self._build_dynamic_context, user, tasks or []),
+                    timeout=15.0
+                )
+                elapsed = time.perf_counter() - start
+                logger.info(f"Context build completed in {elapsed:.2f}s for user {user_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Dynamic context build timeout (>15s) for user {user_id}")
+                name = user.get("first_name", "friend")
+                dynamic_text = f"RIGHT NOW:\n- User: {name}\n- Status: context unavailable (timeout)\n"
             except Exception as e:
                 logger.error(f"Dynamic context build failed: {type(e).__name__}: {e}")
                 name = user.get("first_name", "friend")
@@ -2419,7 +2431,7 @@ JSON:"""
                 tools[-1]["cache_control"] = {"type": "ephemeral"}
 
             model, max_tokens = self._select_model(user_input)
-            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "5"))  # Reduced from 7 for faster responses
+            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "3"))  # Most queries need ≤3 turns
             response = None
             all_text_parts = []  # Collect text from ALL turns, not just the last
 
