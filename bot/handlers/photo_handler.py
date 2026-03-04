@@ -29,11 +29,47 @@ type must be one of:
 - "bloodwork": Lab results, blood test reports, medical test documents with biomarker values
 - "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos, inside of a fridge or pantry
 - "supplement": Supplement bottles, pill containers, supplement labels, vitamin packaging, supplement facts panels, herbal extract bottles, protein powder containers, any health/wellness product packaging
+- "workout": Workout logs, training summaries, exercise records, gym session reports, fitness app exports (e.g. Strava, TrainingPeaks, Garmin), running data, any document listing exercises, sets, reps, weights, or training metrics
 - "other": Everything else (screenshots, memes, selfies, documents, etc.)
 
 For the description, describe what you ACTUALLY see. Do not infer or assume items that are not clearly visible.
 
 Return ONLY the JSON object, nothing else."""
+
+
+WORKOUT_PDF_EXTRACTION_PROMPT = """Analyze this workout/training document and extract all exercise data.
+
+Return a JSON object with this EXACT structure:
+{
+  "is_workout": true,
+  "title": "Workout title or type (e.g. 'Upper Body Push', 'Leg Day', 'Morning Run')",
+  "date": "YYYY-MM-DD if visible, otherwise null",
+  "duration_minutes": 60,
+  "rpe": null,
+  "notes": "Any performance notes, how it felt, energy level — null if none visible",
+  "exercises": [
+    {
+      "exercise_name": "Bench Press",
+      "movement_pattern": "horizontal_push",
+      "sets": 3,
+      "reps": "8",
+      "weight": 80,
+      "weight_unit": "kg",
+      "rpe": null
+    }
+  ]
+}
+
+Rules:
+1. If this is NOT a workout or training document, return {"is_workout": false}
+2. Extract EVERY exercise or movement listed — don't skip any
+3. For movement_pattern use one of: squat, hinge, horizontal_push, horizontal_pull, vertical_push, vertical_pull, carry_rotation
+4. Infer movement_pattern from the exercise name (e.g. Bench Press → horizontal_push, Deadlift → hinge)
+5. If reps vary by set, format as "12,10,8" (comma-separated)
+6. If duration is in seconds, convert to minutes (round to nearest integer)
+7. For cardio/running: omit exercises array, set title to activity type, include duration_minutes and any pace/distance in notes
+8. Weight should be a number — if unit is lbs keep as-is and set weight_unit to "lbs"
+9. Return ONLY the JSON object, nothing else"""
 
 
 FOOD_EXTRACTION_PROMPT = """Look at this image carefully. Identify ONLY the food items you can clearly see.
@@ -271,6 +307,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif image_type == "supplement":
             await _handle_supplement(update, context, user, b64_data, media_type, api_key, caption, description, chat_id)
 
+        elif image_type == "workout":
+            await _handle_workout_pdf(update, context, user, b64_data, media_type, api_key, is_pdf, caption, description, chat_id)
+
         else:
             await _handle_general(update, context, user, caption, description, chat_id)
 
@@ -290,6 +329,92 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
+
+async def _handle_workout_pdf(update, context, user, b64_data, media_type, api_key, is_pdf, caption, description, chat_id):
+    """Extract workout data from a PDF or photo, pass to brain to call log_workout."""
+    extraction = await asyncio.to_thread(
+        _extract_workout_pdf_vision, b64_data, media_type, api_key, is_pdf
+    )
+
+    if not extraction or not extraction.get("is_workout"):
+        # Classifier said workout but extraction disagrees — treat as general
+        await _handle_general(update, context, user, caption, description, chat_id)
+        return
+
+    exercises = extraction.get("exercises", [])
+    title = extraction.get("title", "Workout")
+    duration = extraction.get("duration_minutes")
+    notes = extraction.get("notes")
+    rpe = extraction.get("rpe")
+    date = extraction.get("date")
+
+    # Build structured context for brain
+    image_context = "[WORKOUT DOCUMENT — EXTRACTED DATA]\n"
+    image_context += f"Title: {title}\n"
+    if date:
+        image_context += f"Date: {date}\n"
+    if duration:
+        image_context += f"Duration: {duration} minutes\n"
+    if rpe:
+        image_context += f"RPE: {rpe}/10\n"
+    if notes:
+        image_context += f"Notes: {notes}\n"
+
+    if exercises:
+        image_context += f"\nExercises ({len(exercises)}):\n"
+        for ex in exercises:
+            parts = [ex.get("exercise_name", "?")]
+            if ex.get("sets") and ex.get("reps"):
+                parts.append(f"{ex['sets']}x{ex['reps']}")
+            if ex.get("weight"):
+                unit = ex.get("weight_unit", "kg")
+                parts.append(f"@ {ex['weight']}{unit}")
+            if ex.get("rpe"):
+                parts.append(f"RPE {ex['rpe']}")
+            image_context += f"  - {' '.join(parts)}\n"
+    else:
+        image_context += "(Cardio/no individual exercises extracted)\n"
+
+    image_context += (
+        "\n--- INSTRUCTIONS ---\n"
+        "The user sent a workout document. "
+        "Call log_workout with the extracted data above. "
+        f"Use title='{title}'"
+        + (f", duration_minutes={duration}" if duration else "")
+        + (f", rpe={rpe}" if rpe else "")
+        + (f", notes='{notes}'" if notes else "")
+        + (", exercises=[<list above>]" if exercises else "")
+        + ".\n"
+        "After logging, give a brief coaching comment on the session (1-2 lines). "
+        "If the date is in the past, acknowledge it was a past session.\n"
+    )
+
+    text_for_brain = f"{image_context}\n{caption}" if caption else image_context
+
+    from bot.ai.brain_v2 import ai_brain
+    from bot.services import task_service
+    tasks = task_service.get_tasks(user["id"])
+
+    async def _keep_typing():
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        response = await asyncio.wait_for(
+            ai_brain.process(text_for_brain, user, tasks, typing_callback=_keep_typing),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        response = "That took too long — try again."
+
+    if response:
+        reply_markup = None
+        if ai_brain._paywall_hit.get(user["id"], False):
+            from bot.handlers.payments import get_subscribe_keyboard
+            reply_markup = get_subscribe_keyboard(update.effective_user.id)
+        await send_chunked(bot=context.bot, chat_id=chat_id, text=response, reply_markup=reply_markup)
+
+    logger.info(f"Workout doc processed for user {user['id']}: '{title}', {len(exercises)} exercises")
+
 
 async def _handle_bloodwork(update, context, user, b64_data, media_type, api_key, is_pdf):
     """Extract bloodwork markers and log to database."""
@@ -966,6 +1091,51 @@ def _extract_bloodwork_vision(b64_data: str, media_type: str, api_key: str, is_p
         return None
     except Exception as e:
         logger.error(f"Vision extraction failed: {type(e).__name__}: {e}")
+        return None
+
+
+def _extract_workout_pdf_vision(b64_data: str, media_type: str, api_key: str, is_pdf: bool = False) -> dict | None:
+    """Extract workout data from a training document or image. Runs in thread."""
+    from bot.ai.brain_v2 import _get_client
+
+    try:
+        client = _get_client()
+
+        if is_pdf:
+            file_block = {
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": b64_data},
+            }
+        else:
+            file_block = {
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": b64_data},
+            }
+
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            messages=[{
+                "role": "user",
+                "content": [file_block, {"type": "text", "text": WORKOUT_PDF_EXTRACTION_PROMPT}],
+            }],
+            timeout=60.0,
+        )
+
+        if not response.content:
+            return None
+
+        text = response.content[0].text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        return json.loads(text)
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Workout PDF JSON parse error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Workout PDF extraction failed: {type(e).__name__}: {e}")
         return None
 
 

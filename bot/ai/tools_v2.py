@@ -2293,6 +2293,50 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
 
         elif name == "log_meal":
             from bot.services import nutrition_service
+
+            # USDA-first: when AI estimates, try to enrich with lab-verified data.
+            # Strategy: search USDA for the description, derive portion grams from
+            # AI's calorie estimate, then scale USDA nutrients to that portion.
+            # Only applied to single/simple foods where USDA lookup is meaningful.
+            source = args.get("source", "ai_estimated")
+            if source == "ai_estimated":
+                ai_calories = args.get("calories")
+                description_for_usda = args.get("description", "").strip()
+                if ai_calories and description_for_usda:
+                    try:
+                        from bot.services import usda_service as _usda
+                        nutrients_100g = await _usda.search_and_get_nutrients(description_for_usda)
+                        usda_cal = nutrients_100g.get("calories") if nutrients_100g else None
+                        if usda_cal and usda_cal > 0:
+                            grams = (ai_calories / usda_cal) * 100
+                            if 10 <= grams <= 2000:  # sanity check on portion size
+                                scaled = _usda.scale_nutrients(nutrients_100g, grams)
+                                # Merge: USDA wins where it has data; AI fallback otherwise
+                                def _pick(usda_val, ai_key):
+                                    return usda_val if usda_val else args.get(ai_key)
+                                args = {**args,
+                                    "protein_g": _pick(scaled.get("protein"), "protein_g"),
+                                    "carbs_g": _pick(scaled.get("carbs"), "carbs_g"),
+                                    "fat_g": _pick(scaled.get("fat"), "fat_g"),
+                                    "fiber_g": _pick(scaled.get("fiber"), "fiber_g"),
+                                    "vitamin_d_mcg": _pick(scaled.get("vitamin_d"), "vitamin_d_mcg"),
+                                    "magnesium_mg": _pick(scaled.get("magnesium"), "magnesium_mg"),
+                                    "zinc_mg": _pick(scaled.get("zinc"), "zinc_mg"),
+                                    "iron_mg": _pick(scaled.get("iron"), "iron_mg"),
+                                    "b12_mcg": _pick(scaled.get("b12"), "b12_mcg"),
+                                    "potassium_mg": _pick(scaled.get("potassium"), "potassium_mg"),
+                                    "vitamin_c_mg": _pick(scaled.get("vitamin_c"), "vitamin_c_mg"),
+                                    "calcium_mg": _pick(scaled.get("calcium"), "calcium_mg"),
+                                    "sodium_mg": _pick(scaled.get("sodium"), "sodium_mg"),
+                                    "source": "usda",
+                                }
+                                logger.info(
+                                    f"USDA enrichment applied for '{description_for_usda}' "
+                                    f"(~{grams:.0f}g, {usda_cal:.0f} cal/100g)"
+                                )
+                    except Exception as _usda_err:
+                        logger.debug(f"USDA pre-lookup skipped for '{description_for_usda}': {type(_usda_err).__name__}: {_usda_err}")
+
             meal = nutrition_service.log_meal(
                 user_id,
                 meal_type=args.get("meal_type"),
