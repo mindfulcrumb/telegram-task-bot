@@ -147,6 +147,10 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
                 body_fat_pct=body_fat_pct,
             )
 
+        # Mark onboarding done if all required biometrics are present
+        onboarding_done = (sex and age and height_cm and weight_kg
+                          and activity_level and nutrition_goal)
+
         if existing:
             cur.execute(
                 """UPDATE nutrition_profiles SET
@@ -162,6 +166,7 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
                     carbs_target_g = COALESCE(%s, carbs_target_g),
                     fat_target_g = COALESCE(%s, fat_target_g),
                     tdee_calculated = COALESCE(%s, tdee_calculated),
+                    onboarding_done = CASE WHEN %s THEN TRUE ELSE onboarding_done END,
                     updated_at = NOW()
                 WHERE user_id = %s RETURNING *""",
                 (sex, age, height_cm, weight_kg, activity_level, nutrition_goal,
@@ -171,6 +176,7 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
                  targets.get("carbs_target_g"),
                  targets.get("fat_target_g"),
                  targets.get("tdee_calculated"),
+                 onboarding_done,
                  user_id)
             )
         else:
@@ -178,8 +184,9 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
                 """INSERT INTO nutrition_profiles
                    (user_id, sex, age, height_cm, weight_kg, activity_level,
                     nutrition_goal, body_fat_pct, daily_calorie_target,
-                    protein_target_g, carbs_target_g, fat_target_g, tdee_calculated)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    protein_target_g, carbs_target_g, fat_target_g, tdee_calculated,
+                    onboarding_done)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING *""",
                 (user_id, sex, age, height_cm, weight_kg, activity_level,
                  nutrition_goal, body_fat_pct,
@@ -187,7 +194,8 @@ def save_biometrics(user_id: int, sex: str = None, age: int = None,
                  targets.get("protein_target_g"),
                  targets.get("carbs_target_g"),
                  targets.get("fat_target_g"),
-                 targets.get("tdee_calculated"))
+                 targets.get("tdee_calculated"),
+                 onboarding_done)
             )
 
         result = dict(cur.fetchone())
