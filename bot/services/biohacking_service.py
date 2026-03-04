@@ -121,6 +121,23 @@ def update_protocol_status(protocol_id: int, status: str) -> dict | None:
         return dict(row) if row else None
 
 
+def update_protocol(protocol_id: int, **kwargs) -> dict | None:
+    """Update protocol fields — peptide_name, dose_amount, dose_unit, frequency, route, cycle_end, notes."""
+    allowed = {'peptide_name', 'dose_amount', 'dose_unit', 'frequency', 'route', 'cycle_end', 'notes'}
+    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not fields:
+        return None
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [protocol_id]
+    with get_cursor() as cur:
+        cur.execute(
+            f"UPDATE peptide_protocols SET {set_clause} WHERE id = %s RETURNING *",
+            values
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def log_dose(user_id: int, protocol_id: int, dose_amount: float = None,
              site: str = None, notes: str = None) -> dict:
     """Record a peptide dose administration."""

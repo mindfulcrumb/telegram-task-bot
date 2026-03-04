@@ -172,7 +172,7 @@ async def send_chunked(
             if proactive:
                 delay = min(0.3 + len(chunk) * 0.001, 1.0)
             else:
-                delay = min(0.4 + len(chunk) * 0.002, 1.8)
+                delay = min(0.2 + len(chunk) * 0.001, 0.8)  # Reduced from 1.8s max for faster response
             await asyncio.sleep(delay)
 
         # Attach reply_markup to last chunk only

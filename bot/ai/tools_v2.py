@@ -247,19 +247,22 @@ def get_tool_definitions() -> list:
         # --- Biohacking tools ---
         {
             "name": "manage_peptide_protocol",
-            "description": "Add, pause, resume, or end a peptide protocol. For ADDING new protocols, prefer start_protocol_wizard instead (guided interactive flow). Use this tool directly for pause, resume, and end actions, or when the user provides ALL details in one message and doesn't need the wizard.",
+            "description": "Add, rename, update dose, pause, resume, or end a peptide protocol. CRITICAL: Use action=rename when user CORRECTS a protocol name ('I'm on X not Y') — NEVER action=add for corrections as it creates duplicates. Use action=update_dose to change dose/frequency on existing protocol. For ADDING new protocols, prefer start_protocol_wizard instead (guided interactive flow).",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["add", "pause", "resume", "end"], "description": "Action to take on the protocol"},
-                    "peptide_name": {"type": "string", "description": "Name of the peptide (e.g., 'BPC-157', 'TB-500', 'Ipamorelin')"},
-                    "dose_amount": {"type": "number", "description": "Dose amount per administration"},
+                    "action": {"type": "string", "enum": ["add", "rename", "update_dose", "pause", "resume", "end"], "description": "Action to take on the protocol. rename = correct protocol name, update_dose = change dose/frequency"},
+                    "peptide_name": {"type": "string", "description": "Name of the peptide (e.g., 'BPC-157', 'TB-500', 'Ipamorelin', 'Retatrutide')"},
+                    "dose_amount": {"type": "number", "description": "Dose amount per administration (required for action=add)"},
                     "dose_unit": {"type": "string", "description": "Unit (mcg, mg, IU). Default: mcg"},
                     "frequency": {"type": "string", "description": "How often (e.g., '2x daily', '3x weekly', 'daily')"},
                     "route": {"type": "string", "description": "Administration route (subcutaneous, intramuscular, nasal, oral). Default: subcutaneous"},
                     "cycle_start": {"type": "string", "description": "Cycle start date YYYY-MM-DD (default: today)"},
                     "cycle_end": {"type": "string", "description": "Cycle end date YYYY-MM-DD"},
-                    "notes": {"type": "string", "description": "Additional notes about the protocol"}
+                    "notes": {"type": "string", "description": "Additional notes about the protocol"},
+                    "new_name": {"type": "string", "description": "New name for the protocol. Required for action=rename (e.g., change Semaglutide → Retatrutide)"},
+                    "new_dose_amount": {"type": "number", "description": "Updated dose amount. Use with action=update_dose."},
+                    "new_frequency": {"type": "string", "description": "Updated frequency. Use with action=update_dose."}
                 },
                 "required": ["action", "peptide_name"]
             }
@@ -834,6 +837,17 @@ def get_tool_definitions() -> list:
                 "properties": {}
             }
         },
+        {
+            "name": "delete_meal_log",
+            "description": "Delete a meal log entry. Use when user says a logged meal is wrong and wants it removed. Specify meal_type and/or description.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "meal_type": {"type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"], "description": "Meal type to filter by (optional)"},
+                    "description": {"type": "string", "description": "Partial description of meal to match and delete (optional, case-insensitive)"}
+                }
+            }
+        },
         # --- Biometrics / TDEE ---
         {
             "name": "save_biometrics",
@@ -1286,6 +1300,15 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             peptide_name = args["peptide_name"]
 
             if action == "add":
+                # Dedup guard: check if same-name protocol already exists
+                existing = biohacking_service.get_protocol_by_name(user_id, peptide_name)
+                if existing:
+                    return {
+                        "error": f"Protocol '{existing['peptide_name']}' already active (id={existing['id']}). "
+                                 f"Use action=rename to correct the name, action=update_dose to change the dose, "
+                                 f"or action=end then action=add to replace it."
+                    }
+
                 cycle_start = None
                 cycle_end = None
                 if args.get("cycle_start"):
@@ -1320,6 +1343,32 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                     result["cycle_length_days"] = total
                 return result
 
+            elif action == "rename":
+                new_name = args.get("new_name")
+                if not new_name:
+                    return {"error": "new_name is required for action=rename"}
+                protocol = biohacking_service.get_protocol_by_name(user_id, peptide_name)
+                if not protocol:
+                    return {"error": f"No active protocol found matching '{peptide_name}'"}
+                updated = biohacking_service.update_protocol(protocol["id"], peptide_name=new_name)
+                return {"success": True, "action": "renamed", "from": peptide_name, "to": new_name}
+
+            elif action == "update_dose":
+                protocol = biohacking_service.get_protocol_by_name(user_id, peptide_name)
+                if not protocol:
+                    return {"error": f"No active protocol found matching '{peptide_name}'"}
+                kwargs = {}
+                if args.get("new_dose_amount"):
+                    kwargs["dose_amount"] = args["new_dose_amount"]
+                if args.get("dose_unit"):
+                    kwargs["dose_unit"] = args["dose_unit"]
+                if args.get("new_frequency"):
+                    kwargs["frequency"] = args["new_frequency"]
+                if not kwargs:
+                    return {"error": "No dose changes provided. Use new_dose_amount and/or new_frequency."}
+                updated = biohacking_service.update_protocol(protocol["id"], **kwargs)
+                return {"success": True, "action": "updated", "peptide": peptide_name, "changes": kwargs}
+
             elif action in ("pause", "resume", "end"):
                 protocol = biohacking_service.get_protocol_by_name(user_id, peptide_name)
                 if not protocol:
@@ -1329,7 +1378,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 return {"success": True, "action": action, "peptide": peptide_name, "new_status": new_status}
 
             else:
-                return {"error": f"Unknown action '{action}'. Use add, pause, resume, or end."}
+                return {"error": f"Unknown action '{action}'. Use add, rename, update_dose, pause, resume, or end."}
 
         elif name == "log_peptide_dose":
             from bot.services import biohacking_service
@@ -2290,6 +2339,48 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if any(v > 0 for v in micros.values()):
                 result["daily_micros"] = micros
             return result
+
+        elif name == "delete_meal_log":
+            from bot.services import nutrition_service
+
+            meal_type = args.get("meal_type")
+            description = args.get("description", "").strip()
+
+            if not meal_type and not description:
+                return {"error": "Must specify meal_type or description"}
+
+            # Query for matching meal
+            with get_cursor() as cur:
+                query = "SELECT id, description, meal_type FROM meal_logs WHERE user_id = %s AND logged_at::date = CURRENT_DATE"
+                params = [user_id]
+
+                if meal_type:
+                    query += " AND meal_type = %s"
+                    params.append(meal_type)
+
+                if description:
+                    query += " AND description ILIKE %s"
+                    params.append(f"%{description}%")
+
+                query += " ORDER BY logged_at DESC LIMIT 1"
+                cur.execute(query, params)
+                meal = cur.fetchone()
+
+            if not meal:
+                return {"error": f"No meal found matching criteria"}
+
+            # Delete the meal
+            success = nutrition_service.delete_meal(user_id, meal["id"])
+            if success:
+                return {
+                    "success": True,
+                    "deleted": {
+                        "meal_type": meal["meal_type"],
+                        "description": meal["description"],
+                        "meal_id": meal["id"]
+                    }
+                }
+            return {"error": "Failed to delete meal"}
 
         elif name == "get_daily_nutrition":
             from bot.services import nutrition_service

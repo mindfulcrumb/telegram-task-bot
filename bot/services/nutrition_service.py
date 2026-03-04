@@ -87,21 +87,48 @@ def log_meal(user_id: int, meal_type: str = None, description: str = "",
              b12_mcg: float = None, potassium_mg: float = None,
              vitamin_c_mg: float = None, calcium_mg: float = None,
              sodium_mg: float = None) -> dict:
-    """Log a meal with optional calorie/macro/micro data."""
+    """Log a meal. If identical meal was already logged today, update it instead (dedup)."""
     with get_cursor() as cur:
+        # Dedup check: same description + same meal_type + today = update, not duplicate
         cur.execute(
-            """INSERT INTO meal_logs
-               (user_id, meal_type, description, calories, protein_g,
-                carbs_g, fat_g, fiber_g, source, photo_analysis,
-                vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
-                potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
-            (user_id, meal_type, description, calories, protein_g,
-             carbs_g, fat_g, fiber_g, source, photo_analysis,
-             vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
-             potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
+            """SELECT id FROM meal_logs
+               WHERE user_id = %s
+                 AND LOWER(description) = LOWER(%s)
+                 AND meal_type = %s
+                 AND logged_at::date = CURRENT_DATE""",
+            (user_id, description, meal_type)
         )
+        existing = cur.fetchone()
+
+        if existing:
+            # UPDATE: replace the meal with new values
+            cur.execute(
+                """UPDATE meal_logs SET
+                     calories = %s, protein_g = %s, carbs_g = %s, fat_g = %s, fiber_g = %s,
+                     source = %s, vitamin_d_mcg = %s, magnesium_mg = %s, zinc_mg = %s,
+                     iron_mg = %s, b12_mcg = %s, potassium_mg = %s, vitamin_c_mg = %s,
+                     calcium_mg = %s, sodium_mg = %s, photo_analysis = %s, logged_at = NOW()
+                   WHERE id = %s RETURNING *""",
+                (calories, protein_g, carbs_g, fat_g, fiber_g,
+                 source, vitamin_d_mcg, magnesium_mg, zinc_mg,
+                 iron_mg, b12_mcg, potassium_mg, vitamin_c_mg,
+                 calcium_mg, sodium_mg, photo_analysis, existing["id"])
+            )
+        else:
+            # INSERT: new meal entry
+            cur.execute(
+                """INSERT INTO meal_logs
+                   (user_id, meal_type, description, calories, protein_g,
+                    carbs_g, fat_g, fiber_g, source, photo_analysis,
+                    vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
+                    potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+                (user_id, meal_type, description, calories, protein_g,
+                 carbs_g, fat_g, fiber_g, source, photo_analysis,
+                 vitamin_d_mcg, magnesium_mg, zinc_mg, iron_mg, b12_mcg,
+                 potassium_mg, vitamin_c_mg, calcium_mg, sodium_mg)
+            )
         return dict(cur.fetchone())
 
 

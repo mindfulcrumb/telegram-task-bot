@@ -2413,7 +2413,7 @@ JSON:"""
                 tools[-1]["cache_control"] = {"type": "ephemeral"}
 
             model, max_tokens = self._select_model(user_input)
-            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "7"))
+            max_turns = int(os.environ.get("AGENT_MAX_TURNS", "5"))  # Reduced from 7 for faster responses
             response = None
             all_text_parts = []  # Collect text from ALL turns, not just the last
 
