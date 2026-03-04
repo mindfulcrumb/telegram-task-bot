@@ -79,6 +79,52 @@ STYLE_DISPLAY = {
     "hybrid": "a mix of everything",
 }
 
+SEX_MAP = {
+    "m": "male",
+    "f": "female",
+    "o": "other",
+}
+
+SEX_DISPLAY = {
+    "male": "Male",
+    "female": "Female",
+    "other": "Other",
+}
+
+ACTIVITY_LEVEL_MAP = {
+    "sed": "sedentary",
+    "light": "lightly_active",
+    "mod": "moderately_active",
+    "very": "very_active",
+    "extreme": "extremely_active",
+}
+
+ACTIVITY_LEVEL_DISPLAY = {
+    "sedentary": "Sedentary (little exercise)",
+    "lightly_active": "Lightly active (1-3x/week)",
+    "moderately_active": "Moderately active (3-5x/week)",
+    "very_active": "Very active (6-7x/week)",
+    "extremely_active": "Extremely active (intense training)",
+}
+
+NUTRITION_GOAL_MAP = {
+    "cut_fast": "lose_fast",
+    "cut": "lose",
+    "cut_slow": "lose_slow",
+    "maintain": "maintain",
+    "bulk_slow": "gain_slow",
+    "bulk": "gain",
+}
+
+NUTRITION_GOAL_DISPLAY = {
+    "lose_fast": "Lose weight fast (-750 kcal/day)",
+    "lose": "Lose weight (-500 kcal/day)",
+    "lose_slow": "Lose weight slowly (-250 kcal/day)",
+    "maintain": "Maintain weight",
+    "gain_slow": "Gain muscle slowly (+250 kcal/day)",
+    "gain": "Gain muscle (+500 kcal/day)",
+}
+
 
 # ── /start ────────────────────────────────────────────────────────────
 
@@ -400,6 +446,19 @@ async def resume_onboarding(message, context):
         await _send_biohacking(message, context)
     elif "blood_type" not in ob:
         await _send_blood_type(message, context)
+    # Nutrition biometric questions (only for fitness track users)
+    elif focus != "tasks" and not ob.get("age"):
+        await _send_age(message, context)
+    elif focus != "tasks" and not ob.get("sex"):
+        await _send_sex(message, context)
+    elif focus != "tasks" and not ob.get("height_cm"):
+        await _send_height(message, context)
+    elif focus != "tasks" and not ob.get("weight_kg"):
+        await _send_weight(message, context)
+    elif focus != "tasks" and not ob.get("activity_level"):
+        await _send_activity_level(message, context)
+    elif focus != "tasks" and not ob.get("nutrition_goal"):
+        await _send_nutrition_goal(message, context)
     else:
         # All questions answered — must be on the timezone/location step
         await _send_timezone(message, context)
@@ -560,6 +619,105 @@ async def _send_blood_type(message, context):
     )
 
 
+async def _send_age(message, context):
+    """Step 11a: Age for calorie calculations."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("18-25", callback_data="ob:age:22")],
+        [InlineKeyboardButton("26-35", callback_data="ob:age:30")],
+        [InlineKeyboardButton("36-45", callback_data="ob:age:40")],
+        [InlineKeyboardButton("46-55", callback_data="ob:age:50")],
+        [InlineKeyboardButton("56+", callback_data="ob:age:60")],
+    ])
+    await message.reply_text(
+        "Quick nutrition question: How old are you? (Helps me calculate your calorie needs.)",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_sex(message, context):
+    """Step 11b: Sex for TDEE formula."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Male", callback_data="ob:sex:m")],
+        [InlineKeyboardButton("Female", callback_data="ob:sex:f")],
+        [InlineKeyboardButton("Other", callback_data="ob:sex:o")],
+    ])
+    await message.reply_text(
+        "What's your sex? (Used in calorie/macro calculations.)",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_height(message, context):
+    """Step 11c: Height for TDEE."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("5'2\" (157cm)", callback_data="ob:height:157")],
+        [InlineKeyboardButton("5'4\" (163cm)", callback_data="ob:height:163")],
+        [InlineKeyboardButton("5'6\" (168cm)", callback_data="ob:height:168")],
+        [InlineKeyboardButton("5'8\" (173cm)", callback_data="ob:height:173")],
+        [InlineKeyboardButton("5'10\" (178cm)", callback_data="ob:height:178")],
+        [InlineKeyboardButton("6'0\" (183cm)", callback_data="ob:height:183")],
+        [InlineKeyboardButton("6'2\" (188cm)", callback_data="ob:height:188")],
+        [InlineKeyboardButton("Other height", callback_data="ob:height:170")],
+    ])
+    await message.reply_text(
+        "What's your height?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_weight(message, context):
+    """Step 11d: Current weight."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Under 70kg", callback_data="ob:weight:65")],
+        [InlineKeyboardButton("70-80kg", callback_data="ob:weight:75")],
+        [InlineKeyboardButton("80-90kg", callback_data="ob:weight:85")],
+        [InlineKeyboardButton("90-100kg", callback_data="ob:weight:95")],
+        [InlineKeyboardButton("100-110kg", callback_data="ob:weight:105")],
+        [InlineKeyboardButton("110kg+", callback_data="ob:weight:115")],
+    ])
+    await message.reply_text(
+        "Current weight?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_activity_level(message, context):
+    """Step 11e: Activity level for TDEE multiplier."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Sedentary", callback_data="ob:activity:sed")],
+        [InlineKeyboardButton("Lightly active (1-3x/week)", callback_data="ob:activity:light")],
+        [InlineKeyboardButton("Moderately active (3-5x/week)", callback_data="ob:activity:mod")],
+        [InlineKeyboardButton("Very active (6-7x/week)", callback_data="ob:activity:very")],
+        [InlineKeyboardButton("Extremely active", callback_data="ob:activity:extreme")],
+    ])
+    await message.reply_text(
+        "How active are you most weeks?",
+        reply_markup=keyboard,
+    )
+
+
+async def _send_nutrition_goal(message, context):
+    """Step 11f: Nutrition goal (caloric adjustment)."""
+    await _typing_pause(message.chat, 0.6)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Lose fast", callback_data="ob:nutgoal:cut_fast")],
+        [InlineKeyboardButton("Lose weight", callback_data="ob:nutgoal:cut")],
+        [InlineKeyboardButton("Lose slowly", callback_data="ob:nutgoal:cut_slow")],
+        [InlineKeyboardButton("Maintain", callback_data="ob:nutgoal:maintain")],
+        [InlineKeyboardButton("Gain (muscle)", callback_data="ob:nutgoal:bulk")],
+        [InlineKeyboardButton("Gain slowly", callback_data="ob:nutgoal:bulk_slow")],
+    ])
+    await message.reply_text(
+        "What's your nutrition goal?",
+        reply_markup=keyboard,
+    )
+
+
 async def _send_timezone(message, context):
     """Step 11: Timezone via location share."""
     await _typing_pause(message.chat, 0.8)
@@ -611,6 +769,22 @@ async def _complete_onboarding(message, context, user):
     if ob.get("blood_type"):
         user_service.update_blood_type(user_id, ob["blood_type"])
 
+    # Save nutrition biometrics if fitness track (user should have provided them)
+    if focus in ("fit", "all") and ob.get("sex") and ob.get("age"):
+        from bot.services import tdee_service
+        try:
+            tdee_service.save_biometrics(
+                user_id,
+                sex=ob.get("sex"),
+                age=ob.get("age"),
+                height_cm=ob.get("height_cm"),
+                weight_kg=ob.get("weight_kg"),
+                activity_level=ob.get("activity_level", "moderately_active"),
+                nutrition_goal=ob.get("nutrition_goal", "maintain"),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save nutrition biometrics for user {user_id}: {e}")
+
     # Mark onboarding complete
     user_service.mark_onboarding_complete(user_id)
     user["onboarding_completed"] = True
@@ -657,6 +831,28 @@ async def _complete_onboarding(message, context, user):
         blood = ob.get("blood_type")
         if blood:
             memories.append((f"Blood type: {blood}", "health"))
+
+        # Nutrition biometrics (fitness track only)
+        if focus in ("fit", "all"):
+            age = ob.get("age")
+            sex = ob.get("sex")
+            height_cm = ob.get("height_cm")
+            weight_kg = ob.get("weight_kg")
+            activity = ob.get("activity_level")
+            goal = ob.get("nutrition_goal")
+
+            if age:
+                memories.append((f"Age: {age} years old", "personal"))
+            if sex:
+                memories.append((f"Sex: {SEX_DISPLAY.get(sex, sex)}", "personal"))
+            if height_cm:
+                memories.append((f"Height: {height_cm} cm", "health"))
+            if weight_kg:
+                memories.append((f"Weight: {weight_kg} kg", "health"))
+            if activity:
+                memories.append((f"Activity level: {ACTIVITY_LEVEL_DISPLAY.get(activity, activity)}", "fitness"))
+            if goal:
+                memories.append((f"Nutrition goal: {goal.replace('_', ' ')}", "goal"))
 
         # Focus area
         if focus == "tasks":
@@ -822,6 +1018,32 @@ async def handle_onboarding_callback(update: Update, context: ContextTypes.DEFAU
 
         elif step == "blood":
             ob["blood_type"] = value if value != "skip" else None
+            # Continue to nutrition questions
+            await _send_age(query.message, context)
+
+        elif step == "age":
+            # Extract age from callback (use midpoint of range)
+            ob["age"] = int(value)
+            await _send_sex(query.message, context)
+
+        elif step == "sex":
+            ob["sex"] = SEX_MAP.get(value, "male")
+            await _send_height(query.message, context)
+
+        elif step == "height":
+            ob["height_cm"] = float(value)
+            await _send_weight(query.message, context)
+
+        elif step == "weight":
+            ob["weight_kg"] = float(value)
+            await _send_activity_level(query.message, context)
+
+        elif step == "activity":
+            ob["activity_level"] = ACTIVITY_LEVEL_MAP.get(value, "moderately_active")
+            await _send_nutrition_goal(query.message, context)
+
+        elif step == "nutgoal":
+            ob["nutrition_goal"] = NUTRITION_GOAL_MAP.get(value, "maintain")
             await _send_timezone(query.message, context)
 
         elif step == "tz":
