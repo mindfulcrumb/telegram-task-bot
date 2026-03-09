@@ -22,10 +22,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot.ai.brain_v2 import ai_brain
 
     tg = update.effective_user
-    user = context.user_data.get("db_user")
-    if not user:
-        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-        context.user_data["db_user"] = user
+    user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+    context.user_data["db_user"] = user
 
     if not user.get("onboarding_completed"):
         await update.message.reply_text(

@@ -423,6 +423,47 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resume_onboarding(message, context):
     """Figure out which onboarding step the user is on and re-send it."""
     ob = context.user_data.get("ob", {})
+
+    # Session was cleared (app restarted) — try to restore progress from DB
+    # so the user doesn't redo questions they already answered
+    if not ob:
+        db_user = context.user_data.get("db_user", {})
+        user_id = db_user.get("id")
+        if user_id:
+            try:
+                from bot.services import fitness_service
+                fp = fitness_service.get_fitness_profile(user_id)
+                if fp and fp.get("fitness_goal"):
+                    # Restore fitness answers from DB
+                    ob["focus"] = "fit"
+                    ob["goal"] = fp.get("fitness_goal")
+                    ob["experience"] = fp.get("experience_level", "intermediate")
+                    ob["days"] = fp.get("training_days_per_week", 3)
+                    ob["equipment"] = fp.get("equipment", "full_gym")
+                    ob["style"] = fp.get("preferred_style", "hybrid")
+                    ob["injury"] = fp.get("limitations")
+                    ob["biohacking"] = db_user.get("biohacking_interest")
+                    ob["blood_type"] = db_user.get("blood_type")
+                    # Restore nutrition answers from DB
+                    try:
+                        from bot.db.database import get_cursor
+                        with get_cursor() as cur:
+                            cur.execute("SELECT * FROM nutrition_profiles WHERE user_id = %s", (user_id,))
+                            np = cur.fetchone()
+                        if np:
+                            np = dict(np)
+                            ob["age"] = np.get("age")
+                            ob["sex"] = np.get("sex")
+                            ob["height_cm"] = np.get("height_cm")
+                            ob["weight_kg"] = np.get("weight_kg")
+                            ob["activity_level"] = np.get("activity_level")
+                            ob["nutrition_goal"] = np.get("nutrition_goal")
+                    except Exception:
+                        pass
+                    context.user_data["ob"] = ob
+            except Exception:
+                pass
+
     focus = ob.get("focus")
 
     if not focus:

@@ -22,6 +22,9 @@ def _to_ascii(text):
 # Singleton Anthropic client — reuses HTTP connection pool across requests
 _anthropic_client = None
 
+# Cache for KB awareness counts — these change rarely (new seeds, not per-request)
+_kb_counts_cache: dict = {"result": "", "expires": 0.0}
+
 
 def _get_client():
     """Get or create the singleton Anthropic client."""
@@ -1926,6 +1929,10 @@ TASKS:
 
     def _build_kb_awareness_section(self) -> str:
         """Build knowledge base awareness section — tells the brain what reference data is available."""
+        global _kb_counts_cache
+        now = time.time()
+        if _kb_counts_cache["result"] and now < _kb_counts_cache["expires"]:
+            return _kb_counts_cache["result"]
         try:
             from bot.db.database import get_cursor
             with get_cursor() as cur:
@@ -1968,7 +1975,10 @@ TASKS:
             lines.append("When a user is on multiple peptides, check interactions with check_peptide_interactions.")
             lines.append("Include FDA regulatory status and WADA status when discussing peptide safety.")
 
-            return "\n".join(lines) + "\n"
+            result = "\n".join(lines) + "\n"
+            _kb_counts_cache["result"] = result
+            _kb_counts_cache["expires"] = now + 1800  # 30-min TTL
+            return result
         except Exception:
             return ""
 
@@ -2329,6 +2339,11 @@ JSON:"""
             "was my workout good", "analyze my session", "analyze my workout",
             "should i have trained differently", "was that too much",
             "how was my training", "rate my workout",
+            # Voice-natural workout triggers
+            "upper body", "lower body", "chest day", "back day", "leg workout",
+            "arm day", "shoulder day", "build me a", "create a workout",
+            "design a", "program me", "going to the gym", "at the gym",
+            "hiit", "give me something", "i want to train",
             # Nutrition/food triggers (need Sonnet for reasoning)
             "log my meal", "log a meal", "log my food", "log my breakfast", "log my lunch", "log my dinner", "log my snack",
             "what should i eat", "what can i eat", "recipe", "meal plan", "food suggestion",
@@ -2438,9 +2453,17 @@ JSON:"""
             # Detect workout requests — force tool use on first turn so the model
             # MUST call at least one tool (get_fitness_context or start_workout_session)
             _lower_input = user_input.lower()
-            _workout_hints = ("workout", "train", "session", "leg day", "push day",
-                              "pull day", "what should i", "give me a", "prescribe",
-                              "recovery session", "mobility session")
+            _workout_hints = (
+                "workout", "train", "session", "leg day", "push day",
+                "pull day", "what should i", "give me a", "prescribe",
+                "recovery session", "mobility session",
+                # Common voice phrases people say naturally
+                "upper body", "lower body", "chest day", "back day",
+                "arm day", "shoulder day", "cardio", "hiit",
+                "do a", "gym today", "at the gym", "lifting",
+                "program me", "build me", "create a", "design a",
+                "i want to", "i need to train", "going to the gym",
+            )
             _is_workout_request = any(h in _lower_input for h in _workout_hints)
             _first_turn_tool_choice = {"type": "any"} if _is_workout_request else None
 
