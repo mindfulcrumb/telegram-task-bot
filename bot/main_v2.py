@@ -94,6 +94,8 @@ class _HealthCheck(BaseHTTPRequestHandler):
             self._handle_whoop_webhook()
         elif self.path == "/strava/webhook":
             self._handle_strava_webhook()
+        elif self.path == "/stripe/upgrade":
+            self._handle_stripe_upgrade()
         else:
             self.send_response(404)
             self.end_headers()
@@ -690,6 +692,54 @@ class _HealthCheck(BaseHTTPRequestHandler):
                 self.wfile.write(b"Verification failed")
         except Exception as e:
             logger.error(f"Strava webhook verify error: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+    def _handle_stripe_upgrade(self):
+        """Handle Stripe payment confirmation — upgrade user tier in Railway DB."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 65_536:
+                self.send_response(413)
+                self.end_headers()
+                return
+
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+
+            # Verify shared secret
+            secret = os.environ.get("STRIPE_UPGRADE_SECRET", "")
+            if not secret or data.get("secret") != secret:
+                self.send_response(403)
+                self.end_headers()
+                logger.warning("Stripe upgrade: invalid secret")
+                return
+
+            telegram_user_id = data.get("telegram_user_id")
+            tier = data.get("tier", "pro")
+            stripe_customer_id = data.get("stripe_customer_id")
+
+            if not telegram_user_id:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            from bot.services import user_service as _us
+            user = _us.get_or_create_user(int(telegram_user_id))
+            if user:
+                _us.update_tier(user["id"], tier, stripe_customer_id=stripe_customer_id)
+                logger.info(f"Stripe upgrade: user {user['id']} (tg={telegram_user_id}) → {tier}")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": true}')
+            else:
+                logger.warning(f"Stripe upgrade: user not found for tg_id={telegram_user_id}")
+                self.send_response(404)
+                self.end_headers()
+
+        except Exception as e:
+            logger.error(f"Stripe upgrade handler error: {e}")
             self.send_response(500)
             self.end_headers()
 
