@@ -48,7 +48,8 @@ async def morning_briefing_job(context: ContextTypes.DEFAULT_TYPE):
             streak = coaching_service.get_streak(user["id"])
             patterns = coaching_service.get_completion_patterns(user["id"])
 
-            text = _generate_briefing(user, tasks, streak, patterns)
+            import asyncio
+            text = await asyncio.to_thread(_generate_briefing, user, tasks, streak, patterns)
 
             await send_chunked(
                 bot=context.bot,
@@ -155,7 +156,7 @@ async def smart_nudge_job(context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             tasks = task_service.get_tasks(user["id"])
-            today_d = date.today()
+            today_d = datetime.now(_get_tz(user)).date()
             nudges = []
 
             for t in tasks:
@@ -667,7 +668,7 @@ async def streak_at_risk_job(context: ContextTypes.DEFAULT_TYPE):
             last_workout = streak.get("last_workout_date")
             if not last_workout:
                 continue
-            gap_days = (date.today() - last_workout).days
+            gap_days = (now_user.date() - last_workout).days
             if gap_days < 1:
                 continue  # Worked out today (shouldn't reach here, but safety)
 
@@ -988,9 +989,10 @@ async def strava_sync_job(context):
             cur.execute("SELECT user_id FROM strava_tokens")
             rows = cur.fetchall()
 
+        import asyncio
         for row in rows:
             try:
-                strava_service.sync_recent_activities(row["user_id"], days=3)
+                await asyncio.to_thread(strava_service.sync_recent_activities, row["user_id"], days=3)
             except Exception as e:
                 logger.warning(f"Strava sync failed for user {row['user_id']}: {e}")
 
@@ -1177,7 +1179,7 @@ def _generate_briefing(user, tasks, streak, patterns):
     try:
         from bot.ai.brain_v2 import _call_api
 
-        today_d = date.today()
+        today_d = datetime.now(_get_tz(user)).date()
         overdue = [t for t in tasks if t.get("due_date") and t["due_date"] < today_d]
         due_today = [t for t in tasks if t.get("due_date") and t["due_date"] == today_d]
 
@@ -1275,7 +1277,7 @@ def _generate_briefing(user, tasks, streak, patterns):
             # Yesterday's spending
             from bot.services import expense_service
             from datetime import timedelta as td
-            yesterday_total = expense_service.get_daily_total(user["id"], date.today() - td(days=1))
+            yesterday_total = expense_service.get_daily_total(user["id"], datetime.now(_get_tz(user)).date() - td(days=1))
             if yesterday_total > 0:
                 cross_domain += f"Yesterday's spending: \u20ac{yesterday_total:.0f}\n"
         except Exception:
@@ -1376,7 +1378,7 @@ def _generate_briefing(user, tasks, streak, patterns):
 
 def _template_briefing(user, tasks):
     """Simple template briefing when AI is unavailable."""
-    today_d = date.today()
+    today_d = datetime.now(_get_tz(user)).date()
     name = user.get("first_name", "friend")
     total = len(tasks)
     overdue = sum(1 for t in tasks if t.get("due_date") and t["due_date"] < today_d)

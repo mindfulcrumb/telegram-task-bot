@@ -1,4 +1,5 @@
 """MVP tool definitions and executor — user-scoped, PostgreSQL-backed."""
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -1544,7 +1545,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 return {"error": "WHOOP not connected. Use connect_whoop to link your device."}
             # Sync fresh data
             try:
-                whoop_service.sync_all(user_id)
+                await asyncio.to_thread(whoop_service.sync_all, user_id)
             except Exception:
                 pass
             today = whoop_service.get_today_recovery(user_id)
@@ -1592,7 +1593,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
             if not whoop_service.is_connected(user_id):
                 return {"error": "WHOOP not connected. Use connect_whoop to link your device."}
             try:
-                whoop_service.sync_all(user_id)
+                await asyncio.to_thread(whoop_service.sync_all, user_id)
             except Exception:
                 pass
             insights = whoop_service.get_whoop_insights(user_id)
@@ -1652,7 +1653,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
 
             # Sync WHOOP data to make sure we have the latest
             try:
-                whoop_service.sync_all(user_id)
+                await asyncio.to_thread(whoop_service.sync_all, user_id)
             except Exception:
                 pass
 
@@ -1704,7 +1705,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 return {"error": "Strava not connected. Use connect_strava to link your account."}
             # Sync recent data first
             try:
-                strava_service.sync_recent_activities(user_id, days=7)
+                await asyncio.to_thread(strava_service.sync_recent_activities, user_id, 7)
             except Exception:
                 pass
             days = args.get("days", 30)
@@ -1754,7 +1755,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 return {"error": "Strava not connected. Use connect_strava to link your account."}
             # Sync first
             try:
-                strava_service.sync_recent_activities(user_id, days=14)
+                await asyncio.to_thread(strava_service.sync_recent_activities, user_id, 14)
             except Exception:
                 pass
             analysis = strava_service.analyze_running_performance(user_id)

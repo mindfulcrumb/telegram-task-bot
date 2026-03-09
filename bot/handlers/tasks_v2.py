@@ -45,11 +45,9 @@ async def _get_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict 
     Returns None (and sends a message) if the user hasn't completed
     onboarding/phone verification — this blocks ALL bot functionality.
     """
-    user = context.user_data.get("db_user")
-    if not user:
-        tg = update.effective_user
-        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-        context.user_data["db_user"] = user
+    tg = update.effective_user
+    user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+    context.user_data["db_user"] = user
 
     if not user.get("onboarding_completed"):
         if not user.get("phone_number"):
@@ -927,11 +925,9 @@ async def handle_whoop_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    user = context.user_data.get("db_user")
-    if not user:
-        tg = update.effective_user
-        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-        context.user_data["db_user"] = user
+    tg = update.effective_user
+    user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+    context.user_data["db_user"] = user
 
     chat = query.message.chat
 
@@ -1114,11 +1110,9 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
     """Handle feedback button callbacks (fb:pos / fb:neg)."""
     query = update.callback_query
 
-    user = context.user_data.get("db_user")
-    if not user:
-        tg = update.effective_user
-        user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
-        context.user_data["db_user"] = user
+    tg = update.effective_user
+    user = user_service.get_or_create_user(tg.id, tg.username, tg.first_name)
+    context.user_data["db_user"] = user
 
     feedback_type = "positive" if query.data == "fb:pos" else "negative"
 
