@@ -1026,6 +1026,20 @@ async def referral_milestone_job(context):
 
 # --- Job Registration ---
 
+async def _seed_workout_programs_job(context):
+    """One-time job: seed elite workout program knowledge into KB on startup."""
+    import asyncio
+    try:
+        def _run():
+            from bot.data.seed_workout_programs import seed_workout_programs
+            return seed_workout_programs()
+        count = await asyncio.to_thread(_run)
+        if count > 0:
+            logger.info(f"Workout programs seeded: {count} entries added to knowledge base")
+    except Exception as e:
+        logger.error(f"Workout program seed job failed: {e}")
+
+
 def setup_proactive_jobs(application):
     """Register all proactive coaching jobs."""
     jq = application.job_queue
@@ -1074,6 +1088,9 @@ def setup_proactive_jobs(application):
 
     # One-time deep content extraction: runs once 5 min after startup, then stops
     jq.run_once(initial_content_extraction_job, when=300, name="initial_content_extraction")
+
+    # One-time workout program knowledge seed: runs 2 min after startup
+    jq.run_once(_seed_workout_programs_job, when=120, name="seed_workout_programs")
 
     # Gmail new email alerts: every 2 minutes
     jq.run_repeating(gmail_check_job, interval=120, first=90, name="gmail_alerts")
