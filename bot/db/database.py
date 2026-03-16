@@ -1066,6 +1066,42 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS idx_daily_weight_user
                 ON daily_weight_logs(user_id, log_date DESC);
+
+            -- Workout programs (structured, per-user training plans)
+            CREATE TABLE IF NOT EXISTS workout_programs (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                goal TEXT,
+                duration_weeks INT NOT NULL DEFAULT 4,
+                current_week INT NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                days_per_week INT NOT NULL DEFAULT 4,
+                program_json JSONB NOT NULL,
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_workout_programs_user_status
+                ON workout_programs(user_id, status);
+
+            -- Program sessions log (tracks adherence: planned vs actual)
+            CREATE TABLE IF NOT EXISTS program_session_logs (
+                id SERIAL PRIMARY KEY,
+                program_id INT NOT NULL REFERENCES workout_programs(id) ON DELETE CASCADE,
+                user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                week_number INT NOT NULL,
+                day_name TEXT NOT NULL,
+                workout_id INT REFERENCES workouts(id),
+                planned_json JSONB,
+                status TEXT NOT NULL DEFAULT 'pending',
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_program_session_logs_program
+                ON program_session_logs(program_id, week_number);
+            CREATE INDEX IF NOT EXISTS idx_program_session_logs_user
+                ON program_session_logs(user_id, created_at DESC);
         """)
     logger.info("PostgreSQL schema initialized")
 

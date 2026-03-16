@@ -1040,6 +1040,110 @@ async def _seed_workout_programs_job(context):
         logger.error(f"Workout program seed job failed: {e}")
 
 
+async def weekly_program_recap_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 6 hours. On Mondays (user's timezone, morning), sends the week's program overview."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+
+            # Only Monday mornings (7-9am window)
+            if now_user.weekday() != 0 or now_user.hour < 7 or now_user.hour > 9:
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "program_recap"):
+                continue
+
+            from bot.services import program_service
+            overview = program_service.get_week_overview(user["id"])
+            if not overview:
+                continue
+
+            name = user.get("first_name", "friend")
+            lines = [f"Hey {name}, here's your Week {overview['week']}/{overview['total_weeks']} — {overview['program_title']}:\n"]
+
+            day_order = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            for day in day_order:
+                session = overview["sessions"].get(day)
+                if not session or not isinstance(session, dict):
+                    continue
+                title = session.get("title", day.title())
+                stype = session.get("type", "")
+                exercises = session.get("exercises", [])
+                if exercises:
+                    ex_names = [e.get("name", "?") for e in exercises[:4]]
+                    ex_str = ", ".join(ex_names)
+                    if len(exercises) > 4:
+                        ex_str += f" +{len(exercises) - 4}"
+                    lines.append(f"{day.title()}: {title} — {ex_str}")
+                else:
+                    lines.append(f"{day.title()}: {title} ({stype})")
+
+            rules = overview.get("progression_rules", {})
+            if rules:
+                inc = []
+                if rules.get("upper_increment_kg"):
+                    inc.append(f"+{rules['upper_increment_kg']}kg upper")
+                if rules.get("lower_increment_kg"):
+                    inc.append(f"+{rules['lower_increment_kg']}kg lower")
+                if inc:
+                    lines.append(f"\nProgression: {', '.join(inc)}")
+
+            lines.append("\nSay 'let's train' when you're ready and I'll load today's session.")
+
+            text = "\n".join(lines)
+            await typing_pause_bot(context.bot, user["telegram_user_id"], 1.0)
+            await context.bot.send_message(chat_id=user["telegram_user_id"], text=text)
+            coaching_service.record_nudge(user["id"], 0, "program_recap")
+            logger.info(f"Weekly program recap sent to user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Program recap failed for user {user.get('id', '?')}: {e}")
+
+
+# Also: advance program weeks automatically on Mondays
+async def auto_advance_program_week_job(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 6 hours. On Mondays, auto-advances active programs to next week."""
+    users = user_service.get_all_active_users()
+    for user in users:
+        try:
+            if user.get("tier") != "pro":
+                continue
+
+            tz = _get_tz(user)
+            now_user = datetime.now(tz)
+
+            # Only Monday early morning (5-6am) — before the recap
+            if now_user.weekday() != 0 or now_user.hour != 5:
+                continue
+
+            if coaching_service.was_nudged_today(user["id"], 0, "program_advance"):
+                continue
+
+            from bot.services import program_service
+            result = program_service.advance_week(user["id"])
+            if result:
+                coaching_service.record_nudge(user["id"], 0, "program_advance")
+                status = result.get("status", "active")
+                if status == "completed":
+                    name = user.get("first_name", "friend")
+                    text = (
+                        f"Hey {name}, you just finished your program \"{result['title']}\"! "
+                        "Tell me your next goal and I'll build you a fresh one."
+                    )
+                    await context.bot.send_message(chat_id=user["telegram_user_id"], text=text)
+                    logger.info(f"Program completed for user {user['id']}: {result['title']}")
+                else:
+                    logger.info(f"Auto-advanced program to week {result.get('current_week')} for user {user['id']}")
+
+        except Exception as e:
+            logger.error(f"Auto-advance failed for user {user.get('id', '?')}: {e}")
+
+
 def setup_proactive_jobs(application):
     """Register all proactive coaching jobs."""
     jq = application.job_queue
@@ -1104,7 +1208,13 @@ def setup_proactive_jobs(application):
     # Referral milestone notifications: every hour
     jq.run_repeating(referral_milestone_job, interval=3600, first=600, name="referral_milestones")
 
-    logger.info("Proactive coaching jobs registered (19 jobs)")
+    # Weekly program recap: every 6 hours (self-skips on non-Mondays)
+    jq.run_repeating(weekly_program_recap_job, interval=21600, first=900, name="weekly_program_recap")
+
+    # Auto-advance program week: every 6 hours (self-skips on non-Mondays)
+    jq.run_repeating(auto_advance_program_week_job, interval=21600, first=600, name="auto_advance_program")
+
+    logger.info("Proactive coaching jobs registered (21 jobs)")
 
 
 # --- Helpers ---

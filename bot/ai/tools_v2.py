@@ -223,6 +223,46 @@ def get_tool_definitions() -> list:
                 "required": ["title", "exercises"]
             }
         },
+        # --- Workout program tools ---
+        {
+            "name": "save_workout_program",
+            "description": "Save a structured multi-week workout program for the user. Use this AFTER designing a program (not log_workout). Stores the full program with weekly sessions, exercises, progression rules. One active program per user — saving a new one replaces the old. Always call get_fitness_context FIRST to get user data before building a program.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Program title (e.g., 'Block 2 — Shred Phase', '4-Week Strength Builder')"},
+                    "goal": {"type": "string", "description": "Program goal (e.g., 'shred', 'strength', 'hypertrophy', 'athletic_performance', 'general_fitness')"},
+                    "duration_weeks": {"type": "integer", "description": "Program length in weeks (typically 4-8)"},
+                    "days_per_week": {"type": "integer", "description": "Training days per week"},
+                    "program_json": {
+                        "type": "object",
+                        "description": "Full program structure. Keys: 'weeks' (dict of week numbers → day sessions), 'progression_rules', 'coaching_notes'. Each day session has: title, type (strength/hypertrophy/conditioning/recovery), exercises (array with name, sets, reps, weight_scheme, weights, unit, rpe_target, notes, superset_with), warmup, cooldown, finisher."
+                    },
+                    "notes": {"type": "string", "description": "Program-level coaching notes"}
+                },
+                "required": ["title", "goal", "duration_weeks", "days_per_week", "program_json"]
+            }
+        },
+        {
+            "name": "get_active_program",
+            "description": "Get the user's active workout program with full details. Returns the complete program structure, current week, and all sessions. Use when user asks 'what's my program', 'show my plan', 'what am I doing this week', or when you need to reference their program before prescribing a session.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "get_todays_session",
+            "description": "Get today's prescribed workout session from the user's active program. Returns the specific exercises, sets, reps, weights for today. Use when user says 'let's train', 'what's today's workout', 'I'm at the gym', 'ready to work out'. Then use start_workout_session with the exercises to launch interactive tracking.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "day_override": {"type": "string", "description": "Optional: force a specific day (e.g., 'monday', 'friday') instead of today's actual day"}
+                }
+            }
+        },
+        {
+            "name": "advance_program_week",
+            "description": "Advance the user's program to the next week. Use at the end of a training week when all sessions are done, or when user says 'next week', 'advance my program'. If the program is complete (past duration), it will be marked as completed.",
+            "input_schema": {"type": "object", "properties": {}}
+        },
         # --- Interactive protocol wizard & dashboard ---
         {
             "name": "start_protocol_wizard",
@@ -1276,6 +1316,94 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 "title": args["title"],
                 "exercise_count": len(args["exercises"]),
                 "_interactive_session": True,
+            }
+
+        # --- Workout program tools ---
+        elif name == "save_workout_program":
+            from bot.services import program_service
+            program = program_service.create_program(
+                user_id=user_id,
+                title=args["title"],
+                goal=args["goal"],
+                duration_weeks=args["duration_weeks"],
+                days_per_week=args["days_per_week"],
+                program_json=args["program_json"],
+                notes=args.get("notes"),
+            )
+            return {
+                "success": True,
+                "program_id": program["id"],
+                "title": program["title"],
+                "duration_weeks": program["duration_weeks"],
+                "current_week": 1,
+                "message": f"Program '{program['title']}' saved. {program['duration_weeks']} weeks, {program['days_per_week']} days/week. Week 1 starts now.",
+            }
+
+        elif name == "get_active_program":
+            from bot.services import program_service
+            overview = program_service.get_week_overview(user_id)
+            if not overview:
+                return {"has_program": False, "message": "No active program. Ask the user about their goals to build one."}
+            # Summarize sessions for the AI
+            sessions_summary = {}
+            for day, session in overview["sessions"].items():
+                if isinstance(session, dict):
+                    ex_names = [e.get("name", "?") for e in session.get("exercises", [])]
+                    sessions_summary[day] = {
+                        "title": session.get("title", ""),
+                        "type": session.get("type", ""),
+                        "exercises": ex_names,
+                        "exercise_count": len(ex_names),
+                    }
+            return {
+                "has_program": True,
+                "program_id": overview["program_id"],
+                "program_title": overview["program_title"],
+                "goal": overview["goal"],
+                "week": overview["week"],
+                "total_weeks": overview["total_weeks"],
+                "days_per_week": overview["days_per_week"],
+                "sessions": sessions_summary,
+                "progression_rules": overview["progression_rules"],
+                "coaching_notes": overview["coaching_notes"],
+            }
+
+        elif name == "get_todays_session":
+            from bot.services import program_service
+            result = program_service.get_todays_session(user_id, day_override=args.get("day_override"))
+            if not result:
+                return {"has_session": False, "message": "No session prescribed for today (rest day or no active program)."}
+            session = result["session"]
+            return {
+                "has_session": True,
+                "program_title": result["program_title"],
+                "week": result["week"],
+                "day": result["day"],
+                "session_title": session.get("title", ""),
+                "session_type": session.get("type", ""),
+                "exercises": session.get("exercises", []),
+                "warmup": session.get("warmup", ""),
+                "cooldown": session.get("cooldown", ""),
+                "finisher": session.get("finisher", ""),
+                "notes": session.get("notes", ""),
+            }
+
+        elif name == "advance_program_week":
+            from bot.services import program_service
+            result = program_service.advance_week(user_id)
+            if not result:
+                return {"success": False, "message": "No active program to advance."}
+            if result.get("status") == "completed":
+                return {
+                    "success": True,
+                    "status": "completed",
+                    "message": f"Program '{result['title']}' is complete! Time to design the next block.",
+                }
+            return {
+                "success": True,
+                "new_week": result["current_week"],
+                "total_weeks": result["duration_weeks"],
+                "message": f"Advanced to week {result['current_week']} of {result['duration_weeks']}.",
             }
 
         # --- Interactive protocol wizard & dashboard ---
