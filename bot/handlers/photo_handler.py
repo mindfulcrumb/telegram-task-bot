@@ -19,20 +19,22 @@ logger = logging.getLogger(__name__)
 # Vision prompts
 # ---------------------------------------------------------------------------
 
-IMAGE_CLASSIFICATION_PROMPT = """Look at this image and classify it. Return ONLY a JSON object:
+IMAGE_CLASSIFICATION_PROMPT = """Look at this image and classify it. The image may contain text in ANY language — read and understand it regardless of language.
+
+Return ONLY a JSON object:
 {
   "type": "bloodwork",
-  "description": "Brief 1-2 sentence description of what you see"
+  "description": "Brief 1-2 sentence description of what you see (in English)"
 }
 
 type must be one of:
-- "bloodwork": Lab results, blood test reports, medical test documents with biomarker values
-- "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos, inside of a fridge or pantry
-- "supplement": Supplement bottles, pill containers, supplement labels, vitamin packaging, supplement facts panels, herbal extract bottles, protein powder containers, any health/wellness product packaging
+- "bloodwork": Lab results, blood test reports, medical test documents with biomarker values (in any language — "Análises Clínicas", "Resultados", "Hemograma", etc.)
+- "food": Food items, meals, recipes, ingredients, nutrition labels, restaurant dishes, grocery items, cooking photos, inside of a fridge or pantry (labels may be in any language — "Informação Nutricional", "Valeurs nutritionnelles", "Nährwertangaben", etc.)
+- "supplement": Supplement bottles, pill containers, supplement labels, vitamin packaging, supplement facts panels, herbal extract bottles, protein powder containers, any health/wellness product packaging (in any language — "Suplemento Alimentar", "Complemento Alimenticio", etc.)
 - "workout": Workout logs, training summaries, exercise records, gym session reports, fitness app exports (e.g. Strava, TrainingPeaks, Garmin), running data, any document listing exercises, sets, reps, weights, or training metrics
 - "other": Everything else (screenshots, memes, selfies, documents, etc.)
 
-For the description, describe what you ACTUALLY see. Do not infer or assume items that are not clearly visible.
+For the description, describe what you ACTUALLY see (in English). Do not infer or assume items that are not clearly visible.
 
 Return ONLY the JSON object, nothing else."""
 
@@ -74,6 +76,14 @@ Rules:
 
 FOOD_EXTRACTION_PROMPT = """Look at this image carefully. Identify ONLY the food items you can clearly see.
 
+IMPORTANT — MULTILINGUAL SUPPORT:
+- Labels, packaging, and text may be in ANY language (Portuguese, Spanish, French, German, Chinese, Arabic, etc.)
+- READ and understand text in whatever language it appears
+- TRANSLATE all output to English — "name", "usda_query", and "meal_description" must always be in English
+- For packaged products in other languages: read the original label, then translate the product name to English
+- For nutrition labels in other languages: "Proteínas" = Protein, "Hidratos de Carbono"/"Glucides" = Carbs, "Gordura"/"Lípidos"/"Matières grasses" = Fat, "Fibra" = Fiber, "Valor energético"/"Energie" = Calories, "Açúcares"/"Sucres" = Sugars, "Sal" = Sodium/Salt
+- If you can read a brand name, include it in the "name" field alongside the English product description
+
 Return a JSON object:
 {
   "scene": "fridge" | "plate" | "ingredients" | "label" | "cooking",
@@ -92,22 +102,29 @@ STRICT RULES:
    - NEVER add items to "round out" a meal. If you see chicken and vegetables but no rice, don't add rice.
    - Common hallucinations to AVOID: eggs (often confused with other round objects), rice/grains (often confused with crumbs or textures), sauces (don't guess sauces), herbs (only if clearly visible).
 2. For each item provide THREE fields:
-   - "name": what a person would call it (e.g., "grilled chicken breast")
-   - "usda_query": a USDA FoodData Central searchable name — plain English, include cooking method, no brand names (e.g., "chicken breast meat only cooked grilled")
+   - "name": what a person would call it in English (e.g., "grilled chicken breast"). For foreign products, translate.
+   - "usda_query": a USDA FoodData Central searchable name — ALWAYS in English, include cooking method, no brand names (e.g., "chicken breast meat only cooked grilled")
    - "grams": estimated portion weight in grams using visual cues:
      * standard dinner plate = ~26cm diameter
      * fist-sized portion of rice/pasta = ~150g cooked
      * palm-sized meat = ~100-120g
      * cup of vegetables = ~90-100g
      * a whole chicken breast = ~170g
-3. For packaged items, read the label if visible. Use the product name for "name" and generic food for "usda_query".
+3. For packaged items, read the label if visible (in ANY language). Use the product name for "name" and generic English food for "usda_query".
 4. For containers where contents are unclear, skip them entirely.
 5. Scene types: "fridge" = inside fridge/pantry, "plate" = prepared meal, "ingredients" = raw items, "label" = nutrition label, "cooking" = food being cooked.
 6. For FRIDGE/INGREDIENTS scenes: still include items with usda_query but set grams to null (portions unknown).
-7. Return ONLY the JSON object, nothing else."""
+7. For LABEL scenes: extract nutrition values directly from the label (even if in another language). Convert to per-100g if shown per serving.
+8. Return ONLY the JSON object, nothing else."""
 
 
 BLOODWORK_EXTRACTION_PROMPT = """Analyze this blood test / lab results image and extract ALL biomarkers you can find.
+
+IMPORTANT — MULTILINGUAL SUPPORT:
+- Lab results may be in ANY language (Portuguese, Spanish, French, German, etc.)
+- READ the text in its original language, then use STANDARD ENGLISH marker names in output
+- Common translations: "Hemoglobina" = Hemoglobin, "Glicose"/"Glucosa" = Glucose, "Colesterol Total" = Total Cholesterol, "Triglicéridos"/"Triglicérides" = Triglycerides, "Creatinina" = Creatinine, "Ácido Úrico" = Uric Acid, "Ferro"/"Hierro" = Iron, "Testosterona" = Testosterone, "Vitamina D" = Vitamin D, "Hemoglobina Glicada"/"HbA1c" = HbA1c, "Leucócitos" = White Blood Cells, "Eritrócitos" = Red Blood Cells, "Plaquetas" = Platelets, "TSH" = TSH, "T4 Livre" = Free T4, "Valores de Referência" = Reference Range
+- Always output marker names in standard English regardless of source language
 
 Return a JSON object with this EXACT structure:
 {
@@ -128,21 +145,28 @@ Return a JSON object with this EXACT structure:
 Rules:
 1. If this is NOT a blood test or lab result, return {"is_blood_test": false}
 2. Extract EVERY biomarker visible — don't skip any
-3. Use standard marker names (e.g., "Total Testosterone" not "TEST")
-4. Include reference ranges if shown on the report
-5. Values must be numbers (convert "6.5" to 6.5, not "6.5")
+3. Use standard English marker names (e.g., "Total Testosterone" not "TEST" or "Testosterona")
+4. Include reference ranges if shown on the report (often labeled "Valores de Referência", "Ref.", or "V.R.")
+5. Values must be numbers (convert "6.5" to 6.5, not "6.5"). Handle comma as decimal separator (European format: "6,5" = 6.5)
 6. Include the unit exactly as shown (ng/dL, mg/L, mIU/L, etc.)
 7. Return ONLY the JSON object, nothing else"""
 
 
 SUPPLEMENT_EXTRACTION_PROMPT = """Analyze this supplement product image carefully. Read ALL visible text on the label, bottle, or packaging.
 
+IMPORTANT — MULTILINGUAL SUPPORT:
+- Labels may be in ANY language (Portuguese, Spanish, French, German, Italian, etc.)
+- READ the text in its original language, then TRANSLATE all output to English
+- Common translations: "Composição"/"Composición" = Ingredients, "Modo de utilização"/"Posología" = Suggested Use, "Tomar" = Take, "cápsulas" = capsules, "comprimidos" = tablets, "em jejum" = on empty stomach, "às refeições" = with meals
+- Product names: keep the original brand name, translate the product type to English
+- Ingredient forms: translate to standard English (e.g., "Magnésio bisglicinato" = "Magnesium Bisglycinate")
+
 Return a JSON object with this EXACT structure:
 {
   "is_supplement": true,
   "products": [
     {
-      "product_name": "Full product name as shown on label",
+      "product_name": "Full product name as shown on label (translate type to English, keep brand)",
       "brand": "Brand name if visible",
       "supplement_type": "vitamin|mineral|amino_acid|herbal|peptide|protein|probiotic|omega|nootropic|other",
       "serving_size": "e.g. 2 capsules, 1 scoop (30g)",
@@ -161,8 +185,8 @@ Return a JSON object with this EXACT structure:
 
 Rules:
 1. If this is NOT a supplement product, return {"is_supplement": false}
-2. Read the ACTUAL label text — do NOT guess or infer ingredients not visible
-3. For each ingredient, include the exact form shown (e.g., "Magnesium as Magnesium Glycinate", not just "Magnesium")
+2. Read the ACTUAL label text in whatever language — do NOT guess or infer ingredients not visible
+3. For each ingredient, include the exact form shown, translated to English (e.g., "Magnésio (bisglicinato)" → "Magnesium (as Magnesium Bisglycinate)")
 4. If amounts are not visible, set amount to null
 5. Include ALL products visible — if multiple bottles, list each
 6. For Supplement Facts panels, extract EVERY line item
@@ -657,8 +681,12 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
         image_context += (
             f"\n[PENDING BARCODE: {pending_barcode}]\n"
             "The user previously scanned this barcode but it wasn't in any database. "
-            "Now they're sending the nutrition label. Extract the nutrition data from the label "
+            "Now they're sending the nutrition label. The label may be in ANY language (Portuguese, Spanish, etc.) — "
+            "read and translate the nutrition values to English. Extract the nutrition data from the label "
             "and call save_custom_product with the barcode and nutrition info (per 100g). "
+            "Common foreign label fields: Proteínas=Protein, Hidratos de Carbono=Carbs, Gordura=Fat, "
+            "Fibra=Fiber, Valor energético=Calories, Açúcares=Sugars, Sal=Salt/Sodium. "
+            "Handle comma as decimal (European format: '6,5' = 6.5). "
             "After saving, ask if they want to log it as a meal.\n"
         )
 
