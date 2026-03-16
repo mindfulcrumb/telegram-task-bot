@@ -39,6 +39,93 @@ def _get_api_key() -> str:
     return os.environ.get("USDA_API_KEY", "")
 
 
+async def lookup_barcode(barcode: str) -> Optional[dict]:
+    """Look up a product by barcode (GTIN/UPC) in USDA FoodData Central.
+
+    Returns a normalized dict matching openfoodfacts format, or None.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        logger.warning("USDA_API_KEY not set — skipping USDA barcode lookup")
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{USDA_BASE}/foods/search",
+                params={
+                    "api_key": api_key,
+                    "query": barcode,
+                    "pageSize": 3,
+                },
+            )
+            if resp.status_code != 200:
+                logger.warning(f"USDA barcode search returned {resp.status_code} for {barcode}")
+                return None
+
+            foods = resp.json().get("foods", [])
+            if not foods:
+                logger.info(f"Barcode {barcode} not found in USDA")
+                return None
+
+            # Pick the best match — prefer Branded items for barcode matches
+            best = foods[0]
+            for f in foods:
+                if f.get("gtinUpc") == barcode:
+                    best = f
+                    break
+
+            # Extract inline nutrients from search result
+            food_nutrients = {n.get("nutrientId"): n.get("value", 0)
+                             for n in best.get("foodNutrients", [])}
+
+            nutrition = {}
+            for name, ids in NUTRIENT_IDS.items():
+                for nid in ids:
+                    val = food_nutrients.get(nid)
+                    if val is not None and val > 0:
+                        nutrition[name] = round(val, 2)
+                        break
+
+            # Normalize to match openfoodfacts_service format
+            result = {
+                "name": best.get("description", "").strip() or None,
+                "brand": best.get("brandOwner", "").strip() or best.get("brandName", "").strip() or None,
+                "barcode": barcode,
+                "nutriscore": None,
+                "categories": best.get("foodCategory", ""),
+                "quantity": best.get("servingSize", ""),
+                "image_url": None,
+                "nutrition_per_100g": {
+                    "calories": nutrition.get("calories"),
+                    "protein_g": nutrition.get("protein"),
+                    "carbs_g": nutrition.get("carbs"),
+                    "fat_g": nutrition.get("fat"),
+                    "fiber_g": nutrition.get("fiber"),
+                    "sodium_mg": round(nutrition["sodium"], 2) if nutrition.get("sodium") else None,
+                    "calcium_mg": round(nutrition["calcium"], 2) if nutrition.get("calcium") else None,
+                    "iron_mg": round(nutrition["iron"], 2) if nutrition.get("iron") else None,
+                    "potassium_mg": round(nutrition["potassium"], 2) if nutrition.get("potassium") else None,
+                    "vitamin_c_mg": round(nutrition["vitamin_c"], 2) if nutrition.get("vitamin_c") else None,
+                    "magnesium_mg": round(nutrition["magnesium"], 2) if nutrition.get("magnesium") else None,
+                    "zinc_mg": round(nutrition["zinc"], 2) if nutrition.get("zinc") else None,
+                    "vitamin_d_mcg": round(nutrition["vitamin_d"], 2) if nutrition.get("vitamin_d") else None,
+                    "b12_mcg": round(nutrition["b12"], 2) if nutrition.get("b12") else None,
+                },
+                "source": "usda",
+            }
+
+            logger.info(
+                f"USDA product found for barcode {barcode}: {result['name']} ({result['brand']}) "
+                f"— {nutrition.get('calories', '?')} kcal/100g"
+            )
+            return result
+
+    except Exception as e:
+        logger.warning(f"USDA barcode lookup failed for {barcode}: {type(e).__name__}: {e}")
+        return None
+
+
 async def search_food(query: str) -> Optional[dict]:
     """Search USDA for a food item. Waterfall: Foundation/SR Legacy -> FNDDS -> all.
 

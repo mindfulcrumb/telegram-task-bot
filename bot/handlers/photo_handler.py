@@ -716,7 +716,7 @@ async def _handle_barcode(update, context, user, barcode: str, caption: str, cha
 
     Lookup order: custom_products DB → Open Food Facts → ask user for label photo.
     """
-    from bot.services import openfoodfacts_service, product_service
+    from bot.services import openfoodfacts_service, product_service, usda_service
     from bot.ai.brain_v2 import ai_brain
     from bot.services import task_service
 
@@ -738,6 +738,16 @@ async def _handle_barcode(update, context, user, barcode: str, caption: str, cha
         if off_result and off_result.get("name"):
             product = off_result
             source = "openfoodfacts"
+
+    # 3. Check USDA FoodData Central (barcode/GTIN search)
+    if not product:
+        try:
+            usda_result = await usda_service.lookup_barcode(barcode)
+            if usda_result and usda_result.get("name"):
+                product = usda_result
+                source = "usda"
+        except Exception as e:
+            logger.warning(f"USDA barcode fallback failed for {barcode}: {type(e).__name__}: {e}")
 
     if product and product.get("name"):
         # Build rich context for the brain

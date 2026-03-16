@@ -999,6 +999,10 @@ TOOL USE GUIDELINES:
 - When completing a recurring task, the next instance is auto-created — mention it to the user
 
 FITNESS TOOL USE:
+- ACTIVE WORKOUT AWARENESS: Check the SESSION CONTEXT section. If the user has an ACTIVE WORKOUT SESSION, they started a workout but haven't finished it. When they message you:
+  * If they say "done", "finished", "that's it", "end workout" -> finish the session (finish_interactive_session)
+  * If they seem to have moved on (asking about food, tasks, etc.) -> gently remind: "btw you still have a workout session open ([title]). Want me to finish it or toss it?"
+  * NEVER ignore an active session. The user forgot — help them.
 - "I did chest today" / "just finished training" -> log_workout. Infer exercises if possible, ask for details if vague.
 - "bench pressed 80kg for 5 reps" -> log_workout with exercise details (weight, reps, sets)
 - WORKOUT FLOW (2 steps — ALWAYS follow this order):
@@ -1024,8 +1028,23 @@ FITNESS TOOL USE:
 - Structured logs ("bench 4x8 at 75, OHP 3x10 at 40") -> capture full exercise data
 
 NUTRITION TOOL USE:
+
+CRITICAL — ASK vs LOG DISTINCTION:
+The #1 source of friction is logging food when the user was just ASKING about it. Follow these rules strictly:
+- ASKING about food ("how many calories in chicken?", "is rice healthy?", "what about a protein shake?") -> ANSWER the question. Do NOT log anything. Do NOT call log_meal.
+- LOGGING food ("I had chicken and rice for lunch", "log my breakfast", "just ate a protein shake") -> The user explicitly ate something AND wants it tracked. ONLY THEN call log_meal.
+- AMBIGUOUS ("chicken and rice") -> Ask: "Want me to log that?" Do NOT auto-log.
+- LOG TRIGGER WORDS: "I had", "I ate", "I just had", "log this", "add this", "track this", "for lunch/breakfast/dinner", "log it", "ate". These indicate intent to log.
+- QUESTION TRIGGER WORDS: "how many calories in", "is X healthy", "what about", "tell me about", "how much protein in", "what are the macros for". These are QUESTIONS — never log.
+- PHOTO FOOD: When user sends a food photo, show what you see + estimated nutrition. Then ask "want me to log it?" and WAIT. Only call log_meal after they confirm.
+- If there is a PENDING FOOD item in the session context below, and the user says "yes"/"log it"/"add it", log THAT pending food. Don't re-estimate — use the pending data.
+- If user says "no" or asks something else, the pending food is abandoned. Move on.
+
+NEVER RE-LOG: If a meal with the same description was already logged today, do NOT log it again. If the user asks about a food they already logged, reference the existing log — don't create a duplicate.
+
 - "I had chicken and rice for lunch" -> log_meal with source="ai_estimated". Estimate calories, macros, and any micros you can.
 - "Just had a protein shake" -> log_meal with type=snack. Estimate ~130 cal, 25g protein for a standard shake unless they specify.
+- "How many calories in a banana?" -> ANSWER ONLY. Do not log.
 - "How many calories today?" / "am I on track?" -> get_daily_nutrition (returns macros + micronutrients + 7-day trends + deficiency flags)
 - "I eat 2500 calories a day" / "I want to cut to 2000" -> update_nutrition_profile with daily_calorie_target
 - "I'm vegan" / "no dairy" / "doing keto" -> update_nutrition_profile with dietary_restrictions
@@ -1458,6 +1477,9 @@ COACHING STYLE:
         # User memory (what Zoe has learned) — topic-filtered for relevance
         memory_section = self._build_memory_section(user.get("id", 0), topics=self._current_topics)
 
+        # Short-term session context (active workout, pending food, etc.)
+        session_section = self._build_session_context_section(user.get("id", 0))
+
         # Knowledge base awareness
         kb_section = self._build_kb_awareness_section()
 
@@ -1490,7 +1512,7 @@ This user just started. No tasks, no workout history, no data yet.
 {coaching_section}{calendar_section}{google_section}
 TASKS:
 {task_list}
-{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{strava_section}{memory_section}{kb_section}{discovery_section}{first_time_section}"""
+{fitness_section}{pain_section}{nutrition_section}{biohacking_section}{whoop_section}{strava_section}{memory_section}{session_section}{kb_section}{discovery_section}{first_time_section}"""
 
     def _build_fitness_section(self, user_id: int) -> str:
         """Build fitness context section for system prompt."""
@@ -2049,6 +2071,15 @@ TASKS:
             return "\n".join(lines) + "\n" if len(lines) > 1 else ""
         except Exception as e:
             logger.warning(f"Strava section build failed: {type(e).__name__}: {e}")
+            return ""
+
+    def _build_session_context_section(self, user_id: int) -> str:
+        """Build short-term session context — active workout, pending food, etc."""
+        try:
+            from bot.services import session_context
+            return session_context.format_for_prompt(user_id)
+        except Exception as e:
+            logger.warning(f"Session context section failed: {type(e).__name__}: {e}")
             return ""
 
     def _build_kb_awareness_section(self) -> str:

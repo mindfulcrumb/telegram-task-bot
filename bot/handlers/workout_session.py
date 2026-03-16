@@ -406,6 +406,13 @@ async def handle_workout_session_callback(update: Update, context: ContextTypes.
             await query.message.reply_text("Couldn't log workout. Try again.")
             return
 
+        # Clear short-term session context so brain stops reminding about active workout
+        try:
+            from bot.services import session_context
+            session_context.clear_active_workout(user["id"])
+        except Exception:
+            pass
+
         workout = session.get("workout", {})
         duration = session.get("duration_minutes", 0)
         exercises = session.get("exercises", [])

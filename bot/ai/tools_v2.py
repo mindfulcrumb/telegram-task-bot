@@ -1257,6 +1257,7 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
         # --- Interactive workout session ---
         elif name == "start_workout_session":
             from bot.services import fitness_service
+            from bot.services import session_context
             logger.info(f"WORKOUT CARDS: start_workout_session called for user {user_id}, title={args['title']}, {len(args['exercises'])} exercises")
             session = fitness_service.create_workout_session(
                 user_id=user_id,
@@ -1264,6 +1265,11 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 exercises=args["exercises"],
             )
             logger.info(f"WORKOUT CARDS: session created id={session['id']}, exercises={len(session.get('exercises', []))}")
+            # Track in short-term session context so brain knows workout is active
+            session_context.set_active_workout(
+                user_id, session["id"], args["title"],
+                exercises=args.get("exercises", []),
+            )
             return {
                 "success": True,
                 "session_id": session["id"],
@@ -2294,6 +2300,10 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
 
         elif name == "log_meal":
             from bot.services import nutrition_service
+            from bot.services import session_context
+
+            # Clear any pending food confirmation — it's being logged now
+            session_context.clear_pending_food(user_id)
 
             # USDA-first: when AI estimates, try to enrich with lab-verified data.
             # Strategy: search USDA for the description, derive portion grams from

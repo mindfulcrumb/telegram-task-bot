@@ -774,13 +774,48 @@ def get_card_message_id(session_id: int) -> int | None:
 
 
 def cleanup_stale_sessions(hours: int = 3):
-    """Abandon sessions older than N hours."""
+    """Auto-finish or abandon sessions older than N hours.
+
+    If a stale session has completed sets, finish it (log the workout).
+    If no sets were completed, abandon it.
+    Also clears short-term session context for affected users.
+    """
+    from bot.services import session_context
+
     with get_cursor() as cur:
+        # Find stale active sessions
         cur.execute(
-            """UPDATE workout_sessions SET status = 'abandoned', completed_at = NOW()
-               WHERE status = 'active' AND started_at < NOW() - INTERVAL '%s hours'""",
+            """SELECT ws.id, ws.user_id,
+                      COALESCE(SUM(se.sets_completed), 0) AS total_sets_done
+               FROM workout_sessions ws
+               LEFT JOIN session_exercises se ON se.session_id = ws.id
+               WHERE ws.status = 'active'
+                 AND ws.started_at < NOW() - INTERVAL '%s hours'
+               GROUP BY ws.id, ws.user_id""",
             (hours,)
         )
+        stale = cur.fetchall()
+
+    for row in stale:
+        sid, uid, sets_done = row["id"], row["user_id"], row["total_sets_done"]
+        try:
+            if sets_done > 0:
+                # Has work done — auto-finish so progress isn't lost
+                finish_session(sid)
+                logger.info(f"Auto-finished stale session {sid} for user {uid} ({sets_done} sets)")
+            else:
+                # No work — just abandon
+                with get_cursor() as cur:
+                    cur.execute(
+                        """UPDATE workout_sessions SET status = 'abandoned', completed_at = NOW()
+                           WHERE id = %s AND status = 'active'""",
+                        (sid,)
+                    )
+                logger.info(f"Abandoned empty stale session {sid} for user {uid}")
+            # Clear session context either way
+            session_context.clear_active_workout(uid)
+        except Exception as e:
+            logger.error(f"Stale session cleanup failed for {sid}: {e}")
 
 
 # --- Proactive helpers ---
