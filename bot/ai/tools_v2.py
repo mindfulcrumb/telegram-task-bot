@@ -938,6 +938,18 @@ def get_tool_definitions() -> list:
                 "required": ["barcode", "product_name"]
             }
         },
+        {
+            "name": "search_food_product",
+            "description": "Search for a food product by name in Open Food Facts (4M+ products, strong European/Portuguese coverage) and USDA. Use when you know a product name but don't have a barcode, or when a barcode wasn't found but you can read the product name from a label photo. Returns nutrition per 100g.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Product name to search (in English or original language, e.g., 'Compal Fresh Orange Juice' or 'sumo laranja compal')"},
+                    "country": {"type": "string", "description": "Country hint for better results: 'portugal', 'spain', 'france', 'germany', 'usa', etc. Default: 'portugal'"}
+                },
+                "required": ["query"]
+            }
+        },
         # --- Pain / Mobility tools ---
         {
             "name": "report_pain",
@@ -2755,6 +2767,46 @@ async def execute_tool(name: str, args: dict, user_id: int) -> dict:
                 "calories_per_100g": product.get("calories_per_100g"),
                 "message": "Product saved. Next time this barcode is scanned, nutrition data will load instantly."
             }
+
+        elif name == "search_food_product":
+            from bot.services import openfoodfacts_service
+            query = args["query"]
+            country = args.get("country", "portugal")
+            # Try OFF name search first (strong EU/PT coverage)
+            result = await asyncio.to_thread(openfoodfacts_service.search_by_name, query, country)
+            if result and result.get("name"):
+                n = result.get("nutrition_per_100g", {})
+                return {
+                    "found": True,
+                    "name": result["name"],
+                    "brand": result.get("brand"),
+                    "barcode": result.get("barcode"),
+                    "source": "openfoodfacts",
+                    "nutrition_per_100g": {
+                        "calories": n.get("calories"),
+                        "protein_g": n.get("protein_g"),
+                        "carbs_g": n.get("carbs_g"),
+                        "fat_g": n.get("fat_g"),
+                        "fiber_g": n.get("fiber_g"),
+                    },
+                }
+            # Fallback to USDA
+            from bot.services import usda_service
+            usda = await usda_service.search_and_get_nutrients(query)
+            if usda:
+                return {
+                    "found": True,
+                    "name": usda.get("usda_description", query),
+                    "source": "usda",
+                    "nutrition_per_100g": {
+                        "calories": usda.get("calories"),
+                        "protein_g": usda.get("protein"),
+                        "carbs_g": usda.get("carbs"),
+                        "fat_g": usda.get("fat"),
+                        "fiber_g": usda.get("fiber"),
+                    },
+                }
+            return {"found": False, "message": f"No product found for '{query}'. Ask the user for nutrition details or try a different name."}
 
         elif name == "report_pain":
             from bot.db.database import get_cursor

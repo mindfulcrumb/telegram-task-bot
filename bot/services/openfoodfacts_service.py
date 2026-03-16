@@ -1,7 +1,8 @@
-"""Open Food Facts product lookup by barcode.
+"""Open Food Facts product lookup by barcode and name search.
 
 Free, no API key required. 4M+ products across 150 countries.
 Covers EAN-13 (Europe), UPC-A (US), and other barcode formats.
+Includes Portuguese/European product search via country-specific subdomains.
 API docs: https://openfoodfacts.github.io/openfoodfacts-server/api/
 """
 import logging
@@ -12,6 +13,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://world.openfoodfacts.org/api/v2/product"
+_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
+_PT_SEARCH_URL = "https://pt.openfoodfacts.org/cgi/search.pl"
 _FIELDS = "product_name,brands,nutriments,nutriscore_grade,categories,quantity,image_url"
 _USER_AGENT = "ZoeBot/1.0 (telegram-task-bot; https://meetzoe.app)"
 _TIMEOUT = 10.0
@@ -108,3 +111,74 @@ def _extract_nutrition(nutriments: dict) -> dict:
         # B12: OFF stores in g, convert to mcg (× 1,000,000)
         "b12_mcg": _get("vitamin-b12_100g", 1000000),
     }
+
+
+def search_by_name(query: str, country: str = "portugal") -> dict | None:
+    """Search Open Food Facts by product name. Tries country-specific first, then global.
+
+    Useful when barcode lookup fails but we have the product name (e.g., from a label photo).
+    Returns the same normalized dict as lookup_barcode().
+    """
+    # Try Portuguese OFF first for PT products, then global
+    urls = [_PT_SEARCH_URL, _SEARCH_URL] if country == "portugal" else [_SEARCH_URL]
+
+    for url in urls:
+        try:
+            with httpx.Client(timeout=_TIMEOUT) as client:
+                resp = client.get(
+                    url,
+                    params={
+                        "search_terms": query,
+                        "search_simple": 1,
+                        "action": "process",
+                        "json": 1,
+                        "page_size": 3,
+                        "fields": _FIELDS + ",code",
+                    },
+                    headers={"User-Agent": _USER_AGENT},
+                )
+
+            if resp.status_code != 200:
+                continue
+
+            data = resp.json()
+            products = data.get("products", [])
+
+            if not products:
+                continue
+
+            # Pick best match (first result with nutrition data)
+            for product in products:
+                nutriments = product.get("nutriments", {})
+                if not nutriments.get("energy-kcal_100g"):
+                    continue
+
+                nutrition = _extract_nutrition(nutriments)
+
+                result = {
+                    "name": product.get("product_name", "").strip() or None,
+                    "brand": product.get("brands", "").strip() or None,
+                    "barcode": product.get("code", ""),
+                    "nutriscore": product.get("nutriscore_grade"),
+                    "categories": product.get("categories", ""),
+                    "quantity": product.get("quantity", ""),
+                    "image_url": product.get("image_url"),
+                    "nutrition_per_100g": nutrition,
+                    "source": "openfoodfacts",
+                }
+
+                if result["name"]:
+                    logger.info(
+                        f"OFF search found: {result['name']} ({result['brand']}) "
+                        f"— {nutrition.get('calories', '?')} kcal/100g"
+                    )
+                    return result
+
+        except httpx.TimeoutException:
+            logger.warning(f"OFF search timeout for '{query}' at {url}")
+            continue
+        except Exception as e:
+            logger.error(f"OFF search failed for '{query}': {type(e).__name__}: {e}")
+            continue
+
+    return None

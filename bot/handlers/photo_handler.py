@@ -721,12 +721,39 @@ async def _handle_food(update, context, user, b64_data, media_type, api_key, cap
         if ai_brain._paywall_hit.get(user["id"], False):
             from bot.handlers.payments import get_subscribe_keyboard
             reply_markup = get_subscribe_keyboard(update.effective_user.id)
+        elif scene in ("plate", "cooking", "label") and enriched_items:
+            # Store nutrition data as pending food + show confirmation buttons
+            from bot.services import session_context
+            meal_total_for_pending = {}
+            if enriched_items:
+                from bot.services import usda_service as _usda2
+                meal_total_for_pending = _usda2.sum_nutrients(enriched_items)
+            session_context.set_pending_food(user["id"], {
+                "description": meal_desc or "Food from photo",
+                "calories": round(meal_total_for_pending.get("calories", 0)),
+                "protein_g": round(meal_total_for_pending.get("protein", 0), 1),
+                "carbs_g": round(meal_total_for_pending.get("carbs", 0), 1),
+                "fat_g": round(meal_total_for_pending.get("fat", 0), 1),
+                "fiber_g": round(meal_total_for_pending.get("fiber", 0), 1),
+                "items": [{"name": e["name"], "grams": e.get("grams")} for e in enriched_items],
+                "source": "photo_usda",
+            })
+            reply_markup = _food_confirm_keyboard()
         await send_chunked(
             bot=context.bot,
             chat_id=chat_id,
             text=response,
             reply_markup=reply_markup,
         )
+
+
+def _food_confirm_keyboard():
+    """Build inline keyboard for food log confirmation."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Log it", callback_data="fc:log"),
+        InlineKeyboardButton("No thanks", callback_data="fc:no"),
+    ]])
 
 
 def _try_detect_barcode(image_path: str) -> str | None:
@@ -855,6 +882,22 @@ async def _handle_barcode(update, context, user, barcode: str, caption: str, cha
         if ai_brain._paywall_hit.get(user["id"], False):
             from bot.handlers.payments import get_subscribe_keyboard
             reply_markup = get_subscribe_keyboard(update.effective_user.id)
+        elif product and product.get("name"):
+            # Store barcode product as pending food + show confirmation buttons
+            from bot.services import session_context
+            n = product.get("nutrition_per_100g", {})
+            session_context.set_pending_food(user["id"], {
+                "description": f"{product['name']}{' by ' + product['brand'] if product.get('brand') else ''}",
+                "calories": n.get("calories") or 0,
+                "protein_g": n.get("protein_g") or 0,
+                "carbs_g": n.get("carbs_g") or 0,
+                "fat_g": n.get("fat_g") or 0,
+                "fiber_g": n.get("fiber_g") or 0,
+                "barcode": barcode,
+                "source": source,
+                "nutrition_per_100g": True,
+            })
+            reply_markup = _food_confirm_keyboard()
         await send_chunked(
             bot=context.bot,
             chat_id=chat_id,
@@ -1214,3 +1257,89 @@ def _extract_supplement_vision(b64_data: str, media_type: str, api_key: str) -> 
     except Exception as e:
         logger.error(f"Supplement vision extraction failed: {type(e).__name__}: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Food confirmation callback handler (fc:log / fc:no)
+# ---------------------------------------------------------------------------
+
+async def handle_food_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'Log it' / 'No thanks' buttons for food confirmation."""
+    query = update.callback_query
+    data = query.data  # "fc:log" or "fc:no"
+
+    from bot.services import session_context
+    from bot.handlers.onboarding import _get_or_create_user
+
+    user = _get_or_create_user(update.effective_user)
+    user_id = user["id"]
+
+    pending = session_context.get_pending_food(user_id)
+
+    if data == "fc:log":
+        await query.answer("Logging...")
+
+        if not pending:
+            # Expired or already logged
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await query.message.reply_text("That food expired from my memory. Send the photo again or just tell me what you ate.")
+            return
+
+        # Log the meal via the AI brain (so it goes through proper tool flow)
+        from bot.ai.brain_v2 import ai_brain
+        from bot.services import task_service
+
+        desc = pending.get("description", "food")
+        cals = pending.get("calories", 0)
+        protein = pending.get("protein_g", 0)
+        carbs = pending.get("carbs_g", 0)
+        fat = pending.get("fat_g", 0)
+        fiber = pending.get("fiber_g", 0)
+
+        log_instruction = (
+            f"[USER CONFIRMED FOOD LOG]\n"
+            f"The user tapped 'Log it'. Log this meal NOW with log_meal:\n"
+            f"- description: {desc}\n"
+            f"- calories: {cals}\n"
+            f"- protein_g: {protein}\n"
+            f"- carbs_g: {carbs}\n"
+            f"- fat_g: {fat}\n"
+            f"- fiber_g: {fiber}\n"
+            f"- meal_type: infer from time of day\n"
+            f"- source: {pending.get('source', 'photo')}\n"
+            f"Do NOT ask again. Just log it and confirm briefly."
+        )
+
+        tasks = task_service.get_tasks(user_id)
+
+        try:
+            response = await asyncio.wait_for(
+                ai_brain.process(log_instruction, user, tasks),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            response = f"Logged {desc} — {cals} cal, {protein}g protein."
+
+        session_context.clear_pending_food(user_id)
+
+        # Remove buttons from original message
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        if response:
+            await query.message.reply_text(response)
+
+    elif data == "fc:no":
+        await query.answer("Got it, not logged.")
+        session_context.clear_pending_food(user_id)
+
+        # Remove buttons
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass

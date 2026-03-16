@@ -1059,6 +1059,11 @@ def _register_full_handlers(application):
         except Exception:
             pass
         try:
+            from bot.handlers.photo_handler import handle_food_confirm_callback
+            application.add_handler(CallbackQueryHandler(handle_food_confirm_callback, pattern="^fc:"))
+        except Exception:
+            pass
+        try:
             from bot.handlers.protocol_cards import (
                 handle_protocol_wizard_callback,
                 handle_protocol_dashboard_callback,
